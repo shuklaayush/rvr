@@ -1,0 +1,13 @@
+[package]
+name = "rvr-cfg"
+description = "Control flow graph analysis for RISC-V recompiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+rayon.workspace = true
+rvr-isa.workspace = true
+rvr-ir.workspace = true

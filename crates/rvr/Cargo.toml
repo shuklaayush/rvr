@@ -1,0 +1,26 @@
+[package]
+name = "rvr"
+description = "RISC-V recompiler - compiles ELF to native code via C"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+clap.workspace = true
+libloading.workspace = true
+rayon.workspace = true
+rvr-elf.workspace = true
+rvr-isa.workspace = true
+rvr-ir.workspace = true
+rvr-cfg.workspace = true
+rvr-emit.workspace = true
+
+[lib]
+name = "rvr"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rvr"
+path = "src/main.rs"
