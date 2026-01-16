@@ -1,7 +1,6 @@
 //! Single instruction IR.
 
-use rvr_isa::{OpId, Xlen};
-
+use crate::xlen::Xlen;
 use crate::stmt::Stmt;
 use crate::terminator::Terminator;
 
@@ -12,8 +11,6 @@ pub struct InstrIR<X: Xlen> {
     pub pc: X::Reg,
     /// Instruction size in bytes (2 or 4).
     pub size: u8,
-    /// Instruction identifier.
-    pub opid: OpId,
     /// Statements (writes, side effects).
     pub statements: Vec<Stmt<X>>,
     /// Control flow terminator.
@@ -25,14 +22,12 @@ impl<X: Xlen> InstrIR<X> {
     pub fn new(
         pc: X::Reg,
         size: u8,
-        opid: OpId,
         statements: Vec<Stmt<X>>,
         terminator: Terminator<X>,
     ) -> Self {
         Self {
             pc,
             size,
-            opid,
             statements,
             terminator,
         }

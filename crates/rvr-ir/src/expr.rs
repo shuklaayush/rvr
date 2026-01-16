@@ -1,6 +1,6 @@
 //! Expression IR.
 
-use rvr_isa::Xlen;
+use crate::xlen::Xlen;
 
 /// Expression node kinds.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

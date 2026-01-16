@@ -1,6 +1,6 @@
 //! Basic block IR.
 
-use rvr_isa::Xlen;
+use crate::xlen::Xlen;
 
 use crate::instr::InstrIR;
 use crate::terminator::Terminator;

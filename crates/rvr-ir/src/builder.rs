@@ -1,7 +1,6 @@
 //! IR builder fluent API.
 
-use rvr_isa::{OpId, Xlen};
-
+use crate::xlen::Xlen;
 use crate::expr::Expr;
 use crate::instr::InstrIR;
 use crate::stmt::Stmt;
@@ -11,17 +10,15 @@ use crate::terminator::Terminator;
 pub struct IRBuilder<X: Xlen> {
     pc: X::Reg,
     size: u8,
-    opid: OpId,
     statements: Vec<Stmt<X>>,
 }
 
 impl<X: Xlen> IRBuilder<X> {
     /// Create a new IR builder.
-    pub fn new(pc: X::Reg, size: u8, opid: OpId) -> Self {
+    pub fn new(pc: X::Reg, size: u8) -> Self {
         Self {
             pc,
             size,
-            opid,
             statements: Vec::new(),
         }
     }
@@ -75,79 +72,48 @@ impl<X: Xlen> IRBuilder<X> {
 
     /// Build with fall-through terminator.
     pub fn build_fall(self) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.opid, self.statements, Terminator::Fall)
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::Fall)
     }
 
     /// Build with static jump terminator.
     pub fn build_jump(self, target: X::Reg) -> InstrIR<X> {
-        InstrIR::new(
-            self.pc,
-            self.size,
-            self.opid,
-            self.statements,
-            Terminator::jump(target),
-        )
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::jump(target))
     }
 
     /// Build with dynamic jump terminator.
     pub fn build_jump_dyn(self, addr: Expr<X>) -> InstrIR<X> {
-        InstrIR::new(
-            self.pc,
-            self.size,
-            self.opid,
-            self.statements,
-            Terminator::jump_dyn(addr),
-        )
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::jump_dyn(addr))
     }
 
     /// Build with conditional branch terminator.
     pub fn build_branch(self, cond: Expr<X>, target: X::Reg) -> InstrIR<X> {
-        InstrIR::new(
-            self.pc,
-            self.size,
-            self.opid,
-            self.statements,
-            Terminator::branch(cond, target),
-        )
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::branch(cond, target))
     }
 
     /// Build with exit terminator.
     pub fn build_exit(self, code: Expr<X>) -> InstrIR<X> {
-        InstrIR::new(
-            self.pc,
-            self.size,
-            self.opid,
-            self.statements,
-            Terminator::exit(code),
-        )
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::exit(code))
     }
 
     /// Build with trap terminator.
     pub fn build_trap(self, message: &str) -> InstrIR<X> {
-        InstrIR::new(
-            self.pc,
-            self.size,
-            self.opid,
-            self.statements,
-            Terminator::trap(message),
-        )
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::trap(message))
     }
 
     /// Build with custom terminator.
     pub fn build(self, terminator: Terminator<X>) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.opid, self.statements, terminator)
+        InstrIR::new(self.pc, self.size, self.statements, terminator)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rvr_isa::{Rv64, EXT_I};
+    use crate::xlen::Rv64;
 
     #[test]
     fn test_builder() {
-        let opid = OpId::new(EXT_I, 0);
-        let ir = IRBuilder::<Rv64>::new(0x80000000u64, 4, opid)
+        let ir = IRBuilder::<Rv64>::new(0x80000000u64, 4)
             .write_reg(1, Expr::imm(42))
             .build_fall();
 

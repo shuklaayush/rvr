@@ -1,6 +1,6 @@
 //! Statement IR.
 
-use rvr_isa::Xlen;
+use crate::xlen::Xlen;
 
 use crate::expr::{Expr, Space};
 
