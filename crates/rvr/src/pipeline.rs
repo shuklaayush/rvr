@@ -7,8 +7,8 @@ use std::path::Path;
 use rvr_cfg::{CfgAnalyzer, CfgResult};
 use rvr_elf::ElfImage;
 use rvr_emit::{CEmitter, EmitConfig};
-use rvr_ir::{BlockIR, lift};
-use rvr_isa::{decode, Xlen};
+use rvr_ir::BlockIR;
+use rvr_isa::{Xlen, CompositeDecoder, InstructionExtension};
 
 use crate::Result;
 
@@ -22,17 +22,40 @@ pub struct Pipeline<X: Xlen> {
     pub cfg_result: Option<CfgResult>,
     /// Lifted IR blocks (keyed by start PC).
     pub ir_blocks: HashMap<u64, BlockIR<X>>,
+    /// Instruction decoder (supports custom extensions).
+    pub decoder: CompositeDecoder<X>,
 }
 
 impl<X: Xlen> Pipeline<X> {
-    /// Create a new pipeline.
+    /// Create a new pipeline with default decoder.
     pub fn new(image: ElfImage<X>, config: EmitConfig<X>) -> Self {
         Self {
             image,
             config,
             cfg_result: None,
             ir_blocks: HashMap::new(),
+            decoder: CompositeDecoder::default(),
         }
+    }
+
+    /// Create a new pipeline with custom extensions.
+    pub fn with_extensions(
+        image: ElfImage<X>,
+        config: EmitConfig<X>,
+        extensions: Vec<Box<dyn InstructionExtension<X>>>,
+    ) -> Self {
+        Self {
+            image,
+            config,
+            cfg_result: None,
+            ir_blocks: HashMap::new(),
+            decoder: CompositeDecoder::new(extensions),
+        }
+    }
+
+    /// Add an extension to the decoder chain.
+    pub fn add_extension(&mut self, ext: impl InstructionExtension<X> + 'static) {
+        self.decoder = std::mem::take(&mut self.decoder).with_extension(ext);
     }
 
     /// Run CFG analysis.
@@ -94,15 +117,15 @@ impl<X: Xlen> Pipeline<X> {
                 break;
             };
 
-            // Decode
+            // Decode using CompositeDecoder (supports custom extensions)
             let bytes = raw.to_le_bytes();
-            let decoded = match decode::<X>(&bytes, X::from_u64(pc)) {
+            let decoded = match self.decoder.decode(&bytes, X::from_u64(pc)) {
                 Some(d) => d,
                 None => break,
             };
 
-            // Lift to IR
-            let instr_ir = lift(&decoded);
+            // Lift to IR using CompositeDecoder
+            let instr_ir = self.decoder.lift(&decoded);
 
             // Check if this instruction ends the block
             let is_terminator = instr_ir.terminator.is_control_flow();

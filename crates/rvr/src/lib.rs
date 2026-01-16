@@ -18,10 +18,11 @@ pub use rvr_isa::{
     EXT_I, EXT_M, EXT_A, EXT_C, EXT_ZICSR, EXT_ZIFENCEI, EXT_CUSTOM,
     NUM_REGS_I, NUM_REGS_E, NUM_CSRS,
     DecodedInstr, InstrArgs, decode,
+    CompositeDecoder, InstructionExtension,
 };
 pub use rvr_ir::{
     Expr, ExprKind, Space, Stmt, Terminator, BranchHint,
-    InstrIR, BlockIR, IRBuilder, lift,
+    InstrIR, BlockIR, IRBuilder,
 };
 pub use rvr_cfg::{BlockTable, CfgAnalyzer, CfgResult, CodeView};
 pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig, TracerKind, CEmitter};

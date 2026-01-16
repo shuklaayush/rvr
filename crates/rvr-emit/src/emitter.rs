@@ -1,7 +1,6 @@
 //! C code emitter for RISC-V recompiler.
 
-use rvr_ir::{BlockIR, BranchHint, Expr, ExprKind, InstrIR, Space, Stmt, Terminator};
-use rvr_isa::{OpId, Xlen};
+use rvr_ir::{BlockIR, BranchHint, Expr, ExprKind, InstrIR, Space, Stmt, Terminator, Xlen};
 
 use crate::config::EmitConfig;
 
@@ -16,8 +15,6 @@ pub struct CEmitter<X: Xlen> {
     signed_type: &'static str,
     /// Current instruction PC.
     current_pc: u64,
-    /// Current instruction OpId.
-    current_op: OpId,
     /// Instruction index within block (for instret).
     instr_idx: usize,
 }
@@ -37,7 +34,6 @@ impl<X: Xlen> CEmitter<X> {
             reg_type,
             signed_type,
             current_pc: 0,
-            current_op: OpId::new(0, 0),
             instr_idx: 0,
         }
     }
@@ -46,7 +42,6 @@ impl<X: Xlen> CEmitter<X> {
     pub fn reset(&mut self) {
         self.out.clear();
         self.current_pc = 0;
-        self.current_op = OpId::new(0, 0);
         self.instr_idx = 0;
     }
 
@@ -442,7 +437,6 @@ impl<X: Xlen> CEmitter<X> {
     /// Render instruction.
     pub fn render_instruction(&mut self, ir: &InstrIR<X>, is_last: bool) {
         self.current_pc = X::to_u64(ir.pc);
-        self.current_op = ir.opid;
 
         // Optional: emit comment
         if self.config.emit_comments {
