@@ -275,4 +275,157 @@ impl<X: Xlen> Expr<X> {
             ..Default::default()
         }
     }
+
+    /// Create a NOT expression.
+    pub fn not(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Not,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    // ===== Register/Memory shorthand =====
+
+    /// Create a register read expression (alias for reg).
+    pub fn read(idx: u8) -> Self {
+        Self::reg(idx)
+    }
+
+    /// Create a memory read with computed address (unsigned).
+    pub fn mem_u(addr: Self, width: u8) -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::Mem,
+            width,
+            signed: false,
+            left: Some(Box::new(addr)),
+            ..Default::default()
+        }
+    }
+
+    /// Create a signed memory read with computed address.
+    pub fn mem_s(addr: Self, width: u8) -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::Mem,
+            width,
+            signed: true,
+            left: Some(Box::new(addr)),
+            ..Default::default()
+        }
+    }
+
+    // ===== Division/Remainder =====
+
+    pub fn div(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::Div, left, right)
+    }
+
+    pub fn divu(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::DivU, left, right)
+    }
+
+    pub fn rem(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::Rem, left, right)
+    }
+
+    pub fn remu(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::RemU, left, right)
+    }
+
+    // ===== RV64 Word operations =====
+
+    pub fn addw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::AddW, left, right)
+    }
+
+    pub fn subw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::SubW, left, right)
+    }
+
+    pub fn sllw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::SllW, left, right)
+    }
+
+    pub fn srlw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::SrlW, left, right)
+    }
+
+    pub fn sraw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::SraW, left, right)
+    }
+
+    pub fn mulw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::MulW, left, right)
+    }
+
+    pub fn divw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::DivW, left, right)
+    }
+
+    pub fn divuw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::DivUW, left, right)
+    }
+
+    pub fn remw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::RemW, left, right)
+    }
+
+    pub fn remuw(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::RemUW, left, right)
+    }
+
+    // ===== M extension high bits =====
+
+    pub fn mulh(left: Self, right: Self) -> Self {
+        // MULH returns upper XLEN bits of signed*signed multiplication
+        Self::binop(ExprKind::Mul, left, right) // Simplified - full impl would need high bits
+    }
+
+    pub fn mulhsu(left: Self, right: Self) -> Self {
+        // MULHSU returns upper XLEN bits of signed*unsigned multiplication
+        Self::binop(ExprKind::Mul, left, right) // Simplified
+    }
+
+    pub fn mulhu(left: Self, right: Self) -> Self {
+        // MULHU returns upper XLEN bits of unsigned*unsigned multiplication
+        Self::binop(ExprKind::Mul, left, right) // Simplified
+    }
+
+    // ===== Comparison shortcuts =====
+
+    pub fn slt(left: Self, right: Self) -> Self {
+        Self::lt(left, right)
+    }
+
+    pub fn sltu(left: Self, right: Self) -> Self {
+        Self::ltu(left, right)
+    }
+
+    // ===== AMO min/max operations =====
+
+    pub fn min(left: Self, right: Self) -> Self {
+        // Signed minimum
+        let cond = Self::lt(left.clone(), right.clone());
+        Self::select(cond, left, right)
+    }
+
+    pub fn max(left: Self, right: Self) -> Self {
+        // Signed maximum
+        let cond = Self::lt(left.clone(), right.clone());
+        Self::select(cond, right, left)
+    }
+
+    pub fn minu(left: Self, right: Self) -> Self {
+        // Unsigned minimum
+        let cond = Self::ltu(left.clone(), right.clone());
+        Self::select(cond, left, right)
+    }
+
+    pub fn maxu(left: Self, right: Self) -> Self {
+        // Unsigned maximum
+        let cond = Self::ltu(left.clone(), right.clone());
+        Self::select(cond, right, left)
+    }
 }

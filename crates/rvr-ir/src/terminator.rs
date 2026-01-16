@@ -83,9 +83,19 @@ impl<X: Xlen> Terminator<X> {
         matches!(self, Self::Fall)
     }
 
+    /// Check if this terminator is any kind of jump.
+    pub fn is_jump(&self) -> bool {
+        matches!(self, Self::Jump { .. } | Self::JumpDyn { .. })
+    }
+
     /// Check if this terminator is a static jump.
     pub fn is_static_jump(&self) -> bool {
         matches!(self, Self::Jump { .. })
+    }
+
+    /// Check if this terminator is a dynamic jump.
+    pub fn is_dyn_jump(&self) -> bool {
+        matches!(self, Self::JumpDyn { .. })
     }
 
     /// Check if this terminator is a branch.
