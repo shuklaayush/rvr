@@ -1,0 +1,192 @@
+//! A extension (atomics) - decode, lift, disasm.
+
+use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
+
+use crate::{
+    DecodedInstr, InstrArgs, OpId, EXT_A, reg_name,
+    encode::{decode_opcode, decode_funct3, decode_rd, decode_rs1, decode_rs2},
+};
+use super::InstructionExtension;
+
+// .W variants (32-bit)
+pub const OP_LR_W: OpId = OpId::new(EXT_A, 0);
+pub const OP_SC_W: OpId = OpId::new(EXT_A, 1);
+pub const OP_AMOSWAP_W: OpId = OpId::new(EXT_A, 2);
+pub const OP_AMOADD_W: OpId = OpId::new(EXT_A, 3);
+pub const OP_AMOXOR_W: OpId = OpId::new(EXT_A, 4);
+pub const OP_AMOAND_W: OpId = OpId::new(EXT_A, 5);
+pub const OP_AMOOR_W: OpId = OpId::new(EXT_A, 6);
+pub const OP_AMOMIN_W: OpId = OpId::new(EXT_A, 7);
+pub const OP_AMOMAX_W: OpId = OpId::new(EXT_A, 8);
+pub const OP_AMOMINU_W: OpId = OpId::new(EXT_A, 9);
+pub const OP_AMOMAXU_W: OpId = OpId::new(EXT_A, 10);
+
+// .D variants (64-bit, RV64 only)
+pub const OP_LR_D: OpId = OpId::new(EXT_A, 11);
+pub const OP_SC_D: OpId = OpId::new(EXT_A, 12);
+pub const OP_AMOSWAP_D: OpId = OpId::new(EXT_A, 13);
+pub const OP_AMOADD_D: OpId = OpId::new(EXT_A, 14);
+pub const OP_AMOXOR_D: OpId = OpId::new(EXT_A, 15);
+pub const OP_AMOAND_D: OpId = OpId::new(EXT_A, 16);
+pub const OP_AMOOR_D: OpId = OpId::new(EXT_A, 17);
+pub const OP_AMOMIN_D: OpId = OpId::new(EXT_A, 18);
+pub const OP_AMOMAX_D: OpId = OpId::new(EXT_A, 19);
+pub const OP_AMOMINU_D: OpId = OpId::new(EXT_A, 20);
+pub const OP_AMOMAXU_D: OpId = OpId::new(EXT_A, 21);
+
+/// Get the mnemonic for an A extension instruction.
+pub fn a_mnemonic(opid: OpId) -> &'static str {
+    match opid.idx {
+        0 => "lr.w",
+        1 => "sc.w",
+        2 => "amoswap.w",
+        3 => "amoadd.w",
+        4 => "amoxor.w",
+        5 => "amoand.w",
+        6 => "amoor.w",
+        7 => "amomin.w",
+        8 => "amomax.w",
+        9 => "amominu.w",
+        10 => "amomaxu.w",
+        11 => "lr.d",
+        12 => "sc.d",
+        13 => "amoswap.d",
+        14 => "amoadd.d",
+        15 => "amoxor.d",
+        16 => "amoand.d",
+        17 => "amoor.d",
+        18 => "amomin.d",
+        19 => "amomax.d",
+        20 => "amominu.d",
+        21 => "amomaxu.d",
+        _ => "???",
+    }
+}
+
+/// A extension (atomics).
+pub struct AExtension;
+
+impl<X: Xlen> InstructionExtension<X> for AExtension {
+    fn handled_extensions(&self) -> &[u8] {
+        &[EXT_A]
+    }
+
+    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
+        if bytes.len() < 4 || (bytes[0] & 0x03) != 0x03 {
+            return None;
+        }
+        let instr = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let opcode = decode_opcode(instr);
+        if opcode != 0x2F {
+            return None;
+        }
+
+        let funct3 = decode_funct3(instr);
+        let rd = decode_rd(instr);
+        let rs1 = decode_rs1(instr);
+        let rs2 = decode_rs2(instr);
+        let aq = ((instr >> 26) & 1) != 0;
+        let rl = ((instr >> 25) & 1) != 0;
+        let funct5 = (instr >> 27) & 0x1F;
+
+        if funct3 != 2 && !(funct3 == 3 && X::VALUE == 64) {
+            return None;
+        }
+
+        let is_64 = funct3 == 3;
+        let opid = match funct5 {
+            0x02 => if is_64 { OP_LR_D } else { OP_LR_W },
+            0x03 => if is_64 { OP_SC_D } else { OP_SC_W },
+            0x01 => if is_64 { OP_AMOSWAP_D } else { OP_AMOSWAP_W },
+            0x00 => if is_64 { OP_AMOADD_D } else { OP_AMOADD_W },
+            0x04 => if is_64 { OP_AMOXOR_D } else { OP_AMOXOR_W },
+            0x0C => if is_64 { OP_AMOAND_D } else { OP_AMOAND_W },
+            0x08 => if is_64 { OP_AMOOR_D } else { OP_AMOOR_W },
+            0x10 => if is_64 { OP_AMOMIN_D } else { OP_AMOMIN_W },
+            0x14 => if is_64 { OP_AMOMAX_D } else { OP_AMOMAX_W },
+            0x18 => if is_64 { OP_AMOMINU_D } else { OP_AMOMINU_W },
+            0x1C => if is_64 { OP_AMOMAXU_D } else { OP_AMOMAXU_W },
+            _ => return None,
+        };
+
+        Some(DecodedInstr::new(opid, pc, 4, InstrArgs::Amo { rd, rs1, rs2, aq, rl }))
+    }
+
+    fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
+        let (stmts, term) = lift_a(&instr.args, instr.opid);
+        InstrIR::new(instr.pc, instr.size, stmts, term)
+    }
+
+    fn disasm(&self, instr: &DecodedInstr<X>) -> String {
+        let mnemonic = a_mnemonic(instr.opid);
+        match &instr.args {
+            InstrArgs::Amo { rd, rs1, rs2, aq, rl } => {
+                let suffix = match (aq, rl) {
+                    (true, true) => ".aqrl",
+                    (true, false) => ".aq",
+                    (false, true) => ".rl",
+                    (false, false) => "",
+                };
+                format!("{}{} {}, {}, ({})", mnemonic, suffix,
+                    reg_name(*rd), reg_name(*rs2), reg_name(*rs1))
+            }
+            _ => format!("{} <?>", mnemonic),
+        }
+    }
+}
+
+fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
+    match args {
+        InstrArgs::Amo { rd, rs1, rs2, .. } => {
+            let rd = *rd;
+            let rs1 = *rs1;
+            let rs2 = *rs2;
+
+            let is_64 = matches!(opid,
+                OP_LR_D | OP_SC_D | OP_AMOSWAP_D | OP_AMOADD_D | OP_AMOXOR_D |
+                OP_AMOAND_D | OP_AMOOR_D | OP_AMOMIN_D | OP_AMOMAX_D |
+                OP_AMOMINU_D | OP_AMOMAXU_D
+            );
+            let width: u8 = if is_64 { 8 } else { 4 };
+
+            if opid == OP_LR_W || opid == OP_LR_D {
+                let stmts = vec![Stmt::write_reg(rd, Expr::mem_u(Expr::read(rs1), width))];
+                return (stmts, Terminator::Fall);
+            }
+
+            if opid == OP_SC_W || opid == OP_SC_D {
+                let stmts = vec![
+                    Stmt::write_mem(Expr::read(rs1), Expr::read(rs2), width),
+                    Stmt::write_reg(rd, Expr::imm(X::from_u64(0))),
+                ];
+                return (stmts, Terminator::Fall);
+            }
+
+            match opid {
+                OP_AMOSWAP_W | OP_AMOSWAP_D => lift_amo(rd, rs1, rs2, width, |_, b| b),
+                OP_AMOADD_W | OP_AMOADD_D => lift_amo(rd, rs1, rs2, width, Expr::add),
+                OP_AMOXOR_W | OP_AMOXOR_D => lift_amo(rd, rs1, rs2, width, Expr::xor),
+                OP_AMOAND_W | OP_AMOAND_D => lift_amo(rd, rs1, rs2, width, Expr::and),
+                OP_AMOOR_W | OP_AMOOR_D => lift_amo(rd, rs1, rs2, width, Expr::or),
+                OP_AMOMIN_W | OP_AMOMIN_D => lift_amo(rd, rs1, rs2, width, Expr::min),
+                OP_AMOMAX_W | OP_AMOMAX_D => lift_amo(rd, rs1, rs2, width, Expr::max),
+                OP_AMOMINU_W | OP_AMOMINU_D => lift_amo(rd, rs1, rs2, width, Expr::minu),
+                OP_AMOMAXU_W | OP_AMOMAXU_D => lift_amo(rd, rs1, rs2, width, Expr::maxu),
+                _ => (Vec::new(), Terminator::trap("unknown A instruction")),
+            }
+        }
+        _ => (Vec::new(), Terminator::trap("invalid args")),
+    }
+}
+
+fn lift_amo<X: Xlen, F>(rd: u8, rs1: u8, rs2: u8, width: u8, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
+where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+    let addr = Expr::read(rs1);
+    let old = Expr::mem_u(addr.clone(), width);
+    let new = op(old.clone(), Expr::read(rs2));
+    let stmts = vec![
+        Stmt::write_reg(rd, old),
+        Stmt::write_mem(addr, new, width),
+    ];
+    (stmts, Terminator::Fall)
+}

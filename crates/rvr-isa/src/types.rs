@@ -1,125 +1,56 @@
 //! Core types for RISC-V ISA.
 
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::ops::{Add, BitAnd, BitOr, BitXor, Not, Shl, Shr, Sub};
+use std::fmt::Display;
 
-/// Marker type for RV32.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Rv32;
+// Re-export Xlen types from rvr-ir
+pub use rvr_ir::{Xlen, Rv32, Rv64};
 
-/// Marker type for RV64.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Rv64;
-
-/// Trait for XLEN-dependent operations.
-///
-/// Uses marker types (Rv32/Rv64) with associated types instead of const generics
-/// because Rust doesn't support type-level computation like Mojo's comptime.
-pub trait Xlen: Copy + Clone + Send + Sync + Default + Debug + 'static {
-    /// Register type (u32 for RV32, u64 for RV64).
-    type Reg: Copy
-        + Clone
-        + Default
-        + Eq
-        + Ord
-        + Hash
-        + Debug
-        + Display
-        + Send
-        + Sync
-        + From<u32>
-        + Into<u64>
-        + Add<Output = Self::Reg>
-        + Sub<Output = Self::Reg>
-        + BitAnd<Output = Self::Reg>
-        + BitOr<Output = Self::Reg>
-        + BitXor<Output = Self::Reg>
-        + Not<Output = Self::Reg>
-        + Shl<u32, Output = Self::Reg>
-        + Shr<u32, Output = Self::Reg>;
-
-    /// Signed register type.
-    type SignedReg: Copy + Clone + Debug;
-
-    /// XLEN value (32 or 64).
-    const VALUE: u8;
-
-    /// Shift amount mask (0x1F for RV32, 0x3F for RV64).
-    const SHIFT_MASK: u8;
-
-    /// Bytes per register (4 for RV32, 8 for RV64).
-    const REG_BYTES: usize;
-
-    /// Sign-extend a 32-bit value to register width.
-    fn sign_extend_32(val: u32) -> Self::Reg;
-
-    /// Truncate register to 32 bits.
-    fn truncate_to_32(val: Self::Reg) -> u32;
-
-    /// Zero-extend a u64 to register width.
-    fn from_u64(val: u64) -> Self::Reg;
-
-    /// Convert register to u64.
-    fn to_u64(val: Self::Reg) -> u64;
+/// Decoded instruction with all fields extracted.
+#[derive(Clone, Debug)]
+pub struct DecodedInstr<X: Xlen> {
+    /// Instruction identifier.
+    pub opid: OpId,
+    /// Program counter.
+    pub pc: X::Reg,
+    /// Instruction size in bytes (2 for compressed, 4 for normal).
+    pub size: u8,
+    /// Instruction arguments.
+    pub args: InstrArgs,
 }
 
-impl Xlen for Rv32 {
-    type Reg = u32;
-    type SignedReg = i32;
-
-    const VALUE: u8 = 32;
-    const SHIFT_MASK: u8 = 0x1F;
-    const REG_BYTES: usize = 4;
-
-    #[inline]
-    fn sign_extend_32(val: u32) -> u32 {
-        val
-    }
-
-    #[inline]
-    fn truncate_to_32(val: u32) -> u32 {
-        val
-    }
-
-    #[inline]
-    fn from_u64(val: u64) -> u32 {
-        val as u32
-    }
-
-    #[inline]
-    fn to_u64(val: u32) -> u64 {
-        val as u64
+impl<X: Xlen> DecodedInstr<X> {
+    pub fn new(opid: OpId, pc: X::Reg, size: u8, args: InstrArgs) -> Self {
+        Self { opid, pc, size, args }
     }
 }
 
-impl Xlen for Rv64 {
-    type Reg = u64;
-    type SignedReg = i64;
-
-    const VALUE: u8 = 64;
-    const SHIFT_MASK: u8 = 0x3F;
-    const REG_BYTES: usize = 8;
-
-    #[inline]
-    fn sign_extend_32(val: u32) -> u64 {
-        val as i32 as i64 as u64
-    }
-
-    #[inline]
-    fn truncate_to_32(val: u64) -> u32 {
-        val as u32
-    }
-
-    #[inline]
-    fn from_u64(val: u64) -> u64 {
-        val
-    }
-
-    #[inline]
-    fn to_u64(val: u64) -> u64 {
-        val
-    }
+/// Instruction argument patterns (covers all RISC-V formats + custom).
+#[derive(Clone, Debug, PartialEq)]
+pub enum InstrArgs {
+    /// R-type: rd, rs1, rs2
+    R { rd: u8, rs1: u8, rs2: u8 },
+    /// R4-type: rd, rs1, rs2, rs3 (for fused ops)
+    R4 { rd: u8, rs1: u8, rs2: u8, rs3: u8 },
+    /// I-type: rd, rs1, imm
+    I { rd: u8, rs1: u8, imm: i32 },
+    /// S-type: rs1, rs2, imm
+    S { rs1: u8, rs2: u8, imm: i32 },
+    /// B-type: rs1, rs2, imm
+    B { rs1: u8, rs2: u8, imm: i32 },
+    /// U-type: rd, imm
+    U { rd: u8, imm: i32 },
+    /// J-type: rd, imm
+    J { rd: u8, imm: i32 },
+    /// CSR: rd, rs1, csr
+    Csr { rd: u8, rs1: u8, csr: u16 },
+    /// CSRI: rd, imm, csr
+    CsrI { rd: u8, imm: u8, csr: u16 },
+    /// AMO: rd, rs1, rs2, aq, rl
+    Amo { rd: u8, rs1: u8, rs2: u8, aq: bool, rl: bool },
+    /// No arguments (ECALL, EBREAK, etc.)
+    None,
+    /// Custom instruction arguments
+    Custom(Box<[u32]>),
 }
 
 /// Compact instruction identifier (2 bytes).
