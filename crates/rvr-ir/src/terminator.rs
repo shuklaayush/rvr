@@ -112,4 +112,9 @@ impl<X: Xlen> Terminator<X> {
             _ => Vec::new(),
         }
     }
+
+    /// Check if this terminator is any kind of control flow (not fall-through).
+    pub fn is_control_flow(&self) -> bool {
+        !matches!(self, Self::Fall)
+    }
 }

@@ -11,6 +11,7 @@ thiserror.workspace = true
 clap.workspace = true
 libloading.workspace = true
 rayon.workspace = true
+num_cpus.workspace = true
 rvr-elf.workspace = true
 rvr-isa.workspace = true
 rvr-ir.workspace = true

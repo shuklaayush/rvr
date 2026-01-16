@@ -21,10 +21,13 @@ pub use rvr_isa::{
 };
 pub use rvr_ir::{
     Expr, ExprKind, Space, Stmt, Terminator, BranchHint,
-    InstrIR, BlockIR, IRBuilder,
+    InstrIR, BlockIR, IRBuilder, lift,
 };
-pub use rvr_cfg::BlockTable;
+pub use rvr_cfg::{BlockTable, CfgAnalyzer, CfgResult, CodeView};
 pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig, TracerKind, CEmitter};
+
+mod pipeline;
+pub use pipeline::*;
 
 use std::marker::PhantomData;
 use std::path::Path;
@@ -74,15 +77,48 @@ impl<X: Xlen> Recompiler<X> {
     }
 
     /// Compile an ELF file to a shared library.
-    pub fn compile(&self, _elf_path: &Path, _output_dir: &Path) -> Result<std::path::PathBuf> {
-        // TODO: Implement full compilation pipeline
-        todo!("Compilation pipeline not yet implemented")
+    pub fn compile(&self, elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+        // First lift to C source
+        let _c_path = self.lift(elf_path, output_dir)?;
+
+        // Then compile C to .so
+        compile_c_to_shared(output_dir)?;
+
+        // Return the path to the shared library
+        let lib_name = output_dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("rv");
+        let lib_path = output_dir.join(format!("lib{}.so", lib_name));
+        Ok(lib_path)
     }
 
     /// Lift an ELF file to C source code (without compilation).
-    pub fn lift(&self, _elf_path: &Path, _output_dir: &Path) -> Result<std::path::PathBuf> {
-        // TODO: Implement lifting pipeline
-        todo!("Lifting pipeline not yet implemented")
+    pub fn lift(&self, elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+        // Load ELF
+        let data = std::fs::read(elf_path)?;
+        let image = ElfImage::<X>::parse(&data)?;
+
+        // Create output directory if it doesn't exist
+        std::fs::create_dir_all(output_dir)?;
+
+        // Build pipeline
+        let mut pipeline = Pipeline::<X>::new(image, self.config.clone());
+
+        // Run CFG analysis
+        pipeline.analyze_cfg();
+
+        // Lift to IR
+        pipeline.lift_to_ir();
+
+        // Emit C code
+        let base_name = output_dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("rv");
+        pipeline.emit_c(output_dir, base_name)?;
+
+        // Return path to main C file
+        let c_path = output_dir.join(format!("{}_part0.c", base_name));
+        Ok(c_path)
     }
 }
 
@@ -105,6 +141,52 @@ pub fn compile(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf>
             actual: xlen,
         }),
     }
+}
+
+/// Lift an ELF file to C source code, auto-detecting XLEN.
+pub fn lift_to_c(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+    let data = std::fs::read(elf_path)?;
+    let xlen = get_elf_xlen(&data)?;
+
+    match xlen {
+        32 => {
+            let recompiler = Recompiler::<Rv32>::with_defaults();
+            recompiler.lift(elf_path, output_dir)
+        }
+        64 => {
+            let recompiler = Recompiler::<Rv64>::with_defaults();
+            recompiler.lift(elf_path, output_dir)
+        }
+        _ => Err(Error::XlenMismatch {
+            expected: 32,
+            actual: xlen,
+        }),
+    }
+}
+
+/// Compile C source to shared library.
+fn compile_c_to_shared(output_dir: &Path) -> Result<()> {
+    use std::process::Command;
+
+    let makefile_path = output_dir.join("Makefile");
+    if !makefile_path.exists() {
+        return Err(Error::CompilationFailed("Makefile not found".to_string()));
+    }
+
+    let status = Command::new("make")
+        .arg("-C")
+        .arg(output_dir)
+        .arg("-j")
+        .arg(num_cpus::get().saturating_sub(2).max(1).to_string())
+        .arg("shared")
+        .status()
+        .map_err(|e| Error::CompilationFailed(format!("Failed to run make: {}", e)))?;
+
+    if !status.success() {
+        return Err(Error::CompilationFailed("make failed".to_string()));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
