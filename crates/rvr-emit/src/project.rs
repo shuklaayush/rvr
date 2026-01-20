@@ -20,7 +20,7 @@ use crate::emitter::CEmitter;
 use crate::header::{gen_blocks_header, gen_header, HeaderConfig};
 use crate::htif::{gen_htif_header, gen_htif_source, HtifConfig};
 use crate::inputs::EmitInputs;
-use crate::memory::{gen_memory_file, MemoryConfig, MemorySegment};
+use crate::memory::{gen_memory_file_with_embed, gen_segment_bins, MemoryConfig, MemorySegment};
 use crate::syscalls::{gen_syscalls_source, SyscallsConfig};
 use crate::tracer::gen_tracer_header;
 
@@ -358,7 +358,13 @@ impl<X: Xlen> CProject<X> {
             self.inputs.initial_brk,
         );
 
-        let memory = gen_memory_file(&mem_cfg);
+        // C23 #embed: write segment binaries, then emit memory.c with #embed directives.
+        for (name, data) in gen_segment_bins(&mem_cfg) {
+            let path = self.output_dir.join(name);
+            fs::write(path, data)?;
+        }
+
+        let memory = gen_memory_file_with_embed(&mem_cfg);
         fs::write(self.memory_path(), memory)
     }
 
