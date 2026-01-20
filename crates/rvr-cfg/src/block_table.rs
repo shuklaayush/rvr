@@ -402,14 +402,12 @@ impl<X: Xlen> BlockTable<X> {
                 continue;
             }
 
-            // All predecessors must end with unconditional control flow
+            // All predecessors must end with explicit unconditional jumps.
+            // Avoid fall-through preds to keep dispatch mapping correct.
             let all_unconditional = preds.iter().all(|&pred_pc| {
                 if let Some(instr) = self.instruction_table.get_at_pc(pred_pc) {
                     let ir = registry.lift(instr);
-                    matches!(
-                        ir.terminator,
-                        rvr_ir::Terminator::Fall { .. } | rvr_ir::Terminator::Jump { .. }
-                    )
+                    matches!(ir.terminator, rvr_ir::Terminator::Jump { .. })
                 } else {
                     false
                 }
@@ -668,6 +666,7 @@ impl<X: Xlen> BlockTable<X> {
                     .entry(*head_start)
                     .or_default()
                     .push((absorbed_block.start, absorbed_block.end));
+
             }
         }
 

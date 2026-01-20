@@ -147,7 +147,7 @@ impl<X: Xlen> Pipeline<X> {
 
         // Add read-only segments for constant propagation
         for seg in &self.image.memory_segments {
-            if seg.is_readonly() {
+            if seg.is_readonly() && !seg.is_executable() {
                 let seg_start = X::to_u64(seg.virtual_start);
                 let seg_end = X::to_u64(seg.virtual_end);
                 instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
