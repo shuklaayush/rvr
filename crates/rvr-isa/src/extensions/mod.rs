@@ -341,11 +341,32 @@ mod tests {
         use crate::{OpClass, OP_FENCE_I, EXT_ZIFENCEI};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
-        // Zifencei has a different ext_id but is handled by ZicsrExtension
+        // Zifencei extension handles FENCE.I instruction
         assert_eq!(OP_FENCE_I.ext, EXT_ZIFENCEI);
         let info = registry.op_info(OP_FENCE_I).unwrap();
         assert_eq!(info.name, "fence.i");
         assert_eq!(info.class, OpClass::Fence);
         assert_eq!(info.size_hint, 4);
+    }
+
+    #[test]
+    fn test_zifencei_decode_lift_disasm() {
+        use crate::{OP_FENCE_I, EXT_ZIFENCEI};
+        let registry = ExtensionRegistry::<Rv64>::standard();
+
+        // FENCE.I encoding: opcode=0x0F, funct3=1, rest is zero
+        // 0x0000100F
+        let bytes = [0x0F, 0x10, 0x00, 0x00];
+        let instr = registry.decode(&bytes, 0x1000u64).unwrap();
+        assert_eq!(instr.opid, OP_FENCE_I);
+        assert_eq!(instr.opid.ext, EXT_ZIFENCEI);
+
+        // Test lift works
+        let ir = registry.lift(&instr);
+        assert!(!ir.terminator.is_control_flow()); // FENCE.I is not a control flow instruction
+
+        // Test disasm works
+        let disasm = registry.disasm(&instr);
+        assert_eq!(disasm, "fence.i");
     }
 }

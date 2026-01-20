@@ -500,8 +500,36 @@ impl<X: Xlen> CEmitter<X> {
                         }
                     }
                     Space::Mem => {
-                        let base = self.render_expr(addr.left.as_ref().unwrap());
-                        let offset = addr.mem_offset;
+                        // Extract base and offset from address expression.
+                        // Store addresses come from ISA as Expr::add(rs1, imm).
+                        let (base, offset) = if addr.kind == ExprKind::Add {
+                            // Add(base, offset) - common pattern for stores
+                            let base_str = self.render_expr(addr.left.as_ref().unwrap());
+                            let offset_val = if let Some(right) = &addr.right {
+                                if right.kind == ExprKind::Imm {
+                                    X::to_u64(right.imm) as i64 as i16
+                                } else {
+                                    // Right is not immediate, render full address
+                                    0i16
+                                }
+                            } else {
+                                0i16
+                            };
+                            // If right operand wasn't a simple immediate, we need to include it
+                            if offset_val == 0 && addr.right.is_some() && addr.right.as_ref().unwrap().kind != ExprKind::Imm {
+                                // Complex right operand - render full expression as base with 0 offset
+                                (self.render_expr(addr), 0i16)
+                            } else {
+                                (base_str, offset_val)
+                            }
+                        } else if addr.mem_offset != 0 || addr.left.is_some() {
+                            // Memory read expression with mem_offset
+                            let base_str = self.render_expr(addr.left.as_ref().unwrap());
+                            (base_str, addr.mem_offset)
+                        } else {
+                            // Plain address expression (fallback)
+                            (self.render_expr(addr), 0i16)
+                        };
                         let store_fn = match width {
                             1 => "wr_mem_u8",
                             2 => "wr_mem_u16",
