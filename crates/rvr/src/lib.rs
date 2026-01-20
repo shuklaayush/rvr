@@ -27,7 +27,7 @@
 // Core types - always available
 pub use rvr_elf::{ElfImage, get_elf_xlen};
 pub use rvr_isa::{Xlen, Rv32, Rv64};
-pub use rvr_emit::{EmitConfig, InstretMode};
+pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig};
 
 mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
@@ -142,6 +142,8 @@ pub struct CompileOptions {
     pub instret_mode: InstretMode,
     /// Number of parallel compile jobs (0 = auto-detect based on CPU count).
     pub jobs: usize,
+    /// Tracer configuration.
+    pub tracer_config: TracerConfig,
 }
 
 impl CompileOptions {
@@ -174,11 +176,18 @@ impl CompileOptions {
         self
     }
 
+    /// Set tracer configuration.
+    pub fn with_tracer_config(mut self, config: TracerConfig) -> Self {
+        self.tracer_config = config;
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
         config.tohost_enabled = self.tohost;
         config.instret_mode = self.instret_mode;
+        config.tracer_config = self.tracer_config.clone();
     }
 }
 
