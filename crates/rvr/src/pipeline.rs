@@ -298,6 +298,9 @@ impl<X: Xlen> Pipeline<X> {
         // Get absorbed_to_merged mapping from BlockTable
         let absorbed_to_merged = block_table.absorbed_to_merged.clone();
 
+        // Get taken_inlines mapping from BlockTable
+        let taken_inlines = block_table.taken_inlines.clone();
+
         // Add absorbed mapping to config for emitter use
         self.config.absorbed_to_merged = absorbed_to_merged.clone();
 
@@ -307,6 +310,7 @@ impl<X: Xlen> Pipeline<X> {
             .with_pc_end(pc_end)
             .with_valid_addresses(self.config.valid_addresses.clone())
             .with_absorbed_mapping(absorbed_to_merged)
+            .with_taken_inlines(taken_inlines)
             .with_segments(segments)
             .with_tohost(self.config.tohost_enabled);
 

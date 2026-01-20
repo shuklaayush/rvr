@@ -727,7 +727,7 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Render static jump.
-    fn render_jump_static(&mut self, target: u64) {
+    pub fn render_jump_static(&mut self, target: u64) {
         if self.is_valid_address(target) {
             // Resolve absorbed addresses to their merged block
             let resolved = self.config.resolve_address(target);
@@ -918,6 +918,261 @@ impl<X: Xlen> CEmitter<X> {
         }
         self.writeln(2, "return;");
         self.writeln(1, "}");
+    }
+
+    // ============= Taken-inline support =============
+
+    /// Render branch open for taken-inline: `if (cond) {`
+    pub fn render_branch_open(&mut self, cond: &str, hint: BranchHint) {
+        let cond_str = match hint {
+            BranchHint::Taken => format!("likely({})", cond),
+            BranchHint::NotTaken => format!("unlikely({})", cond),
+            BranchHint::None => cond.to_string(),
+        };
+        self.writeln(1, &format!("if ({}) {{", cond_str));
+    }
+
+    /// Render branch close for taken-inline: `}`
+    pub fn render_branch_close(&mut self) {
+        self.writeln(1, "}");
+    }
+
+    /// Render instruction with custom indent (for inlined blocks).
+    pub fn render_instruction_indented(&mut self, ir: &InstrIR<X>, is_last: bool, fall_pc: u64, indent: usize) {
+        self.current_pc = X::to_u64(ir.pc);
+
+        // Optional: emit comment
+        if self.config.emit_comments {
+            let pc_hex = self.fmt_addr(self.current_pc);
+            self.writeln(indent, &format!("// PC: {}", pc_hex));
+        }
+
+        // Render statements
+        for stmt in &ir.statements {
+            self.render_stmt_indented(stmt, indent);
+        }
+
+        self.instr_idx += 1;
+
+        // Render terminator if last instruction
+        if is_last {
+            self.render_terminator_indented(&ir.terminator, fall_pc, indent);
+        }
+    }
+
+    /// Render statement with custom indent.
+    fn render_stmt_indented(&mut self, stmt: &Stmt<X>, indent: usize) {
+        match stmt {
+            Stmt::Write { space, addr, value, width } => {
+                let value_str = self.render_expr(value);
+                match space {
+                    Space::Reg => {
+                        let reg = X::to_u64(addr.imm) as u8;
+                        let code = self.sig.reg_write(reg, &value_str);
+                        if !code.is_empty() {
+                            self.writeln(indent, &code);
+                        }
+                    }
+                    Space::Mem => {
+                        let (base, offset) = if addr.kind == ExprKind::Add {
+                            let base_str = self.render_expr(addr.left.as_ref().unwrap());
+                            let offset_val = if let Some(right) = &addr.right {
+                                if right.kind == ExprKind::Imm {
+                                    X::to_u64(right.imm) as i64 as i16
+                                } else {
+                                    0i16
+                                }
+                            } else {
+                                0i16
+                            };
+                            if offset_val == 0 && addr.right.is_some() && addr.right.as_ref().unwrap().kind != ExprKind::Imm {
+                                (self.render_expr(addr), 0i16)
+                            } else {
+                                (base_str, offset_val)
+                            }
+                        } else if addr.mem_offset != 0 || addr.left.is_some() {
+                            let base_str = self.render_expr(addr.left.as_ref().unwrap());
+                            (base_str, addr.mem_offset)
+                        } else {
+                            (self.render_expr(addr), 0i16)
+                        };
+
+                        let store_fn = match width {
+                            1 => "twr_mem_u8",
+                            2 => "twr_mem_u16",
+                            4 => "twr_mem_u32",
+                            8 => "twr_mem_u64",
+                            _ => "twr_mem_u32",
+                        };
+                        self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
+                    }
+                    Space::Csr => {
+                        let csr = X::to_u64(addr.imm) as u16;
+                        self.writeln(indent, &format!("twr_csr(state, 0x{:x}, {});", csr, value_str));
+                    }
+                    Space::Pc => {
+                        self.writeln(indent, &format!("state->pc = {};", value_str));
+                    }
+                    Space::Temp => {
+                        let idx = X::to_u64(addr.imm);
+                        self.writeln(indent, &format!("{} _t{} = {};", self.reg_type, idx, value_str));
+                    }
+                    _ => {}
+                }
+            }
+            Stmt::If { cond, then_stmts, else_stmts } => {
+                let cond_str = self.render_expr(cond);
+                self.writeln(indent, &format!("if ({}) {{", cond_str));
+                for s in then_stmts {
+                    self.render_stmt_indented(s, indent + 1);
+                }
+                if !else_stmts.is_empty() {
+                    self.writeln(indent, "} else {");
+                    for s in else_stmts {
+                        self.render_stmt_indented(s, indent + 1);
+                    }
+                }
+                self.writeln(indent, "}");
+            }
+            Stmt::ExternCall { fn_name, args } => {
+                let args_str: Vec<String> = args.iter().map(|a| self.render_expr(a)).collect();
+                self.writeln(indent, &format!("{}({});", fn_name, args_str.join(", ")));
+            }
+        }
+    }
+
+    /// Render terminator with custom indent.
+    fn render_terminator_indented(&mut self, term: &Terminator<X>, fall_pc: u64, indent: usize) {
+        match term {
+            Terminator::Fall { target } => {
+                let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                self.render_jump_static_indented(target_pc, indent);
+            }
+            Terminator::Jump { target } => {
+                self.render_jump_static_indented(X::to_u64(*target), indent);
+            }
+            Terminator::JumpDyn { addr, resolved } => {
+                if let Some(targets) = resolved {
+                    self.render_jump_resolved_indented(targets.iter().map(|t| X::to_u64(*t)).collect(), addr, indent);
+                } else {
+                    self.render_jump_dynamic_indented(addr, None, indent);
+                }
+            }
+            Terminator::Branch { cond, target, fall, hint } => {
+                let cond_str = self.render_expr(cond);
+                let fall_target = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
+                self.render_branch_indented(&cond_str, X::to_u64(*target), *hint, fall_target, indent);
+            }
+            Terminator::Exit { code } => {
+                let code_str = self.render_expr(code);
+                self.render_exit_indented(&code_str, indent);
+            }
+            Terminator::Trap { message } => {
+                self.writeln(indent, &format!("// TRAP: {}", message));
+                self.render_exit_indented("1", indent);
+            }
+        }
+    }
+
+    /// Render static jump with custom indent.
+    fn render_jump_static_indented(&mut self, target: u64, indent: usize) {
+        if self.is_valid_address(target) {
+            let resolved = self.config.resolve_address(target);
+            let pc_str = self.fmt_pc(resolved);
+            self.writeln(indent, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
+        } else {
+            self.render_exit_indented("1", indent);
+        }
+    }
+
+    /// Render dynamic jump with custom indent.
+    fn render_jump_dynamic_indented(&mut self, target_expr: &Expr<X>, pre_eval_var: Option<&str>, indent: usize) {
+        let target = pre_eval_var
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.render_expr(target_expr));
+        self.writeln(indent, &format!(
+            "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
+            target, self.sig.args
+        ));
+    }
+
+    /// Render jump with resolved targets with custom indent.
+    fn render_jump_resolved_indented(&mut self, targets: Vec<u64>, fallback: &Expr<X>, indent: usize) {
+        if targets.is_empty() {
+            self.render_jump_dynamic_indented(fallback, None, indent);
+            return;
+        }
+
+        let target_var = self.render_expr(fallback);
+        if targets.len() > 1 {
+            self.writeln(indent, &format!("{} target = {};", self.reg_type, target_var));
+        }
+
+        let var_name = if targets.len() > 1 { "target" } else { &target_var };
+
+        for target in &targets {
+            if self.is_valid_address(*target) {
+                let pc_str = self.fmt_pc(*target);
+                let addr_lit = self.fmt_addr(*target);
+                self.writeln(indent, &format!("if ({} == {}) {{", var_name, addr_lit));
+                self.writeln(indent + 1, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
+                self.writeln(indent, "}");
+            }
+        }
+
+        let pre_eval = if targets.len() > 1 { Some("target") } else { None };
+        self.render_jump_dynamic_indented(fallback, pre_eval, indent);
+    }
+
+    /// Render branch with custom indent.
+    fn render_branch_indented(&mut self, cond: &str, target: u64, hint: BranchHint, _fall_pc: u64, indent: usize) {
+        let cond_str = match hint {
+            BranchHint::Taken => format!("likely({})", cond),
+            BranchHint::NotTaken => format!("unlikely({})", cond),
+            BranchHint::None => cond.to_string(),
+        };
+
+        let args = self.sig.args.clone();
+        let save_to_state = self.sig.save_to_state.clone();
+
+        if self.is_valid_address(target) {
+            let resolved = self.config.resolve_address(target);
+            let pc_str = self.fmt_pc(resolved);
+            self.writeln(indent, &format!("if ({}) {{", cond_str));
+            self.writeln(indent + 1, &format!("[[clang::musttail]] return B_{}({});", pc_str, args));
+            self.writeln(indent, "}");
+        } else {
+            self.writeln(indent, &format!("if ({}) {{", cond_str));
+            self.writeln(indent + 1, "state->has_exited = true;");
+            self.writeln(indent + 1, "state->exit_code = 1;");
+            let pc_lit = self.fmt_addr(target);
+            self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
+            if !save_to_state.is_empty() {
+                self.writeln(indent + 1, &save_to_state);
+            }
+            self.writeln(indent + 1, "return;");
+            self.writeln(indent, "}");
+        }
+    }
+
+    /// Render exit with custom indent.
+    fn render_exit_indented(&mut self, code: &str, indent: usize) {
+        let save_to_state = self.sig.save_to_state.clone();
+        self.writeln(indent, "state->has_exited = true;");
+        self.writeln(indent, &format!("state->exit_code = (uint8_t)({});", code));
+        let pc_lit = self.fmt_addr(self.current_pc);
+        self.writeln(indent, &format!("state->pc = {};", pc_lit));
+        if !save_to_state.is_empty() {
+            self.writeln(indent, &save_to_state);
+        }
+        self.writeln(indent, "return;");
+    }
+
+    /// Render instret update with custom indent.
+    pub fn render_instret_update_indented(&mut self, count: u64, indent: usize) {
+        if self.config.instret_mode.counts() {
+            self.writeln(indent, &format!("instret += {};", count));
+        }
     }
 }
 

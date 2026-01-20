@@ -36,6 +36,8 @@ pub struct CProject<X: Xlen> {
     pub valid_addresses: HashSet<u64>,
     /// Absorbed block mapping: absorbed_pc -> merged_block_start.
     pub absorbed_to_merged: HashMap<u64, u64>,
+    /// Taken-inline mapping: branch_pc -> (inline_start, inline_end).
+    pub taken_inlines: HashMap<u64, (u64, u64)>,
     /// Program entry point.
     pub entry_point: u64,
     /// End address (exclusive).
@@ -67,6 +69,7 @@ impl<X: Xlen> CProject<X> {
             config,
             valid_addresses: HashSet::new(),
             absorbed_to_merged: HashMap::new(),
+            taken_inlines: HashMap::new(),
             entry_point: 0,
             pc_end: 0,
             initial_brk: 0,
@@ -105,6 +108,12 @@ impl<X: Xlen> CProject<X> {
     /// Set absorbed to merged mapping.
     pub fn with_absorbed_mapping(mut self, mapping: HashMap<u64, u64>) -> Self {
         self.absorbed_to_merged = mapping;
+        self
+    }
+
+    /// Set taken-inline mapping for branch inlining.
+    pub fn with_taken_inlines(mut self, mapping: HashMap<u64, (u64, u64)>) -> Self {
+        self.taken_inlines = mapping;
         self
     }
 
@@ -241,11 +250,17 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write partition file.
+    ///
+    /// The `block_map` is used for taken-inline support - when a branch has an
+    /// inline entry, we look up the inlined block by its start address.
     pub fn write_partition(
         &self,
         partition_idx: usize,
         blocks: &[&BlockIR<X>],
+        block_map: &HashMap<u64, &BlockIR<X>>,
     ) -> std::io::Result<()> {
+        use rvr_ir::Terminator;
+
         let mut config = self.config.clone();
         for &addr in &self.valid_addresses {
             config.valid_addresses.insert(addr);
@@ -258,7 +273,92 @@ impl<X: Xlen> CProject<X> {
 
         for block in blocks {
             emitter.reset();
-            emitter.render_block(block);
+
+            let start_pc = X::to_u64(block.start_pc);
+            let end_pc = X::to_u64(block.end_pc);
+            let num_instrs = block.instructions.len();
+
+            emitter.render_block_header(start_pc, end_pc);
+
+            if num_instrs == 0 {
+                emitter.render_block_footer();
+                content.push_str(emitter.output());
+                continue;
+            }
+
+            // Get the last instruction to check for taken-inline
+            let last_instr = block.instructions.last().unwrap();
+            let last_pc = X::to_u64(last_instr.pc);
+
+            // Check if this block's last instruction is a branch with taken-inline
+            let taken_inline = if let Terminator::Branch { cond, hint, .. } = &last_instr.terminator {
+                if let Some(&(inline_start, _inline_end)) = self.taken_inlines.get(&last_pc) {
+                    // Found a taken-inline entry for this branch
+                    Some((cond.clone(), *hint, inline_start))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Render all instructions except the last one normally
+            for (i, instr) in block.instructions.iter().enumerate() {
+                let is_last = i == num_instrs - 1;
+                if is_last {
+                    // Handle last instruction specially if it has taken-inline
+                    if let Some((cond, hint, inline_start)) = &taken_inline {
+                        // Render the last instruction's statements (but not terminator)
+                        for stmt in &last_instr.statements {
+                            emitter.render_stmt(stmt, 1);
+                        }
+
+                        // Render branch condition open
+                        let cond_str = emitter.render_expr(cond);
+                        emitter.render_branch_open(&cond_str, *hint);
+
+                        // Look up and render the inlined block
+                        if let Some(inline_block) = block_map.get(inline_start) {
+                            let inline_num_instrs = inline_block.instructions.len();
+                            let inline_end_pc = X::to_u64(inline_block.end_pc);
+
+                            // Render inlined instructions with extra indent
+                            for (j, inline_instr) in inline_block.instructions.iter().enumerate() {
+                                let is_inline_last = j == inline_num_instrs - 1;
+                                emitter.render_instruction_indented(
+                                    inline_instr,
+                                    is_inline_last,
+                                    inline_end_pc,
+                                    2, // Extra indentation for if-block
+                                );
+                            }
+
+                            // Update instret for inlined instructions
+                            if inline_num_instrs > 0 {
+                                emitter.render_instret_update_indented(inline_num_instrs as u64, 2);
+                            }
+                        }
+
+                        // Close branch if-block
+                        emitter.render_branch_close();
+
+                        // Fall-through for not-taken path
+                        emitter.render_jump_static(end_pc);
+                    } else {
+                        // No taken-inline, render normally
+                        emitter.render_instruction(instr, is_last, end_pc);
+                    }
+                } else {
+                    emitter.render_instruction(instr, false, end_pc);
+                }
+            }
+
+            // Update instret for main block
+            if num_instrs > 0 {
+                emitter.render_instret_update(num_instrs as u64);
+            }
+
+            emitter.render_block_footer();
             content.push_str(emitter.output());
         }
 
@@ -267,11 +367,17 @@ impl<X: Xlen> CProject<X> {
 
     /// Write all partition files.
     pub fn write_partitions(&self, blocks: &[BlockIR<X>]) -> std::io::Result<usize> {
+        // Build block lookup map for taken-inline support
+        let block_map: HashMap<u64, &BlockIR<X>> = blocks
+            .iter()
+            .map(|b| (X::to_u64(b.start_pc), b))
+            .collect();
+
         let partitions = self.partition_blocks(blocks);
         let num_partitions = partitions.len();
 
         for (idx, partition_blocks) in partitions {
-            self.write_partition(idx, &partition_blocks)?;
+            self.write_partition(idx, &partition_blocks, &block_map)?;
         }
 
         Ok(num_partitions)
