@@ -5,30 +5,32 @@
 //! # Example
 //!
 //! ```ignore
-//! use rvr::{Recompiler, Rv64, EmitConfig};
+//! use rvr::{Recompiler, Rv64};
 //!
-//! let recompiler = Recompiler::<Rv64>::new(EmitConfig::default());
+//! let recompiler = Recompiler::<Rv64>::with_defaults();
 //! let compiled = recompiler.compile("program.elf", "output/")?;
 //! ```
+//!
+//! # API Overview
+//!
+//! The main entry point is [`Recompiler`], which provides high-level methods:
+//! - [`lift`](Recompiler::lift): ELF → C code
+//! - [`compile`](Recompiler::compile): ELF → C code → native shared library
+//!
+//! For lower-level control, use [`Pipeline`] directly with custom [`EmitConfig`].
+//!
+//! # Re-exports
+//!
+//! This crate re-exports commonly needed types. For advanced usage, access the
+//! underlying crates directly: `rvr_elf`, `rvr_isa`, `rvr_ir`, `rvr_cfg`, `rvr_emit`.
 
-// Re-export from sub-crates
-pub use rvr_elf::{ElfError, ElfImage, MemorySegment, get_elf_xlen};
-pub use rvr_isa::{
-    OpId, Xlen, Rv32, Rv64,
-    EXT_I, EXT_M, EXT_A, EXT_C, EXT_ZICSR, EXT_ZIFENCEI, EXT_CUSTOM,
-    NUM_REGS_I, NUM_REGS_E, NUM_CSRS,
-    DecodedInstr, InstrArgs, decode,
-    CompositeDecoder, InstructionExtension,
-};
-pub use rvr_ir::{
-    Expr, ExprKind, Space, Stmt, Terminator, BranchHint,
-    InstrIR, BlockIR, IRBuilder,
-};
-pub use rvr_cfg::{BlockTable, InstructionTable, CfgAnalyzer, CfgResult, CodeView};
-pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig, TracerKind, CEmitter, CProject};
+// Core types - always available
+pub use rvr_elf::{ElfImage, get_elf_xlen};
+pub use rvr_isa::{Xlen, Rv32, Rv64};
+pub use rvr_emit::{EmitConfig, InstretMode};
 
 mod pipeline;
-pub use pipeline::*;
+pub use pipeline::{Pipeline, PipelineStats};
 
 use std::marker::PhantomData;
 use std::path::Path;
