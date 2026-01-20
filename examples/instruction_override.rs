@@ -100,8 +100,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elf_path = PathBuf::from(&args[1]);
     let output_dir = PathBuf::from(&args[2]);
 
-    // Create extension registry with custom ECALL override
+    // Method 1: Start with standard() and add override
     let registry = ExtensionRegistry::<Rv64>::standard().with_override(OP_ECALL, RiscvTestsEcall);
+
+    // Method 2: Build custom extension set with override (more control)
+    let _custom_registry = ExtensionRegistry::<Rv64>::base()
+        .with_c()       // Compressed instructions first (for correct decode order)
+        .with_m()       // Integer multiply/divide
+        .with_a()       // Atomics
+        .with_zicsr()   // CSR access
+        .with_override(OP_ECALL, RiscvTestsEcall);
 
     // Load ELF
     let data = std::fs::read(&elf_path)?;

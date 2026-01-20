@@ -114,6 +114,46 @@
 //! let mut pipeline = Pipeline::with_registry(image, EmitConfig::default(), registry);
 //! ```
 //!
+//! ## Extension Registry (Builder Pattern)
+//!
+//! Enable only the RISC-V extensions you need:
+//!
+//! ```ignore
+//! use rvr_isa::ExtensionRegistry;
+//! use rvr::Rv64;
+//!
+//! // Start with base I extension, add only what you need
+//! let registry = ExtensionRegistry::<Rv64>::base()
+//!     .with_m()      // Integer multiply/divide
+//!     .with_a()      // Atomics
+//!     .with_c()      // Compressed (16-bit) instructions
+//!     .with_zicsr(); // CSR access
+//!
+//! // Or use standard() for all common extensions
+//! let full = ExtensionRegistry::<Rv64>::standard();
+//!
+//! // Typical Linux userspace configuration
+//! let linux = ExtensionRegistry::<Rv64>::base()
+//!     .with_c()       // Compressed first (for correct decode order)
+//!     .with_m()       // Multiply/divide
+//!     .with_a()       // Atomics
+//!     .with_zicsr()   // CSR access
+//!     .with_zba()     // Address generation
+//!     .with_zbb();    // Basic bit manipulation
+//! ```
+//!
+//! Available extensions:
+//! - `with_m()` - Integer multiply/divide (M)
+//! - `with_a()` - Atomics (A)
+//! - `with_c()` - Compressed 16-bit instructions (C) - add first
+//! - `with_zicsr()` - CSR read/write
+//! - `with_zifencei()` - Instruction fence
+//! - `with_zba()` - Address generation (Zba)
+//! - `with_zbb()` - Basic bit manipulation (Zbb)
+//! - `with_zbs()` - Single-bit operations (Zbs)
+//! - `with_zbkb()` - Bitmanip for crypto (Zbkb)
+//! - `with_zicond()` - Conditional operations (Zicond)
+//!
 //! ## Pipeline API (Low-Level)
 //!
 //! For fine-grained control over the compilation process:
@@ -153,8 +193,10 @@
 //!
 //! # Feature Flags
 //!
-//! Currently no optional features. All standard RISC-V extensions (I, M, A, C,
-//! Zicsr, Zifencei, Zba, Zbb, Zbc, Zbs) are always enabled.
+//! Currently no optional Cargo features. RISC-V extensions are selected at
+//! runtime via the `ExtensionRegistry` builder pattern (see above). The default
+//! `Pipeline::new()` uses `ExtensionRegistry::standard()` which enables all
+//! common extensions (I, M, A, C, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond).
 
 // Core types - always available
 pub use rvr_elf::{get_elf_xlen, ElfImage};

@@ -155,6 +155,38 @@ pub trait InstructionExtension<X: Xlen>: Send + Sync {
 /// Extensions are tried in order; C extension should be first to handle compressed instructions.
 ///
 /// Supports per-OpId overrides for custom instruction handling.
+///
+/// # Building a Registry
+///
+/// Use the builder pattern to construct a registry with specific extensions:
+///
+/// ```ignore
+/// use rvr_isa::{ExtensionRegistry, Rv64};
+///
+/// // Minimal: just base I extension
+/// let minimal = ExtensionRegistry::<Rv64>::base();
+///
+/// // Common embedded: I + M + C
+/// let embedded = ExtensionRegistry::<Rv64>::base()
+///     .with_m()
+///     .with_c();
+///
+/// // Full Linux userspace: I + M + A + C + Zicsr
+/// let linux = ExtensionRegistry::<Rv64>::base()
+///     .with_m()
+///     .with_a()
+///     .with_c()
+///     .with_zicsr();
+///
+/// // All standard extensions
+/// let full = ExtensionRegistry::<Rv64>::standard();
+/// ```
+///
+/// # Extension Order
+///
+/// Extensions are tried in registration order during decode. The C extension
+/// should be added first (via `with_c()`) to handle 16-bit compressed instructions
+/// before 32-bit decoders see them.
 pub struct ExtensionRegistry<X: Xlen> {
     extensions: Vec<Box<dyn InstructionExtension<X>>>,
     overrides: HashMap<OpId, Box<dyn InstructionOverride<X>>>,
@@ -169,30 +201,144 @@ impl<X: Xlen> ExtensionRegistry<X> {
         }
     }
 
+    /// Create a registry with just the base I extension.
+    ///
+    /// This is the minimal RISC-V configuration. Use builder methods
+    /// to add more extensions:
+    ///
+    /// ```ignore
+    /// let registry = ExtensionRegistry::<Rv64>::base()
+    ///     .with_m()    // Integer multiply/divide
+    ///     .with_c();   // Compressed instructions
+    /// ```
+    pub fn base() -> Self {
+        Self {
+            extensions: vec![Box::new(BaseExtension)],
+            overrides: HashMap::new(),
+        }
+    }
+
     /// Create a registry with all standard RISC-V extensions.
-    /// Order: C (compressed first), I (base), M (multiply), A (atomic), Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond.
+    ///
+    /// Includes: I, M, A, C, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond.
+    ///
+    /// Order: C (compressed first), then I, M, A, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond.
     pub fn standard() -> Self {
-        Self::new(vec![
-            Box::new(CExtension),        // C first (handles 16-bit instructions)
-            Box::new(BaseExtension),     // Base I
-            Box::new(MExtension),        // M extension
-            Box::new(AExtension),        // A extension
-            Box::new(ZicsrExtension),    // Zicsr (CSR instructions)
-            Box::new(ZifenceiExtension), // Zifencei (instruction fence)
-            Box::new(ZbaExtension),      // Zba (address generation)
-            Box::new(ZbbExtension),      // Zbb (basic bit manipulation)
-            Box::new(ZbsExtension),      // Zbs (single-bit operations)
-            Box::new(ZbkbExtension),     // Zbkb (bit manipulation for crypto)
-            Box::new(ZicondExtension),   // Zicond (conditional operations)
-        ])
+        Self::base()
+            .with_c() // C first (handles 16-bit instructions)
+            .with_m()
+            .with_a()
+            .with_zicsr()
+            .with_zifencei()
+            .with_zba()
+            .with_zbb()
+            .with_zbs()
+            .with_zbkb()
+            .with_zicond()
     }
 
     /// Create an empty registry (no extensions).
+    ///
+    /// Useful for testing or building a completely custom extension set.
     pub fn empty() -> Self {
         Self {
             extensions: Vec::new(),
             overrides: HashMap::new(),
         }
+    }
+
+    // =========================================================================
+    // Standard extension builder methods
+    // =========================================================================
+
+    /// Add M extension (integer multiply/divide).
+    ///
+    /// Instructions: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU,
+    /// and W variants for RV64.
+    pub fn with_m(self) -> Self {
+        self.with_extension(MExtension)
+    }
+
+    /// Add A extension (atomic operations).
+    ///
+    /// Instructions: LR.W, SC.W, AMO*.W, and D variants for RV64.
+    pub fn with_a(self) -> Self {
+        self.with_extension(AExtension)
+    }
+
+    /// Add C extension (compressed 16-bit instructions).
+    ///
+    /// **Important**: Should be added first (before other extensions) so
+    /// compressed instructions are decoded before 32-bit decoders see them.
+    ///
+    /// Instructions: C.LW, C.SW, C.ADDI, C.JAL, C.J, etc.
+    pub fn with_c(mut self) -> Self {
+        // Insert C at the front for correct decode order
+        self.extensions.insert(0, Box::new(CExtension));
+        self
+    }
+
+    /// Add Zicsr extension (CSR instructions).
+    ///
+    /// Instructions: CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI.
+    pub fn with_zicsr(self) -> Self {
+        self.with_extension(ZicsrExtension)
+    }
+
+    /// Add Zifencei extension (instruction-fetch fence).
+    ///
+    /// Instructions: FENCE.I.
+    pub fn with_zifencei(self) -> Self {
+        self.with_extension(ZifenceiExtension)
+    }
+
+    /// Add Zba extension (address generation).
+    ///
+    /// Instructions: SH1ADD, SH2ADD, SH3ADD, ADD.UW, SH*ADD.UW, SLLI.UW.
+    pub fn with_zba(self) -> Self {
+        self.with_extension(ZbaExtension)
+    }
+
+    /// Add Zbb extension (basic bit manipulation).
+    ///
+    /// Instructions: ANDN, ORN, XNOR, CLZ, CTZ, CPOP, MAX, MIN, SEXT, ZEXT,
+    /// ROL, ROR, ORC.B, REV8.
+    pub fn with_zbb(self) -> Self {
+        self.with_extension(ZbbExtension)
+    }
+
+    /// Add Zbs extension (single-bit operations).
+    ///
+    /// Instructions: BCLR, BEXT, BINV, BSET and immediate variants.
+    pub fn with_zbs(self) -> Self {
+        self.with_extension(ZbsExtension)
+    }
+
+    /// Add Zbkb extension (bit manipulation for cryptography).
+    ///
+    /// Instructions: BREV8, PACK, PACKH, PACKW, ZIP, UNZIP.
+    pub fn with_zbkb(self) -> Self {
+        self.with_extension(ZbkbExtension)
+    }
+
+    /// Add Zicond extension (conditional operations).
+    ///
+    /// Instructions: CZERO.EQZ, CZERO.NEZ.
+    pub fn with_zicond(self) -> Self {
+        self.with_extension(ZicondExtension)
+    }
+
+    // =========================================================================
+    // Generic extension and override methods
+    // =========================================================================
+
+    /// Add a custom extension to the registry.
+    ///
+    /// Extensions are appended to the end of the decode chain.
+    /// For the C extension, use `with_c()` which inserts at the front.
+    pub fn with_extension(mut self, ext: impl InstructionExtension<X> + 'static) -> Self {
+        self.extensions.push(Box::new(ext));
+        self
     }
 
     /// Register an override for a specific OpId.
@@ -221,12 +367,6 @@ impl<X: Xlen> ExtensionRegistry<X> {
     #[inline]
     pub fn has_overrides(&self) -> bool {
         !self.overrides.is_empty()
-    }
-
-    /// Add an extension to the registry chain.
-    pub fn with_extension(mut self, ext: impl InstructionExtension<X> + 'static) -> Self {
-        self.extensions.push(Box::new(ext));
-        self
     }
 
     /// Get all registered extensions.
@@ -372,8 +512,101 @@ mod tests {
         let registry = ExtensionRegistry::<Rv64>::standard();
         let extensions = registry.extensions();
         assert_eq!(extensions.len(), 11); // C, I, M, A, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond
-        assert_eq!(extensions[0].name(), "C"); // C first
+        assert_eq!(extensions[0].name(), "C"); // C first (inserted at front)
+        assert_eq!(extensions[1].name(), "I"); // Base I second
+    }
+
+    #[test]
+    fn test_builder_base_only() {
+        let registry = ExtensionRegistry::<Rv64>::base();
+        let extensions = registry.extensions();
+        assert_eq!(extensions.len(), 1);
+        assert_eq!(extensions[0].name(), "I");
+
+        // Should decode base instructions
+        let bytes = [0x93, 0x00, 0xa0, 0x02]; // addi
+        assert!(registry.decode(&bytes, 0u64).is_some());
+
+        // Should NOT decode M extension instructions
+        // MUL x1, x2, x3 = 0x023100b3
+        let mul_bytes = [0xb3, 0x00, 0x31, 0x02];
+        assert!(registry.decode(&mul_bytes, 0u64).is_none());
+    }
+
+    #[test]
+    fn test_builder_incremental() {
+        // Build up extensions one by one
+        let registry = ExtensionRegistry::<Rv64>::base()
+            .with_m()
+            .with_c();
+
+        let extensions = registry.extensions();
+        assert_eq!(extensions.len(), 3);
+        // C should be first (inserted at front)
+        assert_eq!(extensions[0].name(), "C");
         assert_eq!(extensions[1].name(), "I");
+        assert_eq!(extensions[2].name(), "M");
+
+        // Should decode compressed instructions
+        let c_addi_bytes = [0x85, 0x00]; // c.addi x1, 1
+        let instr = registry.decode(&c_addi_bytes, 0u64).unwrap();
+        assert_eq!(instr.opid.ext, EXT_C);
+
+        // Should decode M extension
+        let mul_bytes = [0xb3, 0x00, 0x31, 0x02]; // mul x1, x2, x3
+        let instr = registry.decode(&mul_bytes, 0u64).unwrap();
+        assert_eq!(instr.opid.ext, crate::EXT_M);
+    }
+
+    #[test]
+    fn test_builder_linux_userspace() {
+        // Typical Linux userspace configuration
+        let registry = ExtensionRegistry::<Rv64>::base()
+            .with_m()
+            .with_a()
+            .with_c()
+            .with_zicsr();
+
+        let extensions = registry.extensions();
+        assert_eq!(extensions.len(), 5);
+
+        // Verify C is first
+        assert_eq!(extensions[0].name(), "C");
+    }
+
+    #[test]
+    fn test_builder_with_override() {
+        use crate::OP_ECALL;
+        use rvr_ir::{Expr, Terminator};
+
+        struct CustomEcall;
+        impl InstructionOverride<Rv64> for CustomEcall {
+            fn lift(
+                &self,
+                instr: &DecodedInstr<Rv64>,
+                _default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+            ) -> InstrIR<Rv64> {
+                InstrIR::new(
+                    instr.pc,
+                    instr.size,
+                    instr.opid.pack(),
+                    Vec::new(),
+                    Terminator::exit(Expr::Imm(99)),
+                )
+            }
+        }
+
+        let registry = ExtensionRegistry::<Rv64>::base()
+            .with_m()
+            .with_override(OP_ECALL, CustomEcall);
+
+        assert!(registry.has_overrides());
+
+        // ECALL should use our override
+        let ecall_bytes = [0x73, 0x00, 0x00, 0x00];
+        let instr = registry.decode(&ecall_bytes, 0u64).unwrap();
+        let ir = registry.lift(&instr);
+        assert!(matches!(ir.terminator, Terminator::Exit { .. }));
     }
 
     #[test]
