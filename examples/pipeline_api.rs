@@ -113,17 +113,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Analyze IR blocks
     let mut branch_count = 0;
     let mut jump_count = 0;
-    let mut call_count = 0;
     let mut exit_count = 0;
+    let mut fall_count = 0;
 
     for block in pipeline.ir_blocks().values() {
         for instr in &block.instructions {
             match &instr.terminator {
                 Terminator::Branch { .. } => branch_count += 1,
-                Terminator::Jump { .. } | Terminator::JumpDynamic { .. } => jump_count += 1,
-                Terminator::Call { .. } => call_count += 1,
+                Terminator::Jump { .. } | Terminator::JumpDyn { .. } => jump_count += 1,
                 Terminator::Exit { .. } => exit_count += 1,
-                _ => {}
+                Terminator::Fall { .. } => fall_count += 1,
+                Terminator::Trap { .. } => {}
             }
         }
     }
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Control flow:");
     println!("  Branches: {branch_count}");
     println!("  Jumps: {jump_count}");
-    println!("  Calls: {call_count}");
+    println!("  Falls: {fall_count}");
     println!("  Exits: {exit_count}");
 
     // Stage 5: Emit C code

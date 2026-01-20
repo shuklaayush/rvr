@@ -25,3 +25,20 @@ path = "src/lib.rs"
 [[bin]]
 name = "rvr"
 path = "src/main.rs"
+
+# Examples at workspace root
+[[example]]
+name = "basic_compile"
+path = "../../examples/basic_compile.rs"
+
+[[example]]
+name = "custom_config"
+path = "../../examples/custom_config.rs"
+
+[[example]]
+name = "instruction_override"
+path = "../../examples/instruction_override.rs"
+
+[[example]]
+name = "pipeline_api"
+path = "../../examples/pipeline_api.rs"

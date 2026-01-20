@@ -66,9 +66,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Enable HTIF support for riscv-tests
     config.tohost_enabled = true;
 
-    // Enable LTO in generated Makefile
-    config.enable_lto = true;
-
     let recompiler = Recompiler::new(config);
     let lib_path = recompiler.compile(&elf_path, &output_dir, 0)?;
     println!("Method 2 - Compiled to: {}", lib_path.display());
