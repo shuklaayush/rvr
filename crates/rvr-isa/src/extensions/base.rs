@@ -68,9 +68,6 @@ pub const OP_SRLW: OpId = OpId::new(EXT_I, 50);
 pub const OP_SRAW: OpId = OpId::new(EXT_I, 51);
 pub const OP_MRET: OpId = OpId::new(EXT_I, 52);
 
-// RISC-V register numbers (ABI names)
-const REG_A0: u8 = 10;
-
 /// Get mnemonic for a base instruction.
 pub fn base_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
@@ -714,8 +711,9 @@ fn lift_base<X: Xlen>(
         OP_BLTU => lift_branch(args, pc, |a, b| Expr::ltu(a, b)),
         OP_BGEU => lift_branch(args, pc, |a, b| Expr::geu(a, b)),
 
-        // ECALL exits with a0 as exit code per RISC-V syscall convention
-        OP_ECALL => (Vec::new(), Terminator::exit(Expr::read(REG_A0))),
+        // ECALL is handled by ExtensionRegistry's syscall_handler.
+        // This fallback should not normally be reached.
+        OP_ECALL => (Vec::new(), Terminator::trap("ecall: use ExtensionRegistry")),
         OP_EBREAK => (Vec::new(), Terminator::trap("ebreak")),
         OP_FENCE => (Vec::new(), Terminator::Fall { target: None }),
         OP_MRET => (Vec::new(), Terminator::Fall { target: None }),

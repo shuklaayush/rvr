@@ -76,6 +76,7 @@ pub use zifencei::OP_FENCE_I;
 
 use std::collections::HashMap;
 
+use crate::syscalls::{RiscvTestsHandler, SyscallHandler};
 use crate::{DecodedInstr, OpId, OpInfo};
 use rvr_ir::{InstrIR, Terminator, Xlen};
 
@@ -190,6 +191,7 @@ pub trait InstructionExtension<X: Xlen>: Send + Sync {
 pub struct ExtensionRegistry<X: Xlen> {
     extensions: Vec<Box<dyn InstructionExtension<X>>>,
     overrides: HashMap<OpId, Box<dyn InstructionOverride<X>>>,
+    syscall_handler: Box<dyn SyscallHandler<X>>,
 }
 
 impl<X: Xlen> ExtensionRegistry<X> {
@@ -198,6 +200,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
         Self {
             extensions,
             overrides: HashMap::new(),
+            syscall_handler: Box::new(RiscvTestsHandler),
         }
     }
 
@@ -215,6 +218,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
         Self {
             extensions: vec![Box::new(BaseExtension)],
             overrides: HashMap::new(),
+            syscall_handler: Box::new(RiscvTestsHandler),
         }
     }
 
@@ -244,6 +248,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
         Self {
             extensions: Vec::new(),
             overrides: HashMap::new(),
+            syscall_handler: Box::new(RiscvTestsHandler),
         }
     }
 
@@ -363,6 +368,27 @@ impl<X: Xlen> ExtensionRegistry<X> {
         self
     }
 
+    /// Set the syscall handler for ECALL instructions.
+    ///
+    /// The syscall handler is called when an ECALL instruction is lifted,
+    /// unless an explicit override for OP_ECALL is registered.
+    ///
+    /// Default: `RiscvTestsHandler` (exits with a0 as exit code).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rvr_isa::{ExtensionRegistry, syscalls::LinuxHandler};
+    /// use rvr_ir::Rv64;
+    ///
+    /// let registry = ExtensionRegistry::<Rv64>::standard()
+    ///     .with_syscall_handler(LinuxHandler);
+    /// ```
+    pub fn with_syscall_handler(mut self, handler: impl SyscallHandler<X> + 'static) -> Self {
+        self.syscall_handler = Box::new(handler);
+        self
+    }
+
     /// Check if there are any overrides registered.
     #[inline]
     pub fn has_overrides(&self) -> bool {
@@ -386,19 +412,25 @@ impl<X: Xlen> ExtensionRegistry<X> {
 
     /// Lift an instruction using the appropriate extension.
     ///
-    /// If an override is registered for this OpId, it is called instead.
-    /// The override receives a closure to call the default lift if needed.
+    /// Order of precedence:
+    /// 1. Explicit override for the OpId (highest priority)
+    /// 2. Syscall handler for ECALL instructions
+    /// 3. Default extension lift
     pub fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
-        // Fast path: no overrides registered
-        if self.overrides.is_empty() {
-            return self.lift_default(instr);
+        // Check for explicit override (highest priority)
+        if let Some(handler) = self.overrides.get(&instr.opid) {
+            let default_lift = |i: &DecodedInstr<X>| self.lift_without_override(i);
+            return handler.lift(instr, &default_lift);
         }
 
-        // Check for override
-        if let Some(handler) = self.overrides.get(&instr.opid) {
-            // Capture self for the default lift closure
-            let default_lift = |i: &DecodedInstr<X>| self.lift_default(i);
-            return handler.lift(instr, &default_lift);
+        self.lift_without_override(instr)
+    }
+
+    /// Lift without checking overrides (for syscall handler and default).
+    fn lift_without_override(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
+        // ECALL is handled by the syscall handler
+        if instr.opid == OP_ECALL {
+            return self.syscall_handler.handle_ecall(instr);
         }
 
         self.lift_default(instr)
@@ -832,5 +864,85 @@ mod tests {
         assert_eq!(add_instr.opid, OP_ADD);
         let ir = registry.lift(&add_instr);
         assert!(matches!(ir.terminator, Terminator::Trap { .. }));
+    }
+
+    #[test]
+    fn test_ecall_uses_syscall_handler() {
+        use crate::OP_ECALL;
+        use rvr_ir::Terminator;
+
+        // Default registry uses RiscvTestsHandler
+        let registry = ExtensionRegistry::<Rv64>::standard();
+
+        // ECALL encoding: 0x00000073
+        let bytes = [0x73, 0x00, 0x00, 0x00];
+        let instr = registry.decode(&bytes, 0x1000u64).unwrap();
+        assert_eq!(instr.opid, OP_ECALL);
+
+        let ir = registry.lift(&instr);
+        // RiscvTestsHandler exits with a0
+        assert!(matches!(ir.terminator, Terminator::Exit { .. }));
+    }
+
+    #[test]
+    fn test_ecall_custom_syscall_handler() {
+        use crate::syscalls::LinuxHandler;
+        use crate::OP_ECALL;
+        use rvr_ir::Terminator;
+
+        // Use LinuxHandler instead of default
+        let registry = ExtensionRegistry::<Rv64>::standard().with_syscall_handler(LinuxHandler);
+
+        // ECALL encoding: 0x00000073
+        let bytes = [0x73, 0x00, 0x00, 0x00];
+        let instr = registry.decode(&bytes, 0x1000u64).unwrap();
+        assert_eq!(instr.opid, OP_ECALL);
+
+        let ir = registry.lift(&instr);
+        // LinuxHandler also exits with a0 (currently same behavior)
+        assert!(matches!(ir.terminator, Terminator::Exit { .. }));
+    }
+
+    #[test]
+    fn test_ecall_override_takes_precedence() {
+        use crate::syscalls::LinuxHandler;
+        use crate::OP_ECALL;
+        use rvr_ir::{Expr, Terminator};
+
+        // Custom override that returns fixed exit code 99
+        struct FixedExitOverride;
+        impl InstructionOverride<Rv64> for FixedExitOverride {
+            fn lift(
+                &self,
+                instr: &DecodedInstr<Rv64>,
+                _default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+            ) -> InstrIR<Rv64> {
+                InstrIR::new(
+                    instr.pc,
+                    instr.size,
+                    instr.opid.pack(),
+                    Vec::new(),
+                    Terminator::exit(Expr::Imm(99)),
+                )
+            }
+        }
+
+        // Override takes precedence over syscall handler
+        let registry = ExtensionRegistry::<Rv64>::standard()
+            .with_syscall_handler(LinuxHandler)
+            .with_override(OP_ECALL, FixedExitOverride);
+
+        // ECALL encoding: 0x00000073
+        let bytes = [0x73, 0x00, 0x00, 0x00];
+        let instr = registry.decode(&bytes, 0x1000u64).unwrap();
+        let ir = registry.lift(&instr);
+
+        // Override should win, returning exit with 99
+        match ir.terminator {
+            Terminator::Exit { code } => {
+                assert!(matches!(code, Expr::Imm(99)));
+            }
+            _ => panic!("Expected Exit terminator"),
+        }
     }
 }
