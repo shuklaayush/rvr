@@ -123,28 +123,50 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        if opid.ext != EXT_C {
-            return None;
-        }
-        let class = match opid.idx {
-            0 | 6 | 9..=20 | 24 | 28 | 31 => OpClass::Alu,
-            1 | 3 | 25 | 26 => OpClass::Load,
-            2 | 4 | 32 | 33 => OpClass::Store,
-            5 => OpClass::Nop,
-            7 | 21 => OpClass::Jump,
-            22 | 23 => OpClass::Branch,
-            27 | 30 => OpClass::JumpIndirect,
-            29 => OpClass::System,
-            _ => return None,
-        };
-        Some(OpInfo {
-            opid,
-            name: c_mnemonic(opid),
-            class,
-            size_hint: 2,
-        })
+        OP_INFO_C.iter().find(|info| info.opid == opid).copied()
     }
 }
+
+/// Table-driven OpInfo for C extension.
+const OP_INFO_C: &[OpInfo] = &[
+    // Quadrant 0
+    OpInfo { opid: OP_C_ADDI4SPN, name: "c.addi4spn", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_LW, name: "c.lw", class: OpClass::Load, size_hint: 2 },
+    OpInfo { opid: OP_C_SW, name: "c.sw", class: OpClass::Store, size_hint: 2 },
+    OpInfo { opid: OP_C_LD, name: "c.ld", class: OpClass::Load, size_hint: 2 },
+    OpInfo { opid: OP_C_SD, name: "c.sd", class: OpClass::Store, size_hint: 2 },
+    // Quadrant 1
+    OpInfo { opid: OP_C_NOP, name: "c.nop", class: OpClass::Nop, size_hint: 2 },
+    OpInfo { opid: OP_C_ADDI, name: "c.addi", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_JAL, name: "c.jal", class: OpClass::Jump, size_hint: 2 },
+    OpInfo { opid: OP_C_ADDIW, name: "c.addiw", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_LI, name: "c.li", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_ADDI16SP, name: "c.addi16sp", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_LUI, name: "c.lui", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_SRLI, name: "c.srli", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_SRAI, name: "c.srai", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_ANDI, name: "c.andi", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_SUB, name: "c.sub", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_XOR, name: "c.xor", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_OR, name: "c.or", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_AND, name: "c.and", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_SUBW, name: "c.subw", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_ADDW, name: "c.addw", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_J, name: "c.j", class: OpClass::Jump, size_hint: 2 },
+    OpInfo { opid: OP_C_BEQZ, name: "c.beqz", class: OpClass::Branch, size_hint: 2 },
+    OpInfo { opid: OP_C_BNEZ, name: "c.bnez", class: OpClass::Branch, size_hint: 2 },
+    // Quadrant 2
+    OpInfo { opid: OP_C_SLLI, name: "c.slli", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_LWSP, name: "c.lwsp", class: OpClass::Load, size_hint: 2 },
+    OpInfo { opid: OP_C_LDSP, name: "c.ldsp", class: OpClass::Load, size_hint: 2 },
+    OpInfo { opid: OP_C_JR, name: "c.jr", class: OpClass::JumpIndirect, size_hint: 2 },
+    OpInfo { opid: OP_C_MV, name: "c.mv", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_EBREAK, name: "c.ebreak", class: OpClass::System, size_hint: 2 },
+    OpInfo { opid: OP_C_JALR, name: "c.jalr", class: OpClass::JumpIndirect, size_hint: 2 },
+    OpInfo { opid: OP_C_ADD, name: "c.add", class: OpClass::Alu, size_hint: 2 },
+    OpInfo { opid: OP_C_SWSP, name: "c.swsp", class: OpClass::Store, size_hint: 2 },
+    OpInfo { opid: OP_C_SDSP, name: "c.sdsp", class: OpClass::Store, size_hint: 2 },
+];
 
 // Decode helpers
 

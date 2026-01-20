@@ -112,29 +112,66 @@ impl<X: Xlen> InstructionExtension<X> for BaseExtension {
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        if opid.ext != EXT_I {
-            return None;
-        }
-        let (name, class) = match opid.idx {
-            0 => ("lui", OpClass::Alu),
-            1 => ("auipc", OpClass::Alu),
-            2 => ("jal", OpClass::Jump),
-            3 => ("jalr", OpClass::JumpIndirect),
-            4..=9 => (base_mnemonic(opid), OpClass::Branch),
-            10..=14 => (base_mnemonic(opid), OpClass::Load),
-            15..=17 => (base_mnemonic(opid), OpClass::Store),
-            18..=36 => (base_mnemonic(opid), OpClass::Alu),
-            37 => ("fence", OpClass::Fence),
-            38 => ("ecall", OpClass::System),
-            39 => ("ebreak", OpClass::System),
-            40 | 41 => (base_mnemonic(opid), OpClass::Load),
-            42 => ("sd", OpClass::Store),
-            43..=51 => (base_mnemonic(opid), OpClass::Alu),
-            _ => return None,
-        };
-        Some(OpInfo { opid, name, class, size_hint: 4 })
+        OP_INFO_I.iter().find(|info| info.opid == opid).copied()
     }
 }
+
+/// Table-driven OpInfo for base I extension.
+const OP_INFO_I: &[OpInfo] = &[
+    OpInfo { opid: OP_LUI, name: "lui", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_AUIPC, name: "auipc", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_JAL, name: "jal", class: OpClass::Jump, size_hint: 4 },
+    OpInfo { opid: OP_JALR, name: "jalr", class: OpClass::JumpIndirect, size_hint: 4 },
+    OpInfo { opid: OP_BEQ, name: "beq", class: OpClass::Branch, size_hint: 4 },
+    OpInfo { opid: OP_BNE, name: "bne", class: OpClass::Branch, size_hint: 4 },
+    OpInfo { opid: OP_BLT, name: "blt", class: OpClass::Branch, size_hint: 4 },
+    OpInfo { opid: OP_BGE, name: "bge", class: OpClass::Branch, size_hint: 4 },
+    OpInfo { opid: OP_BLTU, name: "bltu", class: OpClass::Branch, size_hint: 4 },
+    OpInfo { opid: OP_BGEU, name: "bgeu", class: OpClass::Branch, size_hint: 4 },
+    OpInfo { opid: OP_LB, name: "lb", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_LH, name: "lh", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_LW, name: "lw", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_LBU, name: "lbu", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_LHU, name: "lhu", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_SB, name: "sb", class: OpClass::Store, size_hint: 4 },
+    OpInfo { opid: OP_SH, name: "sh", class: OpClass::Store, size_hint: 4 },
+    OpInfo { opid: OP_SW, name: "sw", class: OpClass::Store, size_hint: 4 },
+    OpInfo { opid: OP_ADDI, name: "addi", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLTI, name: "slti", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLTIU, name: "sltiu", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_XORI, name: "xori", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_ORI, name: "ori", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_ANDI, name: "andi", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLLI, name: "slli", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRLI, name: "srli", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRAI, name: "srai", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_ADD, name: "add", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SUB, name: "sub", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLL, name: "sll", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLT, name: "slt", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLTU, name: "sltu", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_XOR, name: "xor", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRL, name: "srl", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRA, name: "sra", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_OR, name: "or", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_AND, name: "and", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_FENCE, name: "fence", class: OpClass::Fence, size_hint: 4 },
+    OpInfo { opid: OP_ECALL, name: "ecall", class: OpClass::System, size_hint: 4 },
+    OpInfo { opid: OP_EBREAK, name: "ebreak", class: OpClass::System, size_hint: 4 },
+    // RV64I
+    OpInfo { opid: OP_LWU, name: "lwu", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_LD, name: "ld", class: OpClass::Load, size_hint: 4 },
+    OpInfo { opid: OP_SD, name: "sd", class: OpClass::Store, size_hint: 4 },
+    OpInfo { opid: OP_ADDIW, name: "addiw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLLIW, name: "slliw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRLIW, name: "srliw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRAIW, name: "sraiw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_ADDW, name: "addw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SUBW, name: "subw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SLLW, name: "sllw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRLW, name: "srlw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_SRAW, name: "sraw", class: OpClass::Alu, size_hint: 4 },
+];
 
 // ===== Decode =====
 

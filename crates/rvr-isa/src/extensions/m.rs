@@ -101,17 +101,27 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        if opid.ext != EXT_M {
-            return None;
-        }
-        let (name, class) = match opid.idx {
-            0..=3 | 8 => (m_mnemonic(opid), OpClass::Mul),
-            4..=7 | 9..=12 => (m_mnemonic(opid), OpClass::Div),
-            _ => return None,
-        };
-        Some(OpInfo { opid, name, class, size_hint: 4 })
+        OP_INFO_M.iter().find(|info| info.opid == opid).copied()
     }
 }
+
+/// Table-driven OpInfo for M extension.
+const OP_INFO_M: &[OpInfo] = &[
+    OpInfo { opid: OP_MUL, name: "mul", class: OpClass::Mul, size_hint: 4 },
+    OpInfo { opid: OP_MULH, name: "mulh", class: OpClass::Mul, size_hint: 4 },
+    OpInfo { opid: OP_MULHSU, name: "mulhsu", class: OpClass::Mul, size_hint: 4 },
+    OpInfo { opid: OP_MULHU, name: "mulhu", class: OpClass::Mul, size_hint: 4 },
+    OpInfo { opid: OP_DIV, name: "div", class: OpClass::Div, size_hint: 4 },
+    OpInfo { opid: OP_DIVU, name: "divu", class: OpClass::Div, size_hint: 4 },
+    OpInfo { opid: OP_REM, name: "rem", class: OpClass::Div, size_hint: 4 },
+    OpInfo { opid: OP_REMU, name: "remu", class: OpClass::Div, size_hint: 4 },
+    // RV64M
+    OpInfo { opid: OP_MULW, name: "mulw", class: OpClass::Mul, size_hint: 4 },
+    OpInfo { opid: OP_DIVW, name: "divw", class: OpClass::Div, size_hint: 4 },
+    OpInfo { opid: OP_DIVUW, name: "divuw", class: OpClass::Div, size_hint: 4 },
+    OpInfo { opid: OP_REMW, name: "remw", class: OpClass::Div, size_hint: 4 },
+    OpInfo { opid: OP_REMUW, name: "remuw", class: OpClass::Div, size_hint: 4 },
+];
 
 fn lift_m<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {

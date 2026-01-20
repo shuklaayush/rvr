@@ -108,7 +108,7 @@ pub enum OpClass {
 }
 
 /// Instruction metadata for analysis and optimization.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpInfo {
     /// Instruction identifier
     pub opid: OpId,

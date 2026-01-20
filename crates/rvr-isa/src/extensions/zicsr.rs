@@ -123,28 +123,22 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        if opid.ext == EXT_ZIFENCEI {
-            if opid.idx == 0 {
-                return Some(OpInfo {
-                    opid,
-                    name: "fence.i",
-                    class: OpClass::Fence,
-                    size_hint: 4,
-                });
-            }
-            return None;
-        }
-        if opid.ext != EXT_ZICSR || opid.idx > 5 {
-            return None;
-        }
-        Some(OpInfo {
-            opid,
-            name: zicsr_mnemonic(opid),
-            class: OpClass::Csr,
-            size_hint: 4,
-        })
+        OP_INFO_ZICSR.iter().find(|info| info.opid == opid).copied()
     }
 }
+
+/// Table-driven OpInfo for Zicsr and Zifencei extensions.
+const OP_INFO_ZICSR: &[OpInfo] = &[
+    // Zicsr
+    OpInfo { opid: OP_CSRRW, name: "csrrw", class: OpClass::Csr, size_hint: 4 },
+    OpInfo { opid: OP_CSRRS, name: "csrrs", class: OpClass::Csr, size_hint: 4 },
+    OpInfo { opid: OP_CSRRC, name: "csrrc", class: OpClass::Csr, size_hint: 4 },
+    OpInfo { opid: OP_CSRRWI, name: "csrrwi", class: OpClass::Csr, size_hint: 4 },
+    OpInfo { opid: OP_CSRRSI, name: "csrrsi", class: OpClass::Csr, size_hint: 4 },
+    OpInfo { opid: OP_CSRRCI, name: "csrrci", class: OpClass::Csr, size_hint: 4 },
+    // Zifencei
+    OpInfo { opid: OP_FENCE_I, name: "fence.i", class: OpClass::Fence, size_hint: 4 },
+];
 
 fn lift_zicsr<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {

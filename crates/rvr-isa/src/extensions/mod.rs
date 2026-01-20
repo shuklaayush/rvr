@@ -194,10 +194,12 @@ impl<X: Xlen> ExtensionRegistry<X> {
     }
 
     /// Get metadata for an instruction by OpId.
+    ///
+    /// Tries all extensions since some extensions (like Zicsr) handle multiple ext_ids.
     pub fn op_info(&self, opid: OpId) -> Option<OpInfo> {
         for ext in &self.extensions {
-            if ext.ext_id() == opid.ext {
-                return ext.op_info(opid);
+            if let Some(info) = ext.op_info(opid) {
+                return Some(info);
             }
         }
         None
@@ -329,5 +331,18 @@ mod tests {
         let info = registry.op_info(OP_CSRRW).unwrap();
         assert_eq!(info.name, "csrrw");
         assert_eq!(info.class, OpClass::Csr);
+    }
+
+    #[test]
+    fn test_op_info_zifencei() {
+        use crate::{OpClass, OP_FENCE_I, EXT_ZIFENCEI};
+        let registry = ExtensionRegistry::<Rv64>::standard();
+
+        // Zifencei has a different ext_id but is handled by ZicsrExtension
+        assert_eq!(OP_FENCE_I.ext, EXT_ZIFENCEI);
+        let info = registry.op_info(OP_FENCE_I).unwrap();
+        assert_eq!(info.name, "fence.i");
+        assert_eq!(info.class, OpClass::Fence);
+        assert_eq!(info.size_hint, 4);
     }
 }

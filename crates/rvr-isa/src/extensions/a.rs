@@ -135,20 +135,37 @@ impl<X: Xlen> InstructionExtension<X> for AExtension {
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        if opid.ext != EXT_A {
-            return None;
-        }
-        if opid.idx > 21 {
-            return None;
-        }
-        Some(OpInfo {
-            opid,
-            name: a_mnemonic(opid),
-            class: OpClass::Atomic,
-            size_hint: 4,
-        })
+        OP_INFO_A.iter().find(|info| info.opid == opid).copied()
     }
 }
+
+/// Table-driven OpInfo for A extension.
+const OP_INFO_A: &[OpInfo] = &[
+    // .W variants (32-bit)
+    OpInfo { opid: OP_LR_W, name: "lr.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_SC_W, name: "sc.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOSWAP_W, name: "amoswap.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOADD_W, name: "amoadd.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOXOR_W, name: "amoxor.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOAND_W, name: "amoand.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOOR_W, name: "amoor.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMIN_W, name: "amomin.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMAX_W, name: "amomax.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMINU_W, name: "amominu.w", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMAXU_W, name: "amomaxu.w", class: OpClass::Atomic, size_hint: 4 },
+    // .D variants (64-bit)
+    OpInfo { opid: OP_LR_D, name: "lr.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_SC_D, name: "sc.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOSWAP_D, name: "amoswap.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOADD_D, name: "amoadd.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOXOR_D, name: "amoxor.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOAND_D, name: "amoand.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOOR_D, name: "amoor.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMIN_D, name: "amomin.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMAX_D, name: "amomax.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMINU_D, name: "amominu.d", class: OpClass::Atomic, size_hint: 4 },
+    OpInfo { opid: OP_AMOMAXU_D, name: "amomaxu.d", class: OpClass::Atomic, size_hint: 4 },
+];
 
 fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
