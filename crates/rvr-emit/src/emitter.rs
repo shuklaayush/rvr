@@ -1,12 +1,21 @@
 //! C code emitter for RISC-V recompiler.
+//!
+//! Generates C code from RISC-V IR blocks with:
+//! - Explicit musttail calls for all control flow (including fall-through)
+//! - Branch emits both taken and not-taken paths
+//! - save_to_state on all exit paths
+//! - Optional tracing hooks (trace_block, trace_pc, trace_branch_*)
 
 use rvr_ir::{BlockIR, BranchHint, Expr, ExprKind, InstrIR, Space, Stmt, Terminator, Xlen};
 
 use crate::config::EmitConfig;
+use crate::signature::FnSignature;
 
 /// C code emitter.
 pub struct CEmitter<X: Xlen> {
     pub config: EmitConfig<X>,
+    /// Function signature for block functions.
+    pub sig: FnSignature,
     /// Output buffer.
     pub out: String,
     /// Register type name ("uint32_t" or "uint64_t").
@@ -27,9 +36,11 @@ impl<X: Xlen> CEmitter<X> {
         } else {
             ("uint32_t", "int32_t")
         };
+        let sig = FnSignature::new(&config);
 
         Self {
             config,
+            sig,
             out: String::with_capacity(4096),
             reg_type,
             signed_type,
@@ -432,11 +443,7 @@ impl<X: Xlen> CEmitter<X> {
         match expr.space {
             Space::Reg => {
                 let reg = X::to_u64(expr.imm) as u8;
-                if reg == 0 {
-                    "0".to_string()
-                } else {
-                    format!("regs[{}]", reg)
-                }
+                self.sig.reg_read(reg)
             }
             Space::Mem => {
                 let base = self.render_expr(expr.left.as_ref().unwrap());
@@ -483,8 +490,9 @@ impl<X: Xlen> CEmitter<X> {
                 match space {
                     Space::Reg => {
                         let reg = X::to_u64(addr.imm) as u8;
-                        if reg != 0 {
-                            self.writeln(indent, &format!("regs[{}] = {};", reg, value_str));
+                        let code = self.sig.reg_write(reg, &value_str);
+                        if !code.is_empty() {
+                            self.writeln(indent, &code);
                         }
                     }
                     Space::Mem => {
@@ -537,15 +545,20 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render block header.
     pub fn render_block_header(&mut self, start_pc: u64, _end_pc: u64) {
-        let pc_str = if X::VALUE == 64 {
-            format!("{:016x}", start_pc)
-        } else {
-            format!("{:08x}", start_pc)
-        };
+        let pc_str = self.fmt_pc(start_pc);
         self.write(&format!(
-            "__attribute__((preserve_none, nonnull(1))) void B_0x{}(RvState* state, uint8_t* memory, {} instret, {}* regs) {{\n",
-            pc_str, self.reg_type, self.reg_type
+            "__attribute__((preserve_none, nonnull(1))) void B_{}({}) {{\n",
+            pc_str, self.sig.params
         ));
+    }
+
+    /// Format PC for block names (hex without 0x prefix).
+    fn fmt_pc(&self, pc: u64) -> String {
+        if X::VALUE == 64 {
+            format!("{:016x}", pc)
+        } else {
+            format!("{:08x}", pc)
+        }
     }
 
     /// Render block footer.
@@ -554,7 +567,9 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Render instruction.
-    pub fn render_instruction(&mut self, ir: &InstrIR<X>, is_last: bool) {
+    ///
+    /// `fall_pc` is the address to fall through to (typically end_pc of the block).
+    pub fn render_instruction(&mut self, ir: &InstrIR<X>, is_last: bool, fall_pc: u64) {
         self.current_pc = X::to_u64(ir.pc);
 
         // Optional: emit comment
@@ -572,15 +587,21 @@ impl<X: Xlen> CEmitter<X> {
 
         // Render terminator if last instruction
         if is_last {
-            self.render_terminator(&ir.terminator);
+            self.render_terminator(&ir.terminator, fall_pc);
         }
     }
 
-    /// Render terminator.
-    fn render_terminator(&mut self, term: &Terminator<X>) {
+    /// Render terminator with explicit fall-through target.
+    ///
+    /// `fall_pc` is used for:
+    /// - Fall terminator: explicit tail call to fall-through block (if target is None)
+    /// - Branch terminator: trace_branch_not_taken call
+    fn render_terminator(&mut self, term: &Terminator<X>, fall_pc: u64) {
         match term {
-            Terminator::Fall { .. } => {
-                // Fall through to next instruction
+            Terminator::Fall { target } => {
+                // Explicit tail call for fall-through (matches Mojo)
+                let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                self.render_jump_static(target_pc);
             }
             Terminator::Jump { target } => {
                 self.render_jump_static(X::to_u64(*target));
@@ -589,12 +610,13 @@ impl<X: Xlen> CEmitter<X> {
                 if let Some(targets) = resolved {
                     self.render_jump_resolved(targets.iter().map(|t| X::to_u64(*t)).collect(), addr);
                 } else {
-                    self.render_jump_dynamic(addr);
+                    self.render_jump_dynamic(addr, None);
                 }
             }
-            Terminator::Branch { cond, target, .. } => {
+            Terminator::Branch { cond, target, fall, hint } => {
                 let cond_str = self.render_expr(cond);
-                self.render_branch(&cond_str, X::to_u64(*target), BranchHint::None);
+                let fall_target = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
+                self.render_branch(&cond_str, X::to_u64(*target), *hint, fall_target);
             }
             Terminator::Exit { code } => {
                 let code_str = self.render_expr(code);
@@ -610,27 +632,30 @@ impl<X: Xlen> CEmitter<X> {
     /// Render static jump.
     fn render_jump_static(&mut self, target: u64) {
         if self.is_valid_address(target) {
-            let pc_str = if X::VALUE == 64 {
-                format!("{:016x}", target)
-            } else {
-                format!("{:08x}", target)
-            };
-            self.writeln(1, &format!("[[clang::musttail]] return B_0x{}(state, memory, instret, regs);", pc_str));
+            let pc_str = self.fmt_pc(target);
+            self.writeln(1, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
         } else {
             self.render_exit("1");
         }
     }
 
     /// Render dynamic jump.
-    fn render_jump_dynamic(&mut self, target_expr: &Expr<X>) {
-        let target = self.render_expr(target_expr);
-        self.writeln(1, &format!("[[clang::musttail]] return dispatch_table[dispatch_index({})](state, memory, instret, regs);", target));
+    ///
+    /// If `pre_eval_var` is set, use that variable name instead of rendering the expression.
+    fn render_jump_dynamic(&mut self, target_expr: &Expr<X>, pre_eval_var: Option<&str>) {
+        let target = pre_eval_var
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.render_expr(target_expr));
+        self.writeln(1, &format!(
+            "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
+            target, self.sig.args
+        ));
     }
 
     /// Render jump with resolved targets.
     fn render_jump_resolved(&mut self, targets: Vec<u64>, fallback: &Expr<X>) {
         if targets.is_empty() {
-            self.render_jump_dynamic(fallback);
+            self.render_jump_dynamic(fallback, None);
             return;
         }
 
@@ -643,55 +668,91 @@ impl<X: Xlen> CEmitter<X> {
 
         for target in &targets {
             if self.is_valid_address(*target) {
-                let pc_str = if X::VALUE == 64 {
-                    format!("{:016x}", target)
-                } else {
-                    format!("{:08x}", target)
-                };
+                let pc_str = self.fmt_pc(*target);
                 let addr_lit = self.fmt_addr(*target);
                 self.writeln(1, &format!("if ({} == {}) {{", var_name, addr_lit));
-                self.writeln(2, &format!("[[clang::musttail]] return B_0x{}(state, memory, instret, regs);", pc_str));
+                self.writeln(2, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
                 self.writeln(1, "}");
             }
         }
 
-        self.render_jump_dynamic(fallback);
+        // Fallback to dispatch table
+        let pre_eval = if targets.len() > 1 { Some("target") } else { None };
+        self.render_jump_dynamic(fallback, pre_eval);
     }
 
-    /// Render branch.
-    fn render_branch(&mut self, cond: &str, target: u64, hint: BranchHint) {
+    /// Render branch with both taken and not-taken paths.
+    ///
+    /// Matches Mojo pattern: emits trace_branch_taken inside if-block,
+    /// then trace_branch_not_taken after closing brace for fall-through.
+    fn render_branch(&mut self, cond: &str, target: u64, hint: BranchHint, fall_pc: u64) {
         let cond_str = match hint {
             BranchHint::Taken => format!("likely({})", cond),
             BranchHint::NotTaken => format!("unlikely({})", cond),
             BranchHint::None => cond.to_string(),
         };
 
+        // Tracing hooks (if enabled)
+        let trace_taken = if self.config.has_tracing() {
+            let target_lit = self.fmt_addr(target);
+            format!("trace_branch_taken(&state->tracer, {}, {});\n    ",
+                self.fmt_addr(self.current_pc), target_lit)
+        } else {
+            String::new()
+        };
+
+        let trace_not_taken = if self.config.has_tracing() {
+            let fall_lit = self.fmt_addr(fall_pc);
+            format!("trace_branch_not_taken(&state->tracer, {}, {});\n",
+                self.fmt_addr(self.current_pc), fall_lit)
+        } else {
+            String::new()
+        };
+
+        // Pre-clone values that need to outlive the mutable borrows
+        let args = self.sig.args.clone();
+        let save_to_state = self.sig.save_to_state.clone();
+
         if self.is_valid_address(target) {
-            let pc_str = if X::VALUE == 64 {
-                format!("{:016x}", target)
-            } else {
-                format!("{:08x}", target)
-            };
+            let pc_str = self.fmt_pc(target);
             self.writeln(1, &format!("if ({}) {{", cond_str));
-            self.writeln(2, &format!("[[clang::musttail]] return B_0x{}(state, memory, instret, regs);", pc_str));
+            if !trace_taken.is_empty() {
+                self.writeln(2, trace_taken.trim_end());
+            }
+            self.writeln(2, &format!("[[clang::musttail]] return B_{}({});", pc_str, args));
             self.writeln(1, "}");
         } else {
             self.writeln(1, &format!("if ({}) {{", cond_str));
+            if !trace_taken.is_empty() {
+                self.writeln(2, trace_taken.trim_end());
+            }
             self.writeln(2, "state->has_exited = true;");
             self.writeln(2, "state->exit_code = 1;");
             let pc_lit = self.fmt_addr(target);
             self.writeln(2, &format!("state->pc = {};", pc_lit));
+            if !save_to_state.is_empty() {
+                self.writeln(2, &save_to_state);
+            }
             self.writeln(2, "return;");
             self.writeln(1, "}");
         }
+
+        // Emit trace_branch_not_taken for fall-through path
+        if !trace_not_taken.is_empty() {
+            self.write(&trace_not_taken);
+        }
     }
 
-    /// Render exit.
+    /// Render exit with save_to_state.
     fn render_exit(&mut self, code: &str) {
+        let save_to_state = self.sig.save_to_state.clone();
         self.writeln(1, "state->has_exited = true;");
         self.writeln(1, &format!("state->exit_code = (uint8_t)({});", code));
         let pc_lit = self.fmt_addr(self.current_pc);
         self.writeln(1, &format!("state->pc = {};", pc_lit));
+        if !save_to_state.is_empty() {
+            self.writeln(1, &save_to_state);
+        }
         self.writeln(1, "return;");
     }
 
@@ -714,7 +775,8 @@ impl<X: Xlen> CEmitter<X> {
         let num_instrs = block.instructions.len();
         for (i, instr) in block.instructions.iter().enumerate() {
             let is_last = i == num_instrs - 1;
-            self.render_instruction(instr, is_last);
+            // For last instruction, fall_pc is end_pc (next block's start)
+            self.render_instruction(instr, is_last, end_pc);
         }
 
         // Update instret before terminator
@@ -723,6 +785,38 @@ impl<X: Xlen> CEmitter<X> {
         }
 
         self.render_block_footer();
+    }
+
+    /// Render trace_block call at block entry.
+    pub fn render_block_trace(&mut self, pc: u64) {
+        if self.config.has_tracing() {
+            let pc_lit = self.fmt_addr(pc);
+            self.writeln(1, &format!("trace_block(&state->tracer, {});", pc_lit));
+        }
+    }
+
+    /// Render trace_pc call for current instruction.
+    pub fn emit_trace_pc(&mut self) {
+        if self.config.has_tracing() {
+            let pc_lit = self.fmt_addr(self.current_pc);
+            self.writeln(1, &format!("trace_pc(&state->tracer, {});", pc_lit));
+        }
+    }
+
+    /// Render instret check and early suspend if needed.
+    pub fn render_instret_check(&mut self, pc: u64) {
+        if !self.config.instret_mode.suspends() {
+            return;
+        }
+        let save_to_state = self.sig.save_to_state.clone();
+        let pc_lit = self.fmt_addr(pc);
+        self.writeln(1, "if (unlikely(state->target_instret <= instret)) {");
+        self.writeln(2, &format!("state->pc = {};", pc_lit));
+        if !save_to_state.is_empty() {
+            self.writeln(2, &save_to_state);
+        }
+        self.writeln(2, "return;");
+        self.writeln(1, "}");
     }
 }
 
@@ -746,9 +840,22 @@ mod tests {
         let config = EmitConfig::<Rv64>::default();
         let emitter = CEmitter::new(config);
 
+        // Default config has no hot regs, so uses state->regs[]
         let expr = Expr::reg(5);
         let result = emitter.render_expr(&expr);
-        assert_eq!(result, "regs[5]");
+        assert_eq!(result, "state->regs[5]");
+    }
+
+    #[test]
+    fn test_render_reg_read_hot() {
+        let mut config = EmitConfig::<Rv64>::default();
+        config.hot_regs = vec![5]; // Make t0 hot
+        let emitter = CEmitter::new(config);
+
+        // Hot reg uses ABI name directly
+        let expr = Expr::reg(5);
+        let result = emitter.render_expr(&expr);
+        assert_eq!(result, "t0");
     }
 
     #[test]
@@ -758,6 +865,17 @@ mod tests {
 
         let expr = Expr::add(Expr::reg(1), Expr::imm(10));
         let result = emitter.render_expr(&expr);
-        assert_eq!(result, "(regs[1] + 0xaULL)");
+        assert_eq!(result, "(state->regs[1] + 0xaULL)");
+    }
+
+    #[test]
+    fn test_render_add_hot() {
+        let mut config = EmitConfig::<Rv64>::default();
+        config.hot_regs = vec![1]; // Make ra hot
+        let emitter = CEmitter::new(config);
+
+        let expr = Expr::add(Expr::reg(1), Expr::imm(10));
+        let result = emitter.render_expr(&expr);
+        assert_eq!(result, "(ra + 0xaULL)");
     }
 }
