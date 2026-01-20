@@ -25,7 +25,7 @@ pub use rvr_ir::{
     InstrIR, BlockIR, IRBuilder,
 };
 pub use rvr_cfg::{BlockTable, CfgAnalyzer, CfgResult, CodeView};
-pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig, TracerKind, CEmitter};
+pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig, TracerKind, CEmitter, CProject};
 
 mod pipeline;
 pub use pipeline::*;
@@ -123,18 +123,74 @@ impl<X: Xlen> Recompiler<X> {
     }
 }
 
+/// Options for compile/lift operations.
+#[derive(Clone, Debug, Default)]
+pub struct CompileOptions {
+    /// Enable address bounds checking.
+    pub addr_check: bool,
+    /// Enable tohost check (for riscv-tests).
+    pub tohost: bool,
+    /// Instruction retirement mode.
+    pub instret_mode: InstretMode,
+}
+
+impl CompileOptions {
+    /// Create default options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set address checking.
+    pub fn with_addr_check(mut self, enabled: bool) -> Self {
+        self.addr_check = enabled;
+        self
+    }
+
+    /// Set tohost enabled.
+    pub fn with_tohost(mut self, enabled: bool) -> Self {
+        self.tohost = enabled;
+        self
+    }
+
+    /// Set instret mode.
+    pub fn with_instret_mode(mut self, mode: InstretMode) -> Self {
+        self.instret_mode = mode;
+        self
+    }
+
+    /// Apply options to EmitConfig.
+    fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
+        config.addr_check = self.addr_check;
+        config.tohost_enabled = self.tohost;
+        config.instret_mode = self.instret_mode;
+    }
+}
+
 /// Compile an ELF file, auto-detecting XLEN from the ELF header.
 pub fn compile(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+    compile_with_options(elf_path, output_dir, CompileOptions::default())
+}
+
+/// Compile an ELF file with options, auto-detecting XLEN from the ELF header.
+pub fn compile_with_options(
+    elf_path: &Path,
+    output_dir: &Path,
+    options: CompileOptions,
+) -> Result<std::path::PathBuf> {
     let data = std::fs::read(elf_path)?;
     let xlen = get_elf_xlen(&data)?;
 
     match xlen {
         32 => {
-            let recompiler = Recompiler::<Rv32>::with_defaults();
+            let mut config = EmitConfig::<Rv32>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv32>::new(config);
             recompiler.compile(elf_path, output_dir)
         }
         64 => {
-            let recompiler = Recompiler::<Rv64>::with_defaults();
+            let mut config = EmitConfig::<Rv64>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv64>::new(config);
             recompiler.compile(elf_path, output_dir)
         }
         _ => Err(Error::XlenMismatch {
@@ -146,16 +202,29 @@ pub fn compile(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf>
 
 /// Lift an ELF file to C source code, auto-detecting XLEN.
 pub fn lift_to_c(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+    lift_to_c_with_options(elf_path, output_dir, CompileOptions::default())
+}
+
+/// Lift an ELF file to C source code with options, auto-detecting XLEN.
+pub fn lift_to_c_with_options(
+    elf_path: &Path,
+    output_dir: &Path,
+    options: CompileOptions,
+) -> Result<std::path::PathBuf> {
     let data = std::fs::read(elf_path)?;
     let xlen = get_elf_xlen(&data)?;
 
     match xlen {
         32 => {
-            let recompiler = Recompiler::<Rv32>::with_defaults();
+            let mut config = EmitConfig::<Rv32>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv32>::new(config);
             recompiler.lift(elf_path, output_dir)
         }
         64 => {
-            let recompiler = Recompiler::<Rv64>::with_defaults();
+            let mut config = EmitConfig::<Rv64>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv64>::new(config);
             recompiler.lift(elf_path, output_dir)
         }
         _ => Err(Error::XlenMismatch {
