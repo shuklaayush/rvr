@@ -1,22 +1,22 @@
 //! C extension (compressed instructions) - decode, lift, disasm.
 
-use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
+use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
-use crate::{DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_C, reg_name};
 use super::InstructionExtension;
+use crate::{reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_C};
 
 // Quadrant 0
 pub const OP_C_ADDI4SPN: OpId = OpId::new(EXT_C, 0);
 pub const OP_C_LW: OpId = OpId::new(EXT_C, 1);
 pub const OP_C_SW: OpId = OpId::new(EXT_C, 2);
-pub const OP_C_LD: OpId = OpId::new(EXT_C, 3);  // RV64C
-pub const OP_C_SD: OpId = OpId::new(EXT_C, 4);  // RV64C
+pub const OP_C_LD: OpId = OpId::new(EXT_C, 3); // RV64C
+pub const OP_C_SD: OpId = OpId::new(EXT_C, 4); // RV64C
 
 // Quadrant 1
 pub const OP_C_NOP: OpId = OpId::new(EXT_C, 5);
 pub const OP_C_ADDI: OpId = OpId::new(EXT_C, 6);
-pub const OP_C_JAL: OpId = OpId::new(EXT_C, 7);  // RV32C only
-pub const OP_C_ADDIW: OpId = OpId::new(EXT_C, 8);  // RV64C
+pub const OP_C_JAL: OpId = OpId::new(EXT_C, 7); // RV32C only
+pub const OP_C_ADDIW: OpId = OpId::new(EXT_C, 8); // RV64C
 pub const OP_C_LI: OpId = OpId::new(EXT_C, 9);
 pub const OP_C_ADDI16SP: OpId = OpId::new(EXT_C, 10);
 pub const OP_C_LUI: OpId = OpId::new(EXT_C, 11);
@@ -27,8 +27,8 @@ pub const OP_C_SUB: OpId = OpId::new(EXT_C, 15);
 pub const OP_C_XOR: OpId = OpId::new(EXT_C, 16);
 pub const OP_C_OR: OpId = OpId::new(EXT_C, 17);
 pub const OP_C_AND: OpId = OpId::new(EXT_C, 18);
-pub const OP_C_SUBW: OpId = OpId::new(EXT_C, 19);  // RV64C
-pub const OP_C_ADDW: OpId = OpId::new(EXT_C, 20);  // RV64C
+pub const OP_C_SUBW: OpId = OpId::new(EXT_C, 19); // RV64C
+pub const OP_C_ADDW: OpId = OpId::new(EXT_C, 20); // RV64C
 pub const OP_C_J: OpId = OpId::new(EXT_C, 21);
 pub const OP_C_BEQZ: OpId = OpId::new(EXT_C, 22);
 pub const OP_C_BNEZ: OpId = OpId::new(EXT_C, 23);
@@ -36,14 +36,14 @@ pub const OP_C_BNEZ: OpId = OpId::new(EXT_C, 23);
 // Quadrant 2
 pub const OP_C_SLLI: OpId = OpId::new(EXT_C, 24);
 pub const OP_C_LWSP: OpId = OpId::new(EXT_C, 25);
-pub const OP_C_LDSP: OpId = OpId::new(EXT_C, 26);  // RV64C
+pub const OP_C_LDSP: OpId = OpId::new(EXT_C, 26); // RV64C
 pub const OP_C_JR: OpId = OpId::new(EXT_C, 27);
 pub const OP_C_MV: OpId = OpId::new(EXT_C, 28);
 pub const OP_C_EBREAK: OpId = OpId::new(EXT_C, 29);
 pub const OP_C_JALR: OpId = OpId::new(EXT_C, 30);
 pub const OP_C_ADD: OpId = OpId::new(EXT_C, 31);
 pub const OP_C_SWSP: OpId = OpId::new(EXT_C, 32);
-pub const OP_C_SDSP: OpId = OpId::new(EXT_C, 33);  // RV64C
+pub const OP_C_SDSP: OpId = OpId::new(EXT_C, 33); // RV64C
 
 /// Get the mnemonic for a C extension instruction.
 pub fn c_mnemonic(opid: OpId) -> &'static str {
@@ -130,42 +130,212 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
 /// Table-driven OpInfo for C extension.
 const OP_INFO_C: &[OpInfo] = &[
     // Quadrant 0
-    OpInfo { opid: OP_C_ADDI4SPN, name: "c.addi4spn", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_LW, name: "c.lw", class: OpClass::Load, size_hint: 2 },
-    OpInfo { opid: OP_C_SW, name: "c.sw", class: OpClass::Store, size_hint: 2 },
-    OpInfo { opid: OP_C_LD, name: "c.ld", class: OpClass::Load, size_hint: 2 },
-    OpInfo { opid: OP_C_SD, name: "c.sd", class: OpClass::Store, size_hint: 2 },
+    OpInfo {
+        opid: OP_C_ADDI4SPN,
+        name: "c.addi4spn",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_LW,
+        name: "c.lw",
+        class: OpClass::Load,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SW,
+        name: "c.sw",
+        class: OpClass::Store,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_LD,
+        name: "c.ld",
+        class: OpClass::Load,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SD,
+        name: "c.sd",
+        class: OpClass::Store,
+        size_hint: 2,
+    },
     // Quadrant 1
-    OpInfo { opid: OP_C_NOP, name: "c.nop", class: OpClass::Nop, size_hint: 2 },
-    OpInfo { opid: OP_C_ADDI, name: "c.addi", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_JAL, name: "c.jal", class: OpClass::Jump, size_hint: 2 },
-    OpInfo { opid: OP_C_ADDIW, name: "c.addiw", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_LI, name: "c.li", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_ADDI16SP, name: "c.addi16sp", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_LUI, name: "c.lui", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_SRLI, name: "c.srli", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_SRAI, name: "c.srai", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_ANDI, name: "c.andi", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_SUB, name: "c.sub", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_XOR, name: "c.xor", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_OR, name: "c.or", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_AND, name: "c.and", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_SUBW, name: "c.subw", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_ADDW, name: "c.addw", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_J, name: "c.j", class: OpClass::Jump, size_hint: 2 },
-    OpInfo { opid: OP_C_BEQZ, name: "c.beqz", class: OpClass::Branch, size_hint: 2 },
-    OpInfo { opid: OP_C_BNEZ, name: "c.bnez", class: OpClass::Branch, size_hint: 2 },
+    OpInfo {
+        opid: OP_C_NOP,
+        name: "c.nop",
+        class: OpClass::Nop,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_ADDI,
+        name: "c.addi",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_JAL,
+        name: "c.jal",
+        class: OpClass::Jump,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_ADDIW,
+        name: "c.addiw",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_LI,
+        name: "c.li",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_ADDI16SP,
+        name: "c.addi16sp",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_LUI,
+        name: "c.lui",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SRLI,
+        name: "c.srli",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SRAI,
+        name: "c.srai",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_ANDI,
+        name: "c.andi",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SUB,
+        name: "c.sub",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_XOR,
+        name: "c.xor",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_OR,
+        name: "c.or",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_AND,
+        name: "c.and",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SUBW,
+        name: "c.subw",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_ADDW,
+        name: "c.addw",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_J,
+        name: "c.j",
+        class: OpClass::Jump,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_BEQZ,
+        name: "c.beqz",
+        class: OpClass::Branch,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_BNEZ,
+        name: "c.bnez",
+        class: OpClass::Branch,
+        size_hint: 2,
+    },
     // Quadrant 2
-    OpInfo { opid: OP_C_SLLI, name: "c.slli", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_LWSP, name: "c.lwsp", class: OpClass::Load, size_hint: 2 },
-    OpInfo { opid: OP_C_LDSP, name: "c.ldsp", class: OpClass::Load, size_hint: 2 },
-    OpInfo { opid: OP_C_JR, name: "c.jr", class: OpClass::JumpIndirect, size_hint: 2 },
-    OpInfo { opid: OP_C_MV, name: "c.mv", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_EBREAK, name: "c.ebreak", class: OpClass::System, size_hint: 2 },
-    OpInfo { opid: OP_C_JALR, name: "c.jalr", class: OpClass::JumpIndirect, size_hint: 2 },
-    OpInfo { opid: OP_C_ADD, name: "c.add", class: OpClass::Alu, size_hint: 2 },
-    OpInfo { opid: OP_C_SWSP, name: "c.swsp", class: OpClass::Store, size_hint: 2 },
-    OpInfo { opid: OP_C_SDSP, name: "c.sdsp", class: OpClass::Store, size_hint: 2 },
+    OpInfo {
+        opid: OP_C_SLLI,
+        name: "c.slli",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_LWSP,
+        name: "c.lwsp",
+        class: OpClass::Load,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_LDSP,
+        name: "c.ldsp",
+        class: OpClass::Load,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_JR,
+        name: "c.jr",
+        class: OpClass::JumpIndirect,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_MV,
+        name: "c.mv",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_EBREAK,
+        name: "c.ebreak",
+        class: OpClass::System,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_JALR,
+        name: "c.jalr",
+        class: OpClass::JumpIndirect,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_ADD,
+        name: "c.add",
+        class: OpClass::Alu,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SWSP,
+        name: "c.swsp",
+        class: OpClass::Store,
+        size_hint: 2,
+    },
+    OpInfo {
+        opid: OP_C_SDSP,
+        name: "c.sdsp",
+        class: OpClass::Store,
+        size_hint: 2,
+    },
 ];
 
 // Decode helpers
@@ -175,32 +345,69 @@ fn decode_q0<X: Xlen>(instr: u16, funct3: u8) -> Option<(crate::OpId, InstrArgs)
         0b000 => {
             let rd = ((instr >> 2) & 0x7) as u8 + 8;
             let nzuimm = decode_addi4spn_imm(instr);
-            if nzuimm == 0 { return None; }
-            Some((OP_C_ADDI4SPN, InstrArgs::I { rd, rs1: 2, imm: nzuimm as i32 }))
+            if nzuimm == 0 {
+                return None;
+            }
+            Some((
+                OP_C_ADDI4SPN,
+                InstrArgs::I {
+                    rd,
+                    rs1: 2,
+                    imm: nzuimm as i32,
+                },
+            ))
         }
         0b010 => {
             let rd = ((instr >> 2) & 0x7) as u8 + 8;
             let rs1 = ((instr >> 7) & 0x7) as u8 + 8;
             let offset = decode_cl_lw_offset(instr);
-            Some((OP_C_LW, InstrArgs::I { rd, rs1, imm: offset as i32 }))
+            Some((
+                OP_C_LW,
+                InstrArgs::I {
+                    rd,
+                    rs1,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b011 if X::VALUE == 64 => {
             let rd = ((instr >> 2) & 0x7) as u8 + 8;
             let rs1 = ((instr >> 7) & 0x7) as u8 + 8;
             let offset = decode_cl_ld_offset(instr);
-            Some((OP_C_LD, InstrArgs::I { rd, rs1, imm: offset as i32 }))
+            Some((
+                OP_C_LD,
+                InstrArgs::I {
+                    rd,
+                    rs1,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b110 => {
             let rs2 = ((instr >> 2) & 0x7) as u8 + 8;
             let rs1 = ((instr >> 7) & 0x7) as u8 + 8;
             let offset = decode_cs_sw_offset(instr);
-            Some((OP_C_SW, InstrArgs::S { rs1, rs2, imm: offset as i32 }))
+            Some((
+                OP_C_SW,
+                InstrArgs::S {
+                    rs1,
+                    rs2,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b111 if X::VALUE == 64 => {
             let rs2 = ((instr >> 2) & 0x7) as u8 + 8;
             let rs1 = ((instr >> 7) & 0x7) as u8 + 8;
             let offset = decode_cs_sd_offset(instr);
-            Some((OP_C_SD, InstrArgs::S { rs1, rs2, imm: offset as i32 }))
+            Some((
+                OP_C_SD,
+                InstrArgs::S {
+                    rs1,
+                    rs2,
+                    imm: offset as i32,
+                },
+            ))
         }
         _ => None,
     }
@@ -214,50 +421,110 @@ fn decode_q1<X: Xlen>(instr: u16, funct3: u8) -> Option<(crate::OpId, InstrArgs)
             if rd == 0 && imm == 0 {
                 return Some((OP_C_NOP, InstrArgs::None));
             }
-            Some((OP_C_ADDI, InstrArgs::I { rd, rs1: rd, imm: imm as i32 }))
+            Some((
+                OP_C_ADDI,
+                InstrArgs::I {
+                    rd,
+                    rs1: rd,
+                    imm: imm as i32,
+                },
+            ))
         }
         0b001 => {
             if X::VALUE == 64 {
                 let rd = ((instr >> 7) & 0x1F) as u8;
                 let imm = decode_ci_imm(instr);
-                if rd == 0 { return None; }
-                Some((OP_C_ADDIW, InstrArgs::I { rd, rs1: rd, imm: imm as i32 }))
+                if rd == 0 {
+                    return None;
+                }
+                Some((
+                    OP_C_ADDIW,
+                    InstrArgs::I {
+                        rd,
+                        rs1: rd,
+                        imm: imm as i32,
+                    },
+                ))
             } else {
                 let offset = decode_cj_imm(instr);
-                Some((OP_C_JAL, InstrArgs::J { rd: 1, imm: offset as i32 }))
+                Some((
+                    OP_C_JAL,
+                    InstrArgs::J {
+                        rd: 1,
+                        imm: offset as i32,
+                    },
+                ))
             }
         }
         0b010 => {
             let rd = ((instr >> 7) & 0x1F) as u8;
             let imm = decode_ci_imm(instr);
-            Some((OP_C_LI, InstrArgs::I { rd, rs1: 0, imm: imm as i32 }))
+            Some((
+                OP_C_LI,
+                InstrArgs::I {
+                    rd,
+                    rs1: 0,
+                    imm: imm as i32,
+                },
+            ))
         }
         0b011 => {
             let rd = ((instr >> 7) & 0x1F) as u8;
             if rd == 2 {
                 let imm = decode_ci16sp_imm(instr);
-                if imm == 0 { return None; }
-                Some((OP_C_ADDI16SP, InstrArgs::I { rd: 2, rs1: 2, imm: imm as i32 }))
+                if imm == 0 {
+                    return None;
+                }
+                Some((
+                    OP_C_ADDI16SP,
+                    InstrArgs::I {
+                        rd: 2,
+                        rs1: 2,
+                        imm: imm as i32,
+                    },
+                ))
             } else {
                 let imm = decode_ci_lui_imm(instr);
-                if imm == 0 || rd == 0 { return None; }
+                if imm == 0 || rd == 0 {
+                    return None;
+                }
                 Some((OP_C_LUI, InstrArgs::U { rd, imm }))
             }
         }
         0b100 => decode_misc_alu::<X>(instr),
         0b101 => {
             let offset = decode_cj_imm(instr);
-            Some((OP_C_J, InstrArgs::J { rd: 0, imm: offset as i32 }))
+            Some((
+                OP_C_J,
+                InstrArgs::J {
+                    rd: 0,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b110 => {
             let rs1 = ((instr >> 7) & 0x7) as u8 + 8;
             let offset = decode_cb_imm(instr);
-            Some((OP_C_BEQZ, InstrArgs::B { rs1, rs2: 0, imm: offset as i32 }))
+            Some((
+                OP_C_BEQZ,
+                InstrArgs::B {
+                    rs1,
+                    rs2: 0,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b111 => {
             let rs1 = ((instr >> 7) & 0x7) as u8 + 8;
             let offset = decode_cb_imm(instr);
-            Some((OP_C_BNEZ, InstrArgs::B { rs1, rs2: 0, imm: offset as i32 }))
+            Some((
+                OP_C_BNEZ,
+                InstrArgs::B {
+                    rs1,
+                    rs2: 0,
+                    imm: offset as i32,
+                },
+            ))
         }
         _ => None,
     }
@@ -270,15 +537,36 @@ fn decode_misc_alu<X: Xlen>(instr: u16) -> Option<(crate::OpId, InstrArgs)> {
     match funct2 {
         0b00 => {
             let shamt = decode_ci_shamt(instr);
-            Some((OP_C_SRLI, InstrArgs::I { rd, rs1: rd, imm: shamt as i32 }))
+            Some((
+                OP_C_SRLI,
+                InstrArgs::I {
+                    rd,
+                    rs1: rd,
+                    imm: shamt as i32,
+                },
+            ))
         }
         0b01 => {
             let shamt = decode_ci_shamt(instr);
-            Some((OP_C_SRAI, InstrArgs::I { rd, rs1: rd, imm: shamt as i32 }))
+            Some((
+                OP_C_SRAI,
+                InstrArgs::I {
+                    rd,
+                    rs1: rd,
+                    imm: shamt as i32,
+                },
+            ))
         }
         0b10 => {
             let imm = decode_ci_imm(instr);
-            Some((OP_C_ANDI, InstrArgs::I { rd, rs1: rd, imm: imm as i32 }))
+            Some((
+                OP_C_ANDI,
+                InstrArgs::I {
+                    rd,
+                    rs1: rd,
+                    imm: imm as i32,
+                },
+            ))
         }
         0b11 => {
             let rs2 = ((instr >> 2) & 0x7) as u8 + 8;
@@ -295,7 +583,9 @@ fn decode_misc_alu<X: Xlen>(instr: u16) -> Option<(crate::OpId, InstrArgs)> {
                 };
                 Some((op, InstrArgs::R { rd, rs1: rd, rs2 }))
             } else {
-                if X::VALUE != 64 { return None; }
+                if X::VALUE != 64 {
+                    return None;
+                }
                 let op = match funct2_low {
                     0b00 => OP_C_SUBW,
                     0b01 => OP_C_ADDW,
@@ -313,20 +603,47 @@ fn decode_q2<X: Xlen>(instr: u16, funct3: u8) -> Option<(crate::OpId, InstrArgs)
         0b000 => {
             let rd = ((instr >> 7) & 0x1F) as u8;
             let shamt = decode_ci_shamt(instr);
-            if rd == 0 { return None; }
-            Some((OP_C_SLLI, InstrArgs::I { rd, rs1: rd, imm: shamt as i32 }))
+            if rd == 0 {
+                return None;
+            }
+            Some((
+                OP_C_SLLI,
+                InstrArgs::I {
+                    rd,
+                    rs1: rd,
+                    imm: shamt as i32,
+                },
+            ))
         }
         0b010 => {
             let rd = ((instr >> 7) & 0x1F) as u8;
             let offset = decode_ci_lwsp_offset(instr);
-            if rd == 0 { return None; }
-            Some((OP_C_LWSP, InstrArgs::I { rd, rs1: 2, imm: offset as i32 }))
+            if rd == 0 {
+                return None;
+            }
+            Some((
+                OP_C_LWSP,
+                InstrArgs::I {
+                    rd,
+                    rs1: 2,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b011 if X::VALUE == 64 => {
             let rd = ((instr >> 7) & 0x1F) as u8;
             let offset = decode_ci_ldsp_offset(instr);
-            if rd == 0 { return None; }
-            Some((OP_C_LDSP, InstrArgs::I { rd, rs1: 2, imm: offset as i32 }))
+            if rd == 0 {
+                return None;
+            }
+            Some((
+                OP_C_LDSP,
+                InstrArgs::I {
+                    rd,
+                    rs1: 2,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b100 => {
             let funct4 = ((instr >> 12) & 0x1) as u8;
@@ -335,30 +652,51 @@ fn decode_q2<X: Xlen>(instr: u16, funct3: u8) -> Option<(crate::OpId, InstrArgs)
 
             if funct4 == 0 {
                 if rs2 == 0 {
-                    if rs1 == 0 { return None; }
+                    if rs1 == 0 {
+                        return None;
+                    }
                     Some((OP_C_JR, InstrArgs::I { rd: 0, rs1, imm: 0 }))
                 } else {
-                    Some((OP_C_MV, InstrArgs::R { rd: rs1, rs1: 0, rs2 }))
+                    Some((
+                        OP_C_MV,
+                        InstrArgs::R {
+                            rd: rs1,
+                            rs1: 0,
+                            rs2,
+                        },
+                    ))
                 }
+            } else if rs1 == 0 && rs2 == 0 {
+                Some((OP_C_EBREAK, InstrArgs::None))
+            } else if rs2 == 0 {
+                Some((OP_C_JALR, InstrArgs::I { rd: 1, rs1, imm: 0 }))
             } else {
-                if rs1 == 0 && rs2 == 0 {
-                    Some((OP_C_EBREAK, InstrArgs::None))
-                } else if rs2 == 0 {
-                    Some((OP_C_JALR, InstrArgs::I { rd: 1, rs1, imm: 0 }))
-                } else {
-                    Some((OP_C_ADD, InstrArgs::R { rd: rs1, rs1, rs2 }))
-                }
+                Some((OP_C_ADD, InstrArgs::R { rd: rs1, rs1, rs2 }))
             }
         }
         0b110 => {
             let rs2 = ((instr >> 2) & 0x1F) as u8;
             let offset = decode_css_swsp_offset(instr);
-            Some((OP_C_SWSP, InstrArgs::S { rs1: 2, rs2, imm: offset as i32 }))
+            Some((
+                OP_C_SWSP,
+                InstrArgs::S {
+                    rs1: 2,
+                    rs2,
+                    imm: offset as i32,
+                },
+            ))
         }
         0b111 if X::VALUE == 64 => {
             let rs2 = ((instr >> 2) & 0x1F) as u8;
             let offset = decode_css_sdsp_offset(instr);
-            Some((OP_C_SDSP, InstrArgs::S { rs1: 2, rs2, imm: offset as i32 }))
+            Some((
+                OP_C_SDSP,
+                InstrArgs::S {
+                    rs1: 2,
+                    rs2,
+                    imm: offset as i32,
+                },
+            ))
         }
         _ => None,
     }
@@ -405,9 +743,7 @@ fn decode_addi4spn_imm(instr: u16) -> u16 {
 }
 
 fn decode_cl_lw_offset(instr: u16) -> u8 {
-    ((((instr >> 6) & 0x1) << 2)
-        | (((instr >> 10) & 0x7) << 3)
-        | (((instr >> 5) & 0x1) << 6)) as u8
+    ((((instr >> 6) & 0x1) << 2) | (((instr >> 10) & 0x7) << 3) | (((instr >> 5) & 0x1) << 6)) as u8
 }
 
 fn decode_cs_sw_offset(instr: u16) -> u8 {
@@ -468,9 +804,7 @@ fn decode_cb_imm(instr: u16) -> i16 {
 }
 
 fn decode_ci_lwsp_offset(instr: u16) -> u8 {
-    ((((instr >> 4) & 0x7) << 2)
-        | (((instr >> 12) & 0x1) << 5)
-        | (((instr >> 2) & 0x3) << 6)) as u8
+    ((((instr >> 4) & 0x7) << 2) | (((instr >> 12) & 0x1) << 5) | (((instr >> 2) & 0x3) << 6)) as u8
 }
 
 fn decode_css_swsp_offset(instr: u16) -> u8 {
@@ -478,9 +812,7 @@ fn decode_css_swsp_offset(instr: u16) -> u8 {
 }
 
 fn decode_ci_ldsp_offset(instr: u16) -> u16 {
-    (((instr >> 5) & 0x3) << 3)
-        | (((instr >> 12) & 0x1) << 5)
-        | (((instr >> 2) & 0x7) << 6)
+    (((instr >> 5) & 0x3) << 3) | (((instr >> 12) & 0x1) << 5) | (((instr >> 2) & 0x7) << 6)
 }
 
 fn decode_css_sdsp_offset(instr: u16) -> u16 {
@@ -489,7 +821,12 @@ fn decode_css_sdsp_offset(instr: u16) -> u16 {
 
 // Lift functions
 
-fn lift_c<X: Xlen>(args: &InstrArgs, opid: crate::OpId, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, Terminator<X>) {
+fn lift_c<X: Xlen>(
+    args: &InstrArgs,
+    opid: crate::OpId,
+    pc: X::Reg,
+    size: u8,
+) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {
         // R-type
         OP_C_ADD => lift_r(args, |a, b| Expr::add(a, b)),
@@ -540,12 +877,16 @@ fn lift_c<X: Xlen>(args: &InstrArgs, opid: crate::OpId, pc: X::Reg, size: u8) ->
 }
 
 fn lift_r<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::R { rd, rs1, rs2 } => {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::read(*rs2)))]
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -557,7 +898,9 @@ fn lift_mv<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
         InstrArgs::R { rd, rs2, .. } => {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, Expr::read(*rs2))]
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -565,12 +908,19 @@ fn lift_mv<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
 }
 
 fn lift_i<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -578,12 +928,19 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
 }
 
 fn lift_shamt<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -594,8 +951,13 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::U { rd, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, Expr::imm(X::sign_extend_32(*imm as u32)))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    Expr::imm(X::sign_extend_32(*imm as u32)),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -607,9 +969,15 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
                 let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-                let val = if signed { Expr::mem_s(addr, width) } else { Expr::mem_u(addr, width) };
+                let val = if signed {
+                    Expr::mem_s(addr, width)
+                } else {
+                    Expr::mem_u(addr, width)
+                };
                 vec![Stmt::write_reg(*rd, val)]
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -620,7 +988,10 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
             let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-            (vec![Stmt::write_mem(addr, Expr::read(*rs2), width)], Terminator::Fall { target: None })
+            (
+                vec![Stmt::write_mem(addr, Expr::read(*rs2), width)],
+                Terminator::Fall { target: None },
+            )
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -642,7 +1013,10 @@ fn lift_jal<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, T
         InstrArgs::J { rd, imm } => {
             let mut stmts = Vec::new();
             if *rd != 0 {
-                stmts.push(Stmt::write_reg(*rd, Expr::imm(pc + X::from_u64(size as u64))));
+                stmts.push(Stmt::write_reg(
+                    *rd,
+                    Expr::imm(pc + X::from_u64(size as u64)),
+                ));
             }
             let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
             let target = (X::to_u64(pc) as i64 + offset) as u64;
@@ -673,7 +1047,10 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
                 Expr::read(*rs1)
             };
             if *rd != 0 {
-                stmts.push(Stmt::write_reg(*rd, Expr::imm(pc + X::from_u64(size as u64))));
+                stmts.push(Stmt::write_reg(
+                    *rd,
+                    Expr::imm(pc + X::from_u64(size as u64)),
+                ));
             }
             let target = Expr::and(base, Expr::not(Expr::imm(X::from_u64(1))));
             (stmts, Terminator::jump_dyn(target))

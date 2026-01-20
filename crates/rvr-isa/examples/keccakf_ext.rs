@@ -116,7 +116,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
 /// Encode a keccakf.round instruction.
 fn encode_keccakf_round(rs1: u8, rs3: u8) -> [u8; 4] {
     let raw: u32 = CUSTOM_0_OPCODE
-        | ((KECCAKF_FUNCT3 as u32) << 12)
+        | (KECCAKF_FUNCT3 << 12)
         | ((rs1 as u32 & 0x1F) << 15)
         | ((rs3 as u32 & 0x1F) << 20)
         | (KECCAKF_FUNCT5 << 27);
@@ -138,9 +138,14 @@ fn main() {
 
     // Decode the instruction
     let pc = 0x1000u64;
-    let instr = registry.decode(&instr_bytes, pc).expect("Failed to decode keccakf.round");
+    let instr = registry
+        .decode(&instr_bytes, pc)
+        .expect("Failed to decode keccakf.round");
 
-    println!("Decoded: opid={}, pc=0x{:x}, size={}", instr.opid, pc, instr.size);
+    println!(
+        "Decoded: opid={}, pc=0x{:x}, size={}",
+        instr.opid, pc, instr.size
+    );
     assert_eq!(instr.opid, OP_KECCAKF_ROUND);
     assert_eq!(instr.size, 4);
 
@@ -156,7 +161,10 @@ fn main() {
     println!("\nLifted IR:");
     println!("  PC: 0x{:x}", Rv64::to_u64(ir.pc));
     println!("  Size: {} bytes", ir.size);
-    println!("  Statements: {} (expect 1 extern call)", ir.statements.len());
+    println!(
+        "  Statements: {} (expect 1 extern call)",
+        ir.statements.len()
+    );
     println!("  Terminator: {:?}", ir.terminator);
 
     // Verify IR structure
@@ -171,7 +179,9 @@ fn main() {
     }
 
     // Get op_info
-    let info = registry.op_info(OP_KECCAKF_ROUND).expect("OpInfo not found");
+    let info = registry
+        .op_info(OP_KECCAKF_ROUND)
+        .expect("OpInfo not found");
     println!("\nOpInfo:");
     println!("  Name: {}", info.name);
     println!("  Class: {:?}", info.class);
@@ -215,8 +225,7 @@ mod tests {
     #[test]
     fn test_keccakf_op_info() {
         let ext = KeccakFExtension;
-        let info: Option<OpInfo> =
-            InstructionExtension::<Rv64>::op_info(&ext, OP_KECCAKF_ROUND);
+        let info: Option<OpInfo> = InstructionExtension::<Rv64>::op_info(&ext, OP_KECCAKF_ROUND);
         assert!(info.is_some());
         let info = info.unwrap();
         assert_eq!(info.name, "keccakf.round");

@@ -15,12 +15,12 @@ use std::path::{Path, PathBuf};
 use rvr_ir::{BlockIR, Xlen};
 
 use crate::config::EmitConfig;
-use crate::dispatch::{DispatchConfig, gen_dispatch_file};
+use crate::dispatch::{gen_dispatch_file, DispatchConfig};
 use crate::emitter::CEmitter;
-use crate::header::{HeaderConfig, gen_header, gen_blocks_header};
-use crate::htif::{HtifConfig, gen_htif_header, gen_htif_source};
+use crate::header::{gen_blocks_header, gen_header, HeaderConfig};
+use crate::htif::{gen_htif_header, gen_htif_source, HtifConfig};
 use crate::inputs::EmitInputs;
-use crate::memory::{MemoryConfig, MemorySegment, gen_memory_file};
+use crate::memory::{gen_memory_file, MemoryConfig, MemorySegment};
 use crate::tracer::gen_tracer_header;
 
 /// Default instructions per partition.
@@ -112,12 +112,14 @@ impl<X: Xlen> CProject<X> {
 
     /// Path to partition file.
     pub fn partition_path(&self, idx: usize) -> PathBuf {
-        self.output_dir.join(format!("{}_part{}.c", self.base_name, idx))
+        self.output_dir
+            .join(format!("{}_part{}.c", self.base_name, idx))
     }
 
     /// Path to dispatch file.
     pub fn dispatch_path(&self) -> PathBuf {
-        self.output_dir.join(format!("{}_dispatch.c", self.base_name))
+        self.output_dir
+            .join(format!("{}_dispatch.c", self.base_name))
     }
 
     /// Path to memory file.
@@ -242,7 +244,8 @@ impl<X: Xlen> CProject<X> {
             let last_pc = X::to_u64(last_instr.pc);
 
             // Check if this block's last instruction is a branch with taken-inline
-            let taken_inline = if let Terminator::Branch { cond, hint, .. } = &last_instr.terminator {
+            let taken_inline = if let Terminator::Branch { cond, hint, .. } = &last_instr.terminator
+            {
                 if let Some(&(inline_start, _inline_end)) = self.taken_inlines.get(&last_pc) {
                     // Found a taken-inline entry for this branch
                     Some((cond.clone(), *hint, inline_start))
@@ -319,10 +322,8 @@ impl<X: Xlen> CProject<X> {
     /// Write all partition files.
     pub fn write_partitions(&self, blocks: &[BlockIR<X>]) -> std::io::Result<usize> {
         // Build block lookup map for taken-inline support
-        let block_map: HashMap<u64, &BlockIR<X>> = blocks
-            .iter()
-            .map(|b| (X::to_u64(b.start_pc), b))
-            .collect();
+        let block_map: HashMap<u64, &BlockIR<X>> =
+            blocks.iter().map(|b| (X::to_u64(b.start_pc), b)).collect();
 
         let partitions = self.partition_blocks(blocks);
         let num_partitions = partitions.len();
@@ -336,11 +337,7 @@ impl<X: Xlen> CProject<X> {
 
     /// Write dispatch file.
     pub fn write_dispatch(&self) -> std::io::Result<()> {
-        let dispatch_cfg = DispatchConfig::new(
-            &self.config,
-            &self.base_name,
-            self.inputs.clone(),
-        );
+        let dispatch_cfg = DispatchConfig::new(&self.config, &self.base_name, self.inputs.clone());
 
         let dispatch = gen_dispatch_file::<X>(&dispatch_cfg);
         fs::write(self.dispatch_path(), dispatch)
@@ -420,7 +417,12 @@ impl<X: Xlen> CProject<X> {
         writeln!(content, "\t$(CC) $(CFLAGS) -shared -o $@ $(OBJS)").unwrap();
         writeln!(content).unwrap();
 
-        writeln!(content, "%.o: %.c {}.h {}_blocks.h", self.base_name, self.base_name).unwrap();
+        writeln!(
+            content,
+            "%.o: %.c {}.h {}_blocks.h",
+            self.base_name, self.base_name
+        )
+        .unwrap();
         writeln!(content, "\t$(CC) $(CFLAGS) $(SHARED_FLAGS) -c $< -o $@").unwrap();
         writeln!(content).unwrap();
 
@@ -441,10 +443,7 @@ impl<X: Xlen> CProject<X> {
         fs::create_dir_all(&self.output_dir)?;
 
         // Collect block addresses
-        let block_addresses: Vec<u64> = blocks
-            .iter()
-            .map(|b| X::to_u64(b.start_pc))
-            .collect();
+        let block_addresses: Vec<u64> = blocks.iter().map(|b| X::to_u64(b.start_pc)).collect();
 
         // Write header
         self.write_header(&block_addresses)?;
@@ -486,25 +485,36 @@ mod tests {
         let project = CProject::new("/tmp/test", "rv64", config);
 
         assert_eq!(project.header_path().to_str().unwrap(), "/tmp/test/rv64.h");
-        assert_eq!(project.blocks_header_path().to_str().unwrap(), "/tmp/test/rv64_blocks.h");
-        assert_eq!(project.partition_path(0).to_str().unwrap(), "/tmp/test/rv64_part0.c");
-        assert_eq!(project.dispatch_path().to_str().unwrap(), "/tmp/test/rv64_dispatch.c");
-        assert_eq!(project.makefile_path().to_str().unwrap(), "/tmp/test/Makefile");
+        assert_eq!(
+            project.blocks_header_path().to_str().unwrap(),
+            "/tmp/test/rv64_blocks.h"
+        );
+        assert_eq!(
+            project.partition_path(0).to_str().unwrap(),
+            "/tmp/test/rv64_part0.c"
+        );
+        assert_eq!(
+            project.dispatch_path().to_str().unwrap(),
+            "/tmp/test/rv64_dispatch.c"
+        );
+        assert_eq!(
+            project.makefile_path().to_str().unwrap(),
+            "/tmp/test/Makefile"
+        );
     }
 
     #[test]
     fn test_partition_blocks() {
         let config = EmitConfig::<Rv64>::default();
-        let project = CProject::new("/tmp/test", "rv64", config)
-            .with_partition_size(10);
+        let project = CProject::new("/tmp/test", "rv64", config).with_partition_size(10);
 
         // Create dummy blocks with different instruction counts
         let blocks: Vec<BlockIR<Rv64>> = vec![
-            create_dummy_block(0x1000, 5),  // 5 instructions
-            create_dummy_block(0x2000, 3),  // 3 instructions -> partition 0 (8 total)
-            create_dummy_block(0x3000, 4),  // 4 instructions -> partition 1 (4 total)
-            create_dummy_block(0x4000, 6),  // 6 instructions -> partition 1 (10 total)
-            create_dummy_block(0x5000, 2),  // 2 instructions -> partition 2
+            create_dummy_block(0x1000, 5), // 5 instructions
+            create_dummy_block(0x2000, 3), // 3 instructions -> partition 0 (8 total)
+            create_dummy_block(0x3000, 4), // 4 instructions -> partition 1 (4 total)
+            create_dummy_block(0x4000, 6), // 6 instructions -> partition 1 (10 total)
+            create_dummy_block(0x5000, 2), // 2 instructions -> partition 2
         ];
 
         let partitions = project.partition_blocks(&blocks);

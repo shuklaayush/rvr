@@ -7,11 +7,11 @@
 
 use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
-use crate::{
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBKB,
-    encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-};
 use super::InstructionExtension;
+use crate::{
+    encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
+    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBKB,
+};
 
 // Instruction OpIds
 pub const OP_PACK: OpId = OpId::new(EXT_ZBKB, 0);
@@ -62,34 +62,66 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
         // R-type on OPCODE_OP: pack, packh
         if opcode == OPCODE_OP && funct7 == FUNCT7_PACK {
             if funct3 == FUNCT3_PACK {
-                return Some(DecodedInstr::new(OP_PACK, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
+                return Some(DecodedInstr::new(
+                    OP_PACK,
+                    pc,
+                    4,
+                    InstrArgs::R { rd, rs1, rs2 },
+                ));
             }
             if funct3 == FUNCT3_PACKH {
-                return Some(DecodedInstr::new(OP_PACKH, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
+                return Some(DecodedInstr::new(
+                    OP_PACKH,
+                    pc,
+                    4,
+                    InstrArgs::R { rd, rs1, rs2 },
+                ));
             }
         }
 
         // I-type on OPCODE_OP_IMM: brev8, zip, unzip
         if opcode == OPCODE_OP_IMM {
             if funct3 == 0b101 && imm12 == IMM_BREV8 {
-                return Some(DecodedInstr::new(OP_BREV8, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                return Some(DecodedInstr::new(
+                    OP_BREV8,
+                    pc,
+                    4,
+                    InstrArgs::I { rd, rs1, imm: 0 },
+                ));
             }
             // ZIP/UNZIP: RV32 only
             if X::VALUE == 32 {
                 if funct3 == 0b101 && imm12 == IMM_UNZIP {
-                    return Some(DecodedInstr::new(OP_UNZIP, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                    return Some(DecodedInstr::new(
+                        OP_UNZIP,
+                        pc,
+                        4,
+                        InstrArgs::I { rd, rs1, imm: 0 },
+                    ));
                 }
                 if funct3 == 0b001 && imm12 == IMM_ZIP {
-                    return Some(DecodedInstr::new(OP_ZIP, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                    return Some(DecodedInstr::new(
+                        OP_ZIP,
+                        pc,
+                        4,
+                        InstrArgs::I { rd, rs1, imm: 0 },
+                    ));
                 }
             }
         }
 
         // R-type on OPCODE_OP_32: packw (RV64 only)
-        if opcode == OPCODE_OP_32 && X::VALUE == 64 {
-            if funct7 == FUNCT7_PACK && funct3 == FUNCT3_PACK {
-                return Some(DecodedInstr::new(OP_PACKW, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
-            }
+        if opcode == OPCODE_OP_32
+            && X::VALUE == 64
+            && funct7 == FUNCT7_PACK
+            && funct3 == FUNCT3_PACK
+        {
+            return Some(DecodedInstr::new(
+                OP_PACKW,
+                pc,
+                4,
+                InstrArgs::R { rd, rs1, rs2 },
+            ));
         }
 
         None
@@ -103,7 +135,13 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
             OP_BREV8 => lift_unary::<X, _>(instr, |v| Expr::brev8(v)),
             OP_ZIP => lift_unary::<X, _>(instr, |v| Expr::zip(v)),
             OP_UNZIP => lift_unary::<X, _>(instr, |v| Expr::unzip(v)),
-            _ => InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unknown Zbkb opid")),
+            _ => InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("unknown Zbkb opid"),
+            ),
         }
     }
 
@@ -129,34 +167,76 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
 fn lift_pack<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // pack: rd = (rs2[XLEN/2-1:0] << (XLEN/2)) | rs1[XLEN/2-1:0]
     let result = Expr::pack(Expr::reg(rs1), Expr::reg(rs2));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_packh<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // packh: rd = (rs2[7:0] << 8) | rs1[7:0]
     let result = Expr::pack8(Expr::reg(rs1), Expr::reg(rs2));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_packw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // packw: rd = sext((rs2[15:0] << 16) | rs1[15:0])
     let result = Expr::pack16(Expr::reg(rs1), Expr::reg(rs2));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_unary<X: Xlen, F>(instr: &DecodedInstr<X>, op: F) -> InstrIR<X>
@@ -165,11 +245,25 @@ where
 {
     let (rd, rs1) = match instr.args {
         InstrArgs::I { rd, rs1, .. } => (rd, rs1),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     let result = op(Expr::reg(rs1));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 // === Disasm helpers ===
@@ -177,7 +271,13 @@ where
 fn disasm_r<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
     match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => {
-            format!("{} {}, {}, {}", mnemonic, reg_name(rd), reg_name(rs1), reg_name(rs2))
+            format!(
+                "{} {}, {}, {}",
+                mnemonic,
+                reg_name(rd),
+                reg_name(rs1),
+                reg_name(rs2)
+            )
         }
         _ => format!("{} ???", mnemonic),
     }
@@ -194,17 +294,50 @@ fn disasm_unary<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
 
 /// Table-driven OpInfo for Zbkb extension.
 const OP_INFO_ZBKB: &[OpInfo] = &[
-    OpInfo { opid: OP_PACK, name: "pack", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_PACKH, name: "packh", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_PACKW, name: "packw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_BREV8, name: "brev8", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ZIP, name: "zip", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_UNZIP, name: "unzip", class: OpClass::Alu, size_hint: 4 },
+    OpInfo {
+        opid: OP_PACK,
+        name: "pack",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_PACKH,
+        name: "packh",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_PACKW,
+        name: "packw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BREV8,
+        name: "brev8",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ZIP,
+        name: "zip",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_UNZIP,
+        name: "unzip",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
 ];
 
 /// Get mnemonic for Zbkb instruction.
 pub fn zbkb_mnemonic(opid: OpId) -> Option<&'static str> {
-    OP_INFO_ZBKB.iter().find(|info| info.opid == opid).map(|info| info.name)
+    OP_INFO_ZBKB
+        .iter()
+        .find(|info| info.opid == opid)
+        .map(|info| info.name)
 }
 
 #[cfg(test)]
@@ -223,11 +356,8 @@ mod tests {
     }
 
     fn encode_i(opcode: u32, funct3: u32, rd: u8, rs1: u8, imm12: u32) -> [u8; 4] {
-        let raw = opcode
-            | ((rd as u32) << 7)
-            | (funct3 << 12)
-            | ((rs1 as u32) << 15)
-            | (imm12 << 20);
+        let raw =
+            opcode | ((rd as u32) << 7) | (funct3 << 12) | ((rs1 as u32) << 15) | (imm12 << 20);
         raw.to_le_bytes()
     }
 
@@ -235,7 +365,8 @@ mod tests {
     fn test_pack_decode() {
         let ext = ZbkbExtension;
         let bytes = encode_r(OPCODE_OP, FUNCT3_PACK, FUNCT7_PACK, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_PACK);
     }
 
@@ -243,7 +374,8 @@ mod tests {
     fn test_packh_decode() {
         let ext = ZbkbExtension;
         let bytes = encode_r(OPCODE_OP, FUNCT3_PACKH, FUNCT7_PACK, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_PACKH);
     }
 
@@ -251,7 +383,8 @@ mod tests {
     fn test_packw_decode() {
         let ext = ZbkbExtension;
         let bytes = encode_r(OPCODE_OP_32, FUNCT3_PACK, FUNCT7_PACK, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_PACKW);
     }
 
@@ -259,7 +392,8 @@ mod tests {
     fn test_brev8_decode() {
         let ext = ZbkbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b101, 1, 2, IMM_BREV8);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_BREV8);
     }
 
@@ -267,7 +401,8 @@ mod tests {
     fn test_disasm() {
         let ext = ZbkbExtension;
         let bytes = encode_r(OPCODE_OP, FUNCT3_PACK, FUNCT7_PACK, 10, 11, 12);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         let disasm = InstructionExtension::<Rv64>::disasm(&ext, &instr);
         assert_eq!(disasm, "pack a0, a1, a2");
     }
@@ -276,7 +411,8 @@ mod tests {
     fn test_lift_pack() {
         let ext = ZbkbExtension;
         let bytes = encode_r(OPCODE_OP, FUNCT3_PACK, FUNCT7_PACK, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         let ir = InstructionExtension::<Rv64>::lift(&ext, &instr);
         assert_eq!(ir.statements.len(), 1);
     }
@@ -295,7 +431,8 @@ mod tests {
         let ext = ZbkbExtension;
         // ZIP: funct3=0b001, imm12=0b000010001111
         let bytes = encode_i(OPCODE_OP_IMM, 0b001, 1, 2, IMM_ZIP);
-        let instr = InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
+        let instr =
+            InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
         assert_eq!(instr.opid, OP_ZIP);
     }
 
@@ -304,7 +441,8 @@ mod tests {
         let ext = ZbkbExtension;
         // UNZIP: funct3=0b101, imm12=0b000010001111
         let bytes = encode_i(OPCODE_OP_IMM, 0b101, 1, 2, IMM_UNZIP);
-        let instr = InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
+        let instr =
+            InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
         assert_eq!(instr.opid, OP_UNZIP);
     }
 
@@ -333,7 +471,8 @@ mod tests {
     fn test_lift_zip_rv32() {
         let ext = ZbkbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b001, 1, 2, IMM_ZIP);
-        let instr = InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
+        let instr =
+            InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
         let ir = InstructionExtension::<Rv32>::lift(&ext, &instr);
         assert_eq!(ir.statements.len(), 1);
     }
@@ -342,7 +481,8 @@ mod tests {
     fn test_lift_unzip_rv32() {
         let ext = ZbkbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b101, 1, 2, IMM_UNZIP);
-        let instr = InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
+        let instr =
+            InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
         let ir = InstructionExtension::<Rv32>::lift(&ext, &instr);
         assert_eq!(ir.statements.len(), 1);
     }
@@ -351,7 +491,8 @@ mod tests {
     fn test_disasm_zip_rv32() {
         let ext = ZbkbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b001, 10, 11, IMM_ZIP);
-        let instr = InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
+        let instr =
+            InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
         let disasm = InstructionExtension::<Rv32>::disasm(&ext, &instr);
         assert_eq!(disasm, "zip a0, a1");
     }
@@ -360,7 +501,8 @@ mod tests {
     fn test_disasm_unzip_rv32() {
         let ext = ZbkbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b101, 10, 11, IMM_UNZIP);
-        let instr = InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
+        let instr =
+            InstructionExtension::<Rv32>::decode32(&ext, u32::from_le_bytes(bytes), 0u32).unwrap();
         let disasm = InstructionExtension::<Rv32>::disasm(&ext, &instr);
         assert_eq!(disasm, "unzip a0, a1");
     }

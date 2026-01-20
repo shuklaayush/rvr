@@ -1,12 +1,12 @@
 //! Zicsr extension (CSR instructions) - decode, lift, disasm.
 
-use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
+use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
-use crate::{
-    DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_ZICSR, reg_name,
-    encode::{decode_opcode, decode_funct3, decode_rd, decode_rs1},
-};
 use super::InstructionExtension;
+use crate::{
+    encode::{decode_funct3, decode_opcode, decode_rd, decode_rs1},
+    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZICSR,
+};
 
 // CSR instructions
 pub const OP_CSRRW: OpId = OpId::new(EXT_ZICSR, 0);
@@ -106,10 +106,22 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
         let mnemonic = zicsr_mnemonic(instr.opid);
         match &instr.args {
             InstrArgs::Csr { rd, rs1, csr } => {
-                format!("{} {}, {}, {}", mnemonic, reg_name(*rd), csr_name(*csr), reg_name(*rs1))
+                format!(
+                    "{} {}, {}, {}",
+                    mnemonic,
+                    reg_name(*rd),
+                    csr_name(*csr),
+                    reg_name(*rs1)
+                )
             }
             InstrArgs::CsrI { rd, imm, csr } => {
-                format!("{} {}, {}, {}", mnemonic, reg_name(*rd), csr_name(*csr), imm)
+                format!(
+                    "{} {}, {}, {}",
+                    mnemonic,
+                    reg_name(*rd),
+                    csr_name(*csr),
+                    imm
+                )
             }
             _ => format!("{} <?>", mnemonic),
         }
@@ -122,12 +134,42 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
 
 /// Table-driven OpInfo for Zicsr extension.
 const OP_INFO_ZICSR: &[OpInfo] = &[
-    OpInfo { opid: OP_CSRRW, name: "csrrw", class: OpClass::Csr, size_hint: 4 },
-    OpInfo { opid: OP_CSRRS, name: "csrrs", class: OpClass::Csr, size_hint: 4 },
-    OpInfo { opid: OP_CSRRC, name: "csrrc", class: OpClass::Csr, size_hint: 4 },
-    OpInfo { opid: OP_CSRRWI, name: "csrrwi", class: OpClass::Csr, size_hint: 4 },
-    OpInfo { opid: OP_CSRRSI, name: "csrrsi", class: OpClass::Csr, size_hint: 4 },
-    OpInfo { opid: OP_CSRRCI, name: "csrrci", class: OpClass::Csr, size_hint: 4 },
+    OpInfo {
+        opid: OP_CSRRW,
+        name: "csrrw",
+        class: OpClass::Csr,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CSRRS,
+        name: "csrrs",
+        class: OpClass::Csr,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CSRRC,
+        name: "csrrc",
+        class: OpClass::Csr,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CSRRWI,
+        name: "csrrwi",
+        class: OpClass::Csr,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CSRRSI,
+        name: "csrrsi",
+        class: OpClass::Csr,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CSRRCI,
+        name: "csrrci",
+        class: OpClass::Csr,
+        size_hint: 4,
+    },
 ];
 
 fn lift_zicsr<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
@@ -182,7 +224,10 @@ fn lift_csrrc<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
                 stmts.push(Stmt::write_reg(*rd, old_val.clone()));
             }
             if *rs1 != 0 {
-                stmts.push(Stmt::write_csr(*csr, Expr::and(old_val, Expr::not(Expr::read(*rs1)))));
+                stmts.push(Stmt::write_csr(
+                    *csr,
+                    Expr::and(old_val, Expr::not(Expr::read(*rs1))),
+                ));
             }
             (stmts, Terminator::Fall { target: None })
         }
@@ -213,7 +258,10 @@ fn lift_csrrsi<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
                 stmts.push(Stmt::write_reg(*rd, old_val.clone()));
             }
             if *imm != 0 {
-                stmts.push(Stmt::write_csr(*csr, Expr::or(old_val, Expr::imm(X::from_u64(*imm as u64)))));
+                stmts.push(Stmt::write_csr(
+                    *csr,
+                    Expr::or(old_val, Expr::imm(X::from_u64(*imm as u64))),
+                ));
             }
             (stmts, Terminator::Fall { target: None })
         }
@@ -230,7 +278,10 @@ fn lift_csrrci<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
                 stmts.push(Stmt::write_reg(*rd, old_val.clone()));
             }
             if *imm != 0 {
-                stmts.push(Stmt::write_csr(*csr, Expr::and(old_val, Expr::not(Expr::imm(X::from_u64(*imm as u64))))));
+                stmts.push(Stmt::write_csr(
+                    *csr,
+                    Expr::and(old_val, Expr::not(Expr::imm(X::from_u64(*imm as u64)))),
+                ));
             }
             (stmts, Terminator::Fall { target: None })
         }

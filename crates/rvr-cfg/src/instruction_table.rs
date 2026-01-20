@@ -83,13 +83,9 @@ impl<X: Xlen> InstructionTable<X> {
     pub const SLOT_SIZE: usize = 2;
 
     /// Create a new instruction table from raw bytes.
-    pub fn from_bytes(
-        code: &[u8],
-        base_address: u64,
-        registry: &ExtensionRegistry<X>,
-    ) -> Self {
+    pub fn from_bytes(code: &[u8], base_address: u64, registry: &ExtensionRegistry<X>) -> Self {
         let end_address = base_address + code.len() as u64;
-        let total_slots = (code.len() + Self::SLOT_SIZE - 1) / Self::SLOT_SIZE;
+        let total_slots = code.len().div_ceil(Self::SLOT_SIZE);
 
         let mut table = Self {
             slots: vec![Slot::default(); total_slots],
@@ -106,7 +102,7 @@ impl<X: Xlen> InstructionTable<X> {
     /// Create a new instruction table with specific address range.
     pub fn new(base_address: u64, end_address: u64, entry_point: u64) -> Self {
         let total_size = (end_address - base_address) as usize;
-        let total_slots = (total_size + Self::SLOT_SIZE - 1) / Self::SLOT_SIZE;
+        let total_slots = total_size.div_ceil(Self::SLOT_SIZE);
 
         Self {
             slots: vec![Slot::default(); total_slots],
@@ -274,7 +270,7 @@ impl<X: Xlen> InstructionTable<X> {
             return None;
         }
         let offset = (pc - self.base_address) as usize;
-        if offset % Self::SLOT_SIZE != 0 {
+        if !offset.is_multiple_of(Self::SLOT_SIZE) {
             return None;
         }
         Some(offset / Self::SLOT_SIZE)
@@ -287,7 +283,10 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Check if slot is valid.
     pub fn is_valid_index(&self, index: usize) -> bool {
-        self.slots.get(index).map(|slot| slot.instr.is_some()).unwrap_or(false)
+        self.slots
+            .get(index)
+            .map(|slot| slot.instr.is_some())
+            .unwrap_or(false)
     }
 
     /// Check if PC points to a valid instruction.
@@ -357,8 +356,7 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Iterate over all valid instructions with their PCs.
     pub fn valid_instructions(&self) -> impl Iterator<Item = (u64, &DecodedInstr<X>)> + '_ {
-        self.valid_indices().filter_map(move |idx| {
-            self.get(idx).map(|instr| (self.index_to_pc(idx), instr))
-        })
+        self.valid_indices()
+            .filter_map(move |idx| self.get(idx).map(|instr| (self.index_to_pc(idx), instr)))
     }
 }

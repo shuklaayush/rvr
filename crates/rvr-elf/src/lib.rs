@@ -1,13 +1,13 @@
 //! ELF parser for RISC-V binaries.
 
 mod constants;
-mod header;
 mod file;
+mod header;
 mod image;
 
 pub use constants::*;
-pub use header::*;
 pub use file::*;
+pub use header::*;
 pub use image::*;
 
 use thiserror::Error;

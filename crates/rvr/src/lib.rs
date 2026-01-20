@@ -25,9 +25,9 @@
 //! underlying crates directly: `rvr_elf`, `rvr_isa`, `rvr_ir`, `rvr_cfg`, `rvr_emit`.
 
 // Core types - always available
-pub use rvr_elf::{ElfImage, get_elf_xlen};
-pub use rvr_isa::{Xlen, Rv32, Rv64};
+pub use rvr_elf::{get_elf_xlen, ElfImage};
 pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig};
+pub use rvr_isa::{Rv32, Rv64, Xlen};
 
 mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
@@ -86,7 +86,12 @@ impl<X: Xlen> Recompiler<X> {
     /// Compile an ELF file to a shared library.
     ///
     /// If `jobs` is 0, auto-detects based on CPU count.
-    pub fn compile(&self, elf_path: &Path, output_dir: &Path, jobs: usize) -> Result<std::path::PathBuf> {
+    pub fn compile(
+        &self,
+        elf_path: &Path,
+        output_dir: &Path,
+        jobs: usize,
+    ) -> Result<std::path::PathBuf> {
         // First lift to C source
         let _c_path = self.lift(elf_path, output_dir)?;
 
@@ -94,7 +99,8 @@ impl<X: Xlen> Recompiler<X> {
         compile_c_to_shared(output_dir, jobs)?;
 
         // Return the path to the shared library
-        let lib_name = output_dir.file_name()
+        let lib_name = output_dir
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("rv");
         let lib_path = output_dir.join(format!("lib{}.so", lib_name));
@@ -120,7 +126,8 @@ impl<X: Xlen> Recompiler<X> {
         pipeline.lift_to_ir()?;
 
         // Emit C code
-        let base_name = output_dir.file_name()
+        let base_name = output_dir
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("rv");
         pipeline.emit_c(output_dir, base_name)?;
@@ -205,17 +212,21 @@ pub fn compile_with_options(
     let data = std::fs::read(elf_path)?;
     let xlen = get_elf_xlen(&data)?;
 
-    dispatch_by_xlen(xlen, || {
-        let mut config = EmitConfig::<Rv32>::default();
-        options.apply(&mut config);
-        let recompiler = Recompiler::<Rv32>::new(config);
-        recompiler.compile(elf_path, output_dir, options.jobs)
-    }, || {
-        let mut config = EmitConfig::<Rv64>::default();
-        options.apply(&mut config);
-        let recompiler = Recompiler::<Rv64>::new(config);
-        recompiler.compile(elf_path, output_dir, options.jobs)
-    })
+    dispatch_by_xlen(
+        xlen,
+        || {
+            let mut config = EmitConfig::<Rv32>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv32>::new(config);
+            recompiler.compile(elf_path, output_dir, options.jobs)
+        },
+        || {
+            let mut config = EmitConfig::<Rv64>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv64>::new(config);
+            recompiler.compile(elf_path, output_dir, options.jobs)
+        },
+    )
 }
 
 /// Lift an ELF file to C source code, auto-detecting XLEN.
@@ -232,17 +243,21 @@ pub fn lift_to_c_with_options(
     let data = std::fs::read(elf_path)?;
     let xlen = get_elf_xlen(&data)?;
 
-    dispatch_by_xlen(xlen, || {
-        let mut config = EmitConfig::<Rv32>::default();
-        options.apply(&mut config);
-        let recompiler = Recompiler::<Rv32>::new(config);
-        recompiler.lift(elf_path, output_dir)
-    }, || {
-        let mut config = EmitConfig::<Rv64>::default();
-        options.apply(&mut config);
-        let recompiler = Recompiler::<Rv64>::new(config);
-        recompiler.lift(elf_path, output_dir)
-    })
+    dispatch_by_xlen(
+        xlen,
+        || {
+            let mut config = EmitConfig::<Rv32>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv32>::new(config);
+            recompiler.lift(elf_path, output_dir)
+        },
+        || {
+            let mut config = EmitConfig::<Rv64>::default();
+            options.apply(&mut config);
+            let recompiler = Recompiler::<Rv64>::new(config);
+            recompiler.lift(elf_path, output_dir)
+        },
+    )
 }
 
 fn dispatch_by_xlen<R>(

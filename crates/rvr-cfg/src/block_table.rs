@@ -159,11 +159,7 @@ impl<X: Xlen> BlockTable<X> {
             }
 
             // Find max end PC (next leader or table end)
-            let max_end = sorted_leaders
-                .get(i + 1)
-                .copied()
-                .unwrap_or(end)
-                .min(end);
+            let max_end = sorted_leaders.get(i + 1).copied().unwrap_or(end).min(end);
 
             let mut pc = block_start;
             let mut instruction_count = 0;
@@ -203,12 +199,8 @@ impl<X: Xlen> BlockTable<X> {
             }
 
             if instruction_count > 0 && pc > block_start {
-                self.blocks.push(BasicBlock::new(
-                    block_start,
-                    pc,
-                    instruction_count,
-                    last_pc,
-                ));
+                self.blocks
+                    .push(BasicBlock::new(block_start, pc, instruction_count, last_pc));
             }
         }
     }
@@ -310,7 +302,8 @@ impl<X: Xlen> BlockTable<X> {
             }
 
             if !continuations.is_empty() {
-                self.block_continuations.insert(block.start, continuations.clone());
+                self.block_continuations
+                    .insert(block.start, continuations.clone());
             }
 
             // Keep original end - continuations handle absorbed blocks
@@ -464,11 +457,7 @@ impl<X: Xlen> BlockTable<X> {
     /// Form superblocks by absorbing fall-through blocks after branches.
     ///
     /// Returns number of blocks absorbed.
-    pub fn form_superblocks(
-        &mut self,
-        max_depth: usize,
-        registry: &ExtensionRegistry<X>,
-    ) -> usize {
+    pub fn form_superblocks(&mut self, max_depth: usize, registry: &ExtensionRegistry<X>) -> usize {
         if self.blocks.is_empty() {
             return 0;
         }
@@ -518,25 +507,27 @@ impl<X: Xlen> BlockTable<X> {
             }
 
             // Try to inline the taken path
-            if taken_pc != entry_point && start_to_idx.contains_key(&taken_pc) {
-                if !absorbed.contains(&taken_pc) && !merge_targets.contains(&taken_pc) {
-                    if let Some(preds) = self.predecessors.get(&taken_pc) {
-                        if preds.len() == 1 {
-                            let taken_idx = start_to_idx[&taken_pc];
-                            let taken_block = &self.blocks[taken_idx];
-                            if taken_block.instruction_count <= DEFAULT_TAKEN_INLINE_SIZE {
-                                // Check if taken block ends with branch
-                                if let Some(taken_instr) =
-                                    self.instruction_table.get_at_pc(taken_block.last_pc)
+            if taken_pc != entry_point
+                && start_to_idx.contains_key(&taken_pc)
+                && !absorbed.contains(&taken_pc)
+                && !merge_targets.contains(&taken_pc)
+            {
+                if let Some(preds) = self.predecessors.get(&taken_pc) {
+                    if preds.len() == 1 {
+                        let taken_idx = start_to_idx[&taken_pc];
+                        let taken_block = &self.blocks[taken_idx];
+                        if taken_block.instruction_count <= DEFAULT_TAKEN_INLINE_SIZE {
+                            // Check if taken block ends with branch
+                            if let Some(taken_instr) =
+                                self.instruction_table.get_at_pc(taken_block.last_pc)
+                            {
+                                let taken_ir = registry.lift(taken_instr);
+                                if !matches!(taken_ir.terminator, rvr_ir::Terminator::Branch { .. })
                                 {
-                                    let taken_ir = registry.lift(taken_instr);
-                                    if !matches!(taken_ir.terminator, rvr_ir::Terminator::Branch { .. })
-                                    {
-                                        self.taken_inlines.insert(
-                                            block.last_pc,
-                                            (taken_block.start, taken_block.end),
-                                        );
-                                    }
+                                    self.taken_inlines.insert(
+                                        block.last_pc,
+                                        (taken_block.start, taken_block.end),
+                                    );
                                 }
                             }
                         }

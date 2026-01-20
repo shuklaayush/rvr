@@ -106,13 +106,9 @@ impl<X: Xlen> ElfFile<X> {
         }
 
         if X::VALUE == 64 {
-            Self::parse_header_64(
-                data, magic, class, data_encoding, version, abi, abi_version,
-            )
+            Self::parse_header_64(data, magic, class, data_encoding, version, abi, abi_version)
         } else {
-            Self::parse_header_32(
-                data, magic, class, data_encoding, version, abi, abi_version,
-            )
+            Self::parse_header_32(data, magic, class, data_encoding, version, abi, abi_version)
         }
     }
 
@@ -174,10 +170,7 @@ impl<X: Xlen> ElfFile<X> {
         })
     }
 
-    fn parse_program_headers(
-        data: &[u8],
-        header: &ElfHeader<X>,
-    ) -> Result<Vec<ProgramHeader<X>>> {
+    fn parse_program_headers(data: &[u8], header: &ElfHeader<X>) -> Result<Vec<ProgramHeader<X>>> {
         let mut headers = Vec::with_capacity(header.phnum as usize);
 
         for i in 0..header.phnum {
@@ -222,10 +215,7 @@ impl<X: Xlen> ElfFile<X> {
         }
     }
 
-    fn parse_all_sections(
-        data: &[u8],
-        header: &ElfHeader<X>,
-    ) -> Result<Vec<SectionHeader<X>>> {
+    fn parse_all_sections(data: &[u8], header: &ElfHeader<X>) -> Result<Vec<SectionHeader<X>>> {
         let mut sections = Vec::with_capacity(header.shnum as usize);
 
         for i in 0..header.shnum {
@@ -298,7 +288,11 @@ impl<X: Xlen> ElfFile<X> {
             if (X::to_u64(section.flags) & SHF_ALLOC) != 0 {
                 let section_data = Self::load_section_data(data, section);
                 let name = if let Some(strtab) = strtab {
-                    Self::extract_string(data, X::to_u64(strtab.offset) as usize, section.name as usize)
+                    Self::extract_string(
+                        data,
+                        X::to_u64(strtab.offset) as usize,
+                        section.name as usize,
+                    )
                 } else {
                     "unknown".to_string()
                 };

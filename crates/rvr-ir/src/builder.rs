@@ -1,10 +1,10 @@
 //! IR builder fluent API.
 
-use crate::xlen::Xlen;
 use crate::expr::Expr;
 use crate::instr::InstrIR;
 use crate::stmt::Stmt;
 use crate::terminator::Terminator;
+use crate::xlen::Xlen;
 
 /// Builder for instruction IR.
 pub struct IRBuilder<X: Xlen> {
@@ -81,37 +81,79 @@ impl<X: Xlen> IRBuilder<X> {
     /// Build with fall-through terminator.
     pub fn build_fall(self) -> InstrIR<X> {
         let next_pc = X::from_u64(X::to_u64(self.pc) + self.size as u64);
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::fall(next_pc))
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::fall(next_pc),
+        )
     }
 
     /// Build with fall-through terminator (no explicit target).
     pub fn build_fall_no_target(self) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::Fall { target: None })
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::Fall { target: None },
+        )
     }
 
     /// Build with static jump terminator.
     pub fn build_jump(self, target: X::Reg) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::jump(target))
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::jump(target),
+        )
     }
 
     /// Build with dynamic jump terminator.
     pub fn build_jump_dyn(self, addr: Expr<X>) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::jump_dyn(addr))
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::jump_dyn(addr),
+        )
     }
 
     /// Build with conditional branch terminator.
     pub fn build_branch(self, cond: Expr<X>, target: X::Reg) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::branch(cond, target))
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::branch(cond, target),
+        )
     }
 
     /// Build with exit terminator.
     pub fn build_exit(self, code: Expr<X>) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::exit(code))
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::exit(code),
+        )
     }
 
     /// Build with trap terminator.
     pub fn build_trap(self, message: &str) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, Terminator::trap(message))
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.statements,
+            Terminator::trap(message),
+        )
     }
 
     /// Build with custom terminator.

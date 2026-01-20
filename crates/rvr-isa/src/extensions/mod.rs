@@ -4,103 +4,78 @@
 //! All instruction sets (including base I, M, A, C, Zicsr) are implemented
 //! as extensions - there is no special "built-in" handling.
 
-mod base;
-mod m;
 mod a;
+mod base;
 mod c;
-mod zicsr;
-mod zifencei;
+mod m;
 mod zba;
 mod zbb;
-mod zbs;
 mod zbkb;
+mod zbs;
 mod zicond;
+mod zicsr;
+mod zifencei;
 
 // Re-export extension structs
-pub use base::BaseExtension;
-pub use m::MExtension;
 pub use a::AExtension;
+pub use base::BaseExtension;
 pub use c::CExtension;
-pub use zicsr::ZicsrExtension;
-pub use zifencei::ZifenceiExtension;
+pub use m::MExtension;
 pub use zba::ZbaExtension;
 pub use zbb::ZbbExtension;
-pub use zbs::ZbsExtension;
 pub use zbkb::ZbkbExtension;
+pub use zbs::ZbsExtension;
 pub use zicond::ZicondExtension;
+pub use zicsr::ZicsrExtension;
+pub use zifencei::ZifenceiExtension;
 
 // Re-export OpId constants and mnemonic functions from each extension
-pub use base::{
-    OP_LUI, OP_AUIPC, OP_JAL, OP_JALR,
-    OP_BEQ, OP_BNE, OP_BLT, OP_BGE, OP_BLTU, OP_BGEU,
-    OP_LB, OP_LH, OP_LW, OP_LBU, OP_LHU,
-    OP_SB, OP_SH, OP_SW,
-    OP_ADDI, OP_SLTI, OP_SLTIU, OP_XORI, OP_ORI, OP_ANDI,
-    OP_SLLI, OP_SRLI, OP_SRAI,
-    OP_ADD, OP_SUB, OP_SLL, OP_SLT, OP_SLTU,
-    OP_XOR, OP_SRL, OP_SRA, OP_OR, OP_AND,
-    OP_FENCE, OP_ECALL, OP_EBREAK,
-    OP_LWU, OP_LD, OP_SD,
-    OP_ADDIW, OP_SLLIW, OP_SRLIW, OP_SRAIW,
-    OP_ADDW, OP_SUBW, OP_SLLW, OP_SRLW, OP_SRAW, OP_MRET,
-    base_mnemonic,
-};
-pub use m::{
-    OP_MUL, OP_MULH, OP_MULHSU, OP_MULHU, OP_DIV, OP_DIVU, OP_REM, OP_REMU,
-    OP_MULW, OP_DIVW, OP_DIVUW, OP_REMW, OP_REMUW,
-    m_mnemonic,
-};
 pub use a::{
-    OP_LR_W, OP_SC_W, OP_AMOSWAP_W, OP_AMOADD_W, OP_AMOXOR_W, OP_AMOAND_W, OP_AMOOR_W,
-    OP_AMOMIN_W, OP_AMOMAX_W, OP_AMOMINU_W, OP_AMOMAXU_W,
-    OP_LR_D, OP_SC_D, OP_AMOSWAP_D, OP_AMOADD_D, OP_AMOXOR_D, OP_AMOAND_D, OP_AMOOR_D,
-    OP_AMOMIN_D, OP_AMOMAX_D, OP_AMOMINU_D, OP_AMOMAXU_D,
-    a_mnemonic,
+    a_mnemonic, OP_AMOADD_D, OP_AMOADD_W, OP_AMOAND_D, OP_AMOAND_W, OP_AMOMAXU_D, OP_AMOMAXU_W,
+    OP_AMOMAX_D, OP_AMOMAX_W, OP_AMOMINU_D, OP_AMOMINU_W, OP_AMOMIN_D, OP_AMOMIN_W, OP_AMOOR_D,
+    OP_AMOOR_W, OP_AMOSWAP_D, OP_AMOSWAP_W, OP_AMOXOR_D, OP_AMOXOR_W, OP_LR_D, OP_LR_W, OP_SC_D,
+    OP_SC_W,
+};
+pub use base::{
+    base_mnemonic, OP_ADD, OP_ADDI, OP_ADDIW, OP_ADDW, OP_AND, OP_ANDI, OP_AUIPC, OP_BEQ, OP_BGE,
+    OP_BGEU, OP_BLT, OP_BLTU, OP_BNE, OP_EBREAK, OP_ECALL, OP_FENCE, OP_JAL, OP_JALR, OP_LB,
+    OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW, OP_LWU, OP_MRET, OP_OR, OP_ORI, OP_SB, OP_SD,
+    OP_SH, OP_SLL, OP_SLLI, OP_SLLIW, OP_SLLW, OP_SLT, OP_SLTI, OP_SLTIU, OP_SLTU, OP_SRA, OP_SRAI,
+    OP_SRAIW, OP_SRAW, OP_SRL, OP_SRLI, OP_SRLIW, OP_SRLW, OP_SUB, OP_SUBW, OP_SW, OP_XOR, OP_XORI,
 };
 pub use c::{
-    OP_C_ADDI4SPN, OP_C_LW, OP_C_SW, OP_C_LD, OP_C_SD,
-    OP_C_NOP, OP_C_ADDI, OP_C_JAL, OP_C_ADDIW, OP_C_LI, OP_C_ADDI16SP, OP_C_LUI,
-    OP_C_SRLI, OP_C_SRAI, OP_C_ANDI, OP_C_SUB, OP_C_XOR, OP_C_OR, OP_C_AND,
-    OP_C_SUBW, OP_C_ADDW, OP_C_J, OP_C_BEQZ, OP_C_BNEZ,
-    OP_C_SLLI, OP_C_LWSP, OP_C_LDSP, OP_C_JR, OP_C_MV, OP_C_EBREAK, OP_C_JALR,
-    OP_C_ADD, OP_C_SWSP, OP_C_SDSP,
-    c_mnemonic,
+    c_mnemonic, OP_C_ADD, OP_C_ADDI, OP_C_ADDI16SP, OP_C_ADDI4SPN, OP_C_ADDIW, OP_C_ADDW, OP_C_AND,
+    OP_C_ANDI, OP_C_BEQZ, OP_C_BNEZ, OP_C_EBREAK, OP_C_J, OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD,
+    OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW, OP_C_LWSP, OP_C_MV, OP_C_NOP, OP_C_OR, OP_C_SD,
+    OP_C_SDSP, OP_C_SLLI, OP_C_SRAI, OP_C_SRLI, OP_C_SUB, OP_C_SUBW, OP_C_SW, OP_C_SWSP, OP_C_XOR,
 };
-pub use zicsr::{
-    OP_CSRRW, OP_CSRRS, OP_CSRRC, OP_CSRRWI, OP_CSRRSI, OP_CSRRCI,
-    CSR_CYCLE, CSR_TIME, CSR_INSTRET, CSR_CYCLEH, CSR_TIMEH, CSR_INSTRETH,
-    CSR_MISA, CSR_MVENDORID, CSR_MARCHID, CSR_MIMPID, CSR_MHARTID,
-    zicsr_mnemonic, csr_name,
+pub use m::{
+    m_mnemonic, OP_DIV, OP_DIVU, OP_DIVUW, OP_DIVW, OP_MUL, OP_MULH, OP_MULHSU, OP_MULHU, OP_MULW,
+    OP_REM, OP_REMU, OP_REMUW, OP_REMW,
 };
-pub use zifencei::OP_FENCE_I;
 pub use zba::{
-    OP_SH1ADD, OP_SH2ADD, OP_SH3ADD, OP_ADD_UW,
-    OP_SH1ADD_UW, OP_SH2ADD_UW, OP_SH3ADD_UW, OP_SLLI_UW,
-    zba_mnemonic,
+    zba_mnemonic, OP_ADD_UW, OP_SH1ADD, OP_SH1ADD_UW, OP_SH2ADD, OP_SH2ADD_UW, OP_SH3ADD,
+    OP_SH3ADD_UW, OP_SLLI_UW,
 };
 pub use zbb::{
-    OP_ANDN, OP_ORN, OP_XNOR, OP_CLZ, OP_CTZ, OP_CPOP,
-    OP_CLZW, OP_CTZW, OP_CPOPW, OP_MAX, OP_MAXU, OP_MIN, OP_MINU,
-    OP_SEXT_B, OP_SEXT_H, OP_ZEXT_H, OP_ROL, OP_ROR, OP_RORI,
-    OP_ROLW, OP_RORW, OP_RORIW, OP_ORC_B, OP_REV8,
-    zbb_mnemonic,
+    zbb_mnemonic, OP_ANDN, OP_CLZ, OP_CLZW, OP_CPOP, OP_CPOPW, OP_CTZ, OP_CTZW, OP_MAX, OP_MAXU,
+    OP_MIN, OP_MINU, OP_ORC_B, OP_ORN, OP_REV8, OP_ROL, OP_ROLW, OP_ROR, OP_RORI, OP_RORIW,
+    OP_RORW, OP_SEXT_B, OP_SEXT_H, OP_XNOR, OP_ZEXT_H,
 };
+pub use zbkb::{zbkb_mnemonic, OP_BREV8, OP_PACK, OP_PACKH, OP_PACKW, OP_UNZIP, OP_ZIP};
 pub use zbs::{
-    OP_BCLR, OP_BCLRI, OP_BEXT, OP_BEXTI,
-    OP_BINV, OP_BINVI, OP_BSET, OP_BSETI,
-    zbs_mnemonic,
+    zbs_mnemonic, OP_BCLR, OP_BCLRI, OP_BEXT, OP_BEXTI, OP_BINV, OP_BINVI, OP_BSET, OP_BSETI,
 };
-pub use zbkb::{
-    OP_PACK, OP_PACKH, OP_PACKW, OP_BREV8, OP_ZIP, OP_UNZIP,
-    zbkb_mnemonic,
+pub use zicond::{zicond_mnemonic, OP_CZERO_EQZ, OP_CZERO_NEZ};
+pub use zicsr::{
+    csr_name, zicsr_mnemonic, CSR_CYCLE, CSR_CYCLEH, CSR_INSTRET, CSR_INSTRETH, CSR_MARCHID,
+    CSR_MHARTID, CSR_MIMPID, CSR_MISA, CSR_MVENDORID, CSR_TIME, CSR_TIMEH, OP_CSRRC, OP_CSRRCI,
+    OP_CSRRS, OP_CSRRSI, OP_CSRRW, OP_CSRRWI,
 };
-pub use zicond::{
-    OP_CZERO_EQZ, OP_CZERO_NEZ,
-    zicond_mnemonic,
-};
+pub use zifencei::OP_FENCE_I;
 
-use rvr_ir::{InstrIR, Xlen, Terminator};
 use crate::{DecodedInstr, OpId, OpInfo};
+use rvr_ir::{InstrIR, Terminator, Xlen};
 
 /// Extension point for instruction decoding and lifting.
 ///
@@ -223,7 +198,13 @@ impl<X: Xlen> ExtensionRegistry<X> {
             }
         }
         // No extension handles this - return trap
-        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unhandled extension"))
+        InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            Vec::new(),
+            Terminator::trap("unhandled extension"),
+        )
     }
 
     /// Disassemble an instruction.
@@ -261,8 +242,8 @@ pub type CompositeDecoder<X> = ExtensionRegistry<X>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{EXT_C, EXT_I, OP_ADDI};
     use rvr_ir::Rv64;
-    use crate::{OP_ADDI, EXT_I, EXT_C};
 
     #[test]
     fn test_extension_registry_default() {
@@ -323,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_op_info_base() {
-        use crate::{OpClass, OP_JAL, OP_LW, OP_SW, OP_FENCE, OP_ECALL};
+        use crate::{OpClass, OP_ECALL, OP_FENCE, OP_JAL, OP_LW, OP_SW};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         let info = registry.op_info(OP_ADDI).unwrap();
@@ -349,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_op_info_extensions() {
-        use crate::{OpClass, OP_MUL, OP_DIV, OP_LR_W, OP_C_J, OP_C_LW, OP_CSRRW};
+        use crate::{OpClass, OP_CSRRW, OP_C_J, OP_C_LW, OP_DIV, OP_LR_W, OP_MUL};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         let info = registry.op_info(OP_MUL).unwrap();
@@ -378,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_op_info_zifencei() {
-        use crate::{OpClass, OP_FENCE_I, EXT_ZIFENCEI};
+        use crate::{OpClass, EXT_ZIFENCEI, OP_FENCE_I};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         // Zifencei extension handles FENCE.I instruction
@@ -391,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_zifencei_decode_lift_disasm() {
-        use crate::{OP_FENCE_I, EXT_ZIFENCEI};
+        use crate::{EXT_ZIFENCEI, OP_FENCE_I};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         // FENCE.I encoding: opcode=0x0F, funct3=1, rest is zero

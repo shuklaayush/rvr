@@ -13,6 +13,8 @@ pub struct EmitInputs {
     pub valid_addresses: HashSet<u64>,
     /// Absorbed block mapping: absorbed_pc -> merged_block_start.
     pub absorbed_to_merged: HashMap<u64, u64>,
+    /// Initial brk value (end of bss section).
+    pub initial_brk: u64,
 }
 
 impl EmitInputs {
@@ -23,7 +25,14 @@ impl EmitInputs {
             pc_end,
             valid_addresses: HashSet::new(),
             absorbed_to_merged: HashMap::new(),
+            initial_brk: 0,
         }
+    }
+
+    /// Set the initial brk value.
+    pub fn with_initial_brk(mut self, brk: u64) -> Self {
+        self.initial_brk = brk;
+        self
     }
 
     /// Check if address is valid (either directly or via absorbed mapping).

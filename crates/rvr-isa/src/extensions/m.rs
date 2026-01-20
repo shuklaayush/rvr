@@ -1,12 +1,12 @@
 //! M extension (multiply/divide) - decode, lift, disasm.
 
-use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
+use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
-use crate::{
-    DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_M, reg_name,
-    encode::{decode_opcode, decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-};
 use super::InstructionExtension;
+use crate::{
+    encode::{decode_funct3, decode_funct7, decode_opcode, decode_rd, decode_rs1, decode_rs2},
+    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_M,
+};
 
 // M extension OpId constants
 pub const OP_MUL: OpId = OpId::new(EXT_M, 0);
@@ -71,18 +71,33 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
 
         let opid = match opcode {
             0x33 => match funct3 {
-                0 => OP_MUL, 1 => OP_MULH, 2 => OP_MULHSU, 3 => OP_MULHU,
-                4 => OP_DIV, 5 => OP_DIVU, 6 => OP_REM, 7 => OP_REMU,
+                0 => OP_MUL,
+                1 => OP_MULH,
+                2 => OP_MULHSU,
+                3 => OP_MULHU,
+                4 => OP_DIV,
+                5 => OP_DIVU,
+                6 => OP_REM,
+                7 => OP_REMU,
                 _ => return None,
             },
             0x3B if X::VALUE == 64 => match funct3 {
-                0 => OP_MULW, 4 => OP_DIVW, 5 => OP_DIVUW, 6 => OP_REMW, 7 => OP_REMUW,
+                0 => OP_MULW,
+                4 => OP_DIVW,
+                5 => OP_DIVUW,
+                6 => OP_REMW,
+                7 => OP_REMUW,
                 _ => return None,
             },
             _ => return None,
         };
 
-        Some(DecodedInstr::new(opid, pc, 4, InstrArgs::R { rd, rs1, rs2 }))
+        Some(DecodedInstr::new(
+            opid,
+            pc,
+            4,
+            InstrArgs::R { rd, rs1, rs2 },
+        ))
     }
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
@@ -94,7 +109,13 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
         let mnemonic = m_mnemonic(instr.opid);
         match &instr.args {
             InstrArgs::R { rd, rs1, rs2 } => {
-                format!("{} {}, {}, {}", mnemonic, reg_name(*rd), reg_name(*rs1), reg_name(*rs2))
+                format!(
+                    "{} {}, {}, {}",
+                    mnemonic,
+                    reg_name(*rd),
+                    reg_name(*rs1),
+                    reg_name(*rs2)
+                )
             }
             _ => format!("{} <?>", mnemonic),
         }
@@ -107,20 +128,85 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
 
 /// Table-driven OpInfo for M extension.
 const OP_INFO_M: &[OpInfo] = &[
-    OpInfo { opid: OP_MUL, name: "mul", class: OpClass::Mul, size_hint: 4 },
-    OpInfo { opid: OP_MULH, name: "mulh", class: OpClass::Mul, size_hint: 4 },
-    OpInfo { opid: OP_MULHSU, name: "mulhsu", class: OpClass::Mul, size_hint: 4 },
-    OpInfo { opid: OP_MULHU, name: "mulhu", class: OpClass::Mul, size_hint: 4 },
-    OpInfo { opid: OP_DIV, name: "div", class: OpClass::Div, size_hint: 4 },
-    OpInfo { opid: OP_DIVU, name: "divu", class: OpClass::Div, size_hint: 4 },
-    OpInfo { opid: OP_REM, name: "rem", class: OpClass::Div, size_hint: 4 },
-    OpInfo { opid: OP_REMU, name: "remu", class: OpClass::Div, size_hint: 4 },
+    OpInfo {
+        opid: OP_MUL,
+        name: "mul",
+        class: OpClass::Mul,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MULH,
+        name: "mulh",
+        class: OpClass::Mul,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MULHSU,
+        name: "mulhsu",
+        class: OpClass::Mul,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MULHU,
+        name: "mulhu",
+        class: OpClass::Mul,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_DIV,
+        name: "div",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_DIVU,
+        name: "divu",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_REM,
+        name: "rem",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_REMU,
+        name: "remu",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
     // RV64M
-    OpInfo { opid: OP_MULW, name: "mulw", class: OpClass::Mul, size_hint: 4 },
-    OpInfo { opid: OP_DIVW, name: "divw", class: OpClass::Div, size_hint: 4 },
-    OpInfo { opid: OP_DIVUW, name: "divuw", class: OpClass::Div, size_hint: 4 },
-    OpInfo { opid: OP_REMW, name: "remw", class: OpClass::Div, size_hint: 4 },
-    OpInfo { opid: OP_REMUW, name: "remuw", class: OpClass::Div, size_hint: 4 },
+    OpInfo {
+        opid: OP_MULW,
+        name: "mulw",
+        class: OpClass::Mul,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_DIVW,
+        name: "divw",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_DIVUW,
+        name: "divuw",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_REMW,
+        name: "remw",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_REMUW,
+        name: "remuw",
+        class: OpClass::Div,
+        size_hint: 4,
+    },
 ];
 
 fn lift_m<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
@@ -143,12 +229,16 @@ fn lift_m<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
 }
 
 fn lift_r<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::R { rd, rs1, rs2 } => {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::read(*rs2)))]
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),

@@ -115,10 +115,7 @@ impl<X: Xlen> ElfImage<X> {
         self.memory_segments.iter().map(|s| s.memsz()).sum()
     }
 
-    fn validate_segments(
-        elf: &ElfFile<X>,
-        file_data: &[u8],
-    ) -> Result<Vec<ProgramHeader<X>>> {
+    fn validate_segments(elf: &ElfFile<X>, file_data: &[u8]) -> Result<Vec<ProgramHeader<X>>> {
         let mut loadable = Vec::new();
 
         for phdr in &elf.program_headers {

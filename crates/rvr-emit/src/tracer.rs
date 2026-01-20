@@ -342,8 +342,14 @@ mod tests {
     #[test]
     fn test_tracer_from_string() {
         assert!(TracerConfig::from_string("none").unwrap().is_none());
-        assert!(matches!(TracerConfig::from_string("preflight").unwrap().source, TracerSource::Builtin(TracerKind::Preflight)));
-        assert!(matches!(TracerConfig::from_string("stats").unwrap().source, TracerSource::Builtin(TracerKind::Stats)));
+        assert!(matches!(
+            TracerConfig::from_string("preflight").unwrap().source,
+            TracerSource::Builtin(TracerKind::Preflight)
+        ));
+        assert!(matches!(
+            TracerConfig::from_string("stats").unwrap().source,
+            TracerSource::Builtin(TracerKind::Stats)
+        ));
         assert!(TracerConfig::from_string("invalid").is_none());
     }
 }

@@ -1,13 +1,15 @@
 //! Base I extension (RV32I/RV64I) - decode, lift, disasm.
 
-use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
+use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
-use crate::{
-    OpId, OpInfo, OpClass, DecodedInstr, InstrArgs, EXT_I, reg_name,
-    encode::{decode_opcode, decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2,
-             decode_i_imm, decode_s_imm, decode_b_imm, decode_u_imm, decode_j_imm},
-};
 use super::InstructionExtension;
+use crate::{
+    encode::{
+        decode_b_imm, decode_funct3, decode_funct7, decode_i_imm, decode_j_imm, decode_opcode,
+        decode_rd, decode_rs1, decode_rs2, decode_s_imm, decode_u_imm,
+    },
+    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_I,
+};
 
 // ===== OpId Constants =====
 
@@ -72,18 +74,58 @@ const REG_A0: u8 = 10;
 /// Get mnemonic for a base instruction.
 pub fn base_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
-        0 => "lui", 1 => "auipc", 2 => "jal", 3 => "jalr",
-        4 => "beq", 5 => "bne", 6 => "blt", 7 => "bge", 8 => "bltu", 9 => "bgeu",
-        10 => "lb", 11 => "lh", 12 => "lw", 13 => "lbu", 14 => "lhu",
-        15 => "sb", 16 => "sh", 17 => "sw",
-        18 => "addi", 19 => "slti", 20 => "sltiu", 21 => "xori", 22 => "ori", 23 => "andi",
-        24 => "slli", 25 => "srli", 26 => "srai",
-        27 => "add", 28 => "sub", 29 => "sll", 30 => "slt", 31 => "sltu",
-        32 => "xor", 33 => "srl", 34 => "sra", 35 => "or", 36 => "and",
-        37 => "fence", 38 => "ecall", 39 => "ebreak",
-        40 => "lwu", 41 => "ld", 42 => "sd",
-        43 => "addiw", 44 => "slliw", 45 => "srliw", 46 => "sraiw",
-        47 => "addw", 48 => "subw", 49 => "sllw", 50 => "srlw", 51 => "sraw",
+        0 => "lui",
+        1 => "auipc",
+        2 => "jal",
+        3 => "jalr",
+        4 => "beq",
+        5 => "bne",
+        6 => "blt",
+        7 => "bge",
+        8 => "bltu",
+        9 => "bgeu",
+        10 => "lb",
+        11 => "lh",
+        12 => "lw",
+        13 => "lbu",
+        14 => "lhu",
+        15 => "sb",
+        16 => "sh",
+        17 => "sw",
+        18 => "addi",
+        19 => "slti",
+        20 => "sltiu",
+        21 => "xori",
+        22 => "ori",
+        23 => "andi",
+        24 => "slli",
+        25 => "srli",
+        26 => "srai",
+        27 => "add",
+        28 => "sub",
+        29 => "sll",
+        30 => "slt",
+        31 => "sltu",
+        32 => "xor",
+        33 => "srl",
+        34 => "sra",
+        35 => "or",
+        36 => "and",
+        37 => "fence",
+        38 => "ecall",
+        39 => "ebreak",
+        40 => "lwu",
+        41 => "ld",
+        42 => "sd",
+        43 => "addiw",
+        44 => "slliw",
+        45 => "srliw",
+        46 => "sraiw",
+        47 => "addw",
+        48 => "subw",
+        49 => "sllw",
+        50 => "srlw",
+        51 => "sraw",
         52 => "mret",
         _ => "???",
     }
@@ -123,60 +165,325 @@ impl<X: Xlen> InstructionExtension<X> for BaseExtension {
 
 /// Table-driven OpInfo for base I extension.
 const OP_INFO_I: &[OpInfo] = &[
-    OpInfo { opid: OP_LUI, name: "lui", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_AUIPC, name: "auipc", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_JAL, name: "jal", class: OpClass::Jump, size_hint: 4 },
-    OpInfo { opid: OP_JALR, name: "jalr", class: OpClass::JumpIndirect, size_hint: 4 },
-    OpInfo { opid: OP_BEQ, name: "beq", class: OpClass::Branch, size_hint: 4 },
-    OpInfo { opid: OP_BNE, name: "bne", class: OpClass::Branch, size_hint: 4 },
-    OpInfo { opid: OP_BLT, name: "blt", class: OpClass::Branch, size_hint: 4 },
-    OpInfo { opid: OP_BGE, name: "bge", class: OpClass::Branch, size_hint: 4 },
-    OpInfo { opid: OP_BLTU, name: "bltu", class: OpClass::Branch, size_hint: 4 },
-    OpInfo { opid: OP_BGEU, name: "bgeu", class: OpClass::Branch, size_hint: 4 },
-    OpInfo { opid: OP_LB, name: "lb", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_LH, name: "lh", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_LW, name: "lw", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_LBU, name: "lbu", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_LHU, name: "lhu", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_SB, name: "sb", class: OpClass::Store, size_hint: 4 },
-    OpInfo { opid: OP_SH, name: "sh", class: OpClass::Store, size_hint: 4 },
-    OpInfo { opid: OP_SW, name: "sw", class: OpClass::Store, size_hint: 4 },
-    OpInfo { opid: OP_ADDI, name: "addi", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLTI, name: "slti", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLTIU, name: "sltiu", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_XORI, name: "xori", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ORI, name: "ori", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ANDI, name: "andi", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLLI, name: "slli", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRLI, name: "srli", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRAI, name: "srai", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ADD, name: "add", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SUB, name: "sub", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLL, name: "sll", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLT, name: "slt", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLTU, name: "sltu", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_XOR, name: "xor", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRL, name: "srl", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRA, name: "sra", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_OR, name: "or", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_AND, name: "and", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_FENCE, name: "fence", class: OpClass::Fence, size_hint: 4 },
-    OpInfo { opid: OP_ECALL, name: "ecall", class: OpClass::System, size_hint: 4 },
-    OpInfo { opid: OP_EBREAK, name: "ebreak", class: OpClass::System, size_hint: 4 },
+    OpInfo {
+        opid: OP_LUI,
+        name: "lui",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_AUIPC,
+        name: "auipc",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_JAL,
+        name: "jal",
+        class: OpClass::Jump,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_JALR,
+        name: "jalr",
+        class: OpClass::JumpIndirect,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BEQ,
+        name: "beq",
+        class: OpClass::Branch,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BNE,
+        name: "bne",
+        class: OpClass::Branch,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BLT,
+        name: "blt",
+        class: OpClass::Branch,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BGE,
+        name: "bge",
+        class: OpClass::Branch,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BLTU,
+        name: "bltu",
+        class: OpClass::Branch,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_BGEU,
+        name: "bgeu",
+        class: OpClass::Branch,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_LB,
+        name: "lb",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_LH,
+        name: "lh",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_LW,
+        name: "lw",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_LBU,
+        name: "lbu",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_LHU,
+        name: "lhu",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SB,
+        name: "sb",
+        class: OpClass::Store,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SH,
+        name: "sh",
+        class: OpClass::Store,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SW,
+        name: "sw",
+        class: OpClass::Store,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ADDI,
+        name: "addi",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLTI,
+        name: "slti",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLTIU,
+        name: "sltiu",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_XORI,
+        name: "xori",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ORI,
+        name: "ori",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ANDI,
+        name: "andi",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLLI,
+        name: "slli",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRLI,
+        name: "srli",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRAI,
+        name: "srai",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ADD,
+        name: "add",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SUB,
+        name: "sub",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLL,
+        name: "sll",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLT,
+        name: "slt",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLTU,
+        name: "sltu",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_XOR,
+        name: "xor",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRL,
+        name: "srl",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRA,
+        name: "sra",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_OR,
+        name: "or",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_AND,
+        name: "and",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_FENCE,
+        name: "fence",
+        class: OpClass::Fence,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ECALL,
+        name: "ecall",
+        class: OpClass::System,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_EBREAK,
+        name: "ebreak",
+        class: OpClass::System,
+        size_hint: 4,
+    },
     // RV64I
-    OpInfo { opid: OP_LWU, name: "lwu", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_LD, name: "ld", class: OpClass::Load, size_hint: 4 },
-    OpInfo { opid: OP_SD, name: "sd", class: OpClass::Store, size_hint: 4 },
-    OpInfo { opid: OP_ADDIW, name: "addiw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLLIW, name: "slliw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRLIW, name: "srliw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRAIW, name: "sraiw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ADDW, name: "addw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SUBW, name: "subw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SLLW, name: "sllw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRLW, name: "srlw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SRAW, name: "sraw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_MRET, name: "mret", class: OpClass::System, size_hint: 4 },
+    OpInfo {
+        opid: OP_LWU,
+        name: "lwu",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_LD,
+        name: "ld",
+        class: OpClass::Load,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SD,
+        name: "sd",
+        class: OpClass::Store,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ADDIW,
+        name: "addiw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLLIW,
+        name: "slliw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRLIW,
+        name: "srliw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRAIW,
+        name: "sraiw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ADDW,
+        name: "addw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SUBW,
+        name: "subw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SLLW,
+        name: "sllw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRLW,
+        name: "srlw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SRAW,
+        name: "sraw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MRET,
+        name: "mret",
+        class: OpClass::System,
+        size_hint: 4,
+    },
 ];
 
 // ===== Decode =====
@@ -190,14 +497,44 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
     let rs2 = decode_rs2(instr);
 
     let (opid, args) = match opcode {
-        0x37 => (OP_LUI, InstrArgs::U { rd, imm: decode_u_imm(instr) }),
-        0x17 => (OP_AUIPC, InstrArgs::U { rd, imm: decode_u_imm(instr) }),
-        0x6F => (OP_JAL, InstrArgs::J { rd, imm: decode_j_imm(instr) }),
-        0x67 if funct3 == 0 => (OP_JALR, InstrArgs::I { rd, rs1, imm: decode_i_imm(instr) }),
+        0x37 => (
+            OP_LUI,
+            InstrArgs::U {
+                rd,
+                imm: decode_u_imm(instr),
+            },
+        ),
+        0x17 => (
+            OP_AUIPC,
+            InstrArgs::U {
+                rd,
+                imm: decode_u_imm(instr),
+            },
+        ),
+        0x6F => (
+            OP_JAL,
+            InstrArgs::J {
+                rd,
+                imm: decode_j_imm(instr),
+            },
+        ),
+        0x67 if funct3 == 0 => (
+            OP_JALR,
+            InstrArgs::I {
+                rd,
+                rs1,
+                imm: decode_i_imm(instr),
+            },
+        ),
         0x63 => {
             let imm = decode_b_imm(instr);
             let op = match funct3 {
-                0 => OP_BEQ, 1 => OP_BNE, 4 => OP_BLT, 5 => OP_BGE, 6 => OP_BLTU, 7 => OP_BGEU,
+                0 => OP_BEQ,
+                1 => OP_BNE,
+                4 => OP_BLT,
+                5 => OP_BGE,
+                6 => OP_BLTU,
+                7 => OP_BGEU,
                 _ => return None,
             };
             (op, InstrArgs::B { rs1, rs2, imm })
@@ -205,9 +542,12 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         0x03 => {
             let imm = decode_i_imm(instr);
             let op = match funct3 {
-                0 => OP_LB, 1 => OP_LH, 2 => OP_LW,
+                0 => OP_LB,
+                1 => OP_LH,
+                2 => OP_LW,
                 3 if X::VALUE == 64 => OP_LD,
-                4 => OP_LBU, 5 => OP_LHU,
+                4 => OP_LBU,
+                5 => OP_LHU,
                 6 if X::VALUE == 64 => OP_LWU,
                 _ => return None,
             };
@@ -216,7 +556,9 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         0x23 => {
             let imm = decode_s_imm(instr);
             let op = match funct3 {
-                0 => OP_SB, 1 => OP_SH, 2 => OP_SW,
+                0 => OP_SB,
+                1 => OP_SH,
+                2 => OP_SW,
                 3 if X::VALUE == 64 => OP_SD,
                 _ => return None,
             };
@@ -228,13 +570,20 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
             let op = match funct3 {
                 0 => OP_ADDI,
                 1 if (funct7 & 0xFE) == 0 => OP_SLLI,
-                2 => OP_SLTI, 3 => OP_SLTIU, 4 => OP_XORI,
+                2 => OP_SLTI,
+                3 => OP_SLTIU,
+                4 => OP_XORI,
                 5 if (funct7 & 0xFE) == 0 => OP_SRLI,
                 5 if (funct7 & 0xFE) == 0x20 => OP_SRAI,
-                6 => OP_ORI, 7 => OP_ANDI,
+                6 => OP_ORI,
+                7 => OP_ANDI,
                 _ => return None,
             };
-            let imm = if funct3 == 1 || funct3 == 5 { shamt as i32 } else { imm };
+            let imm = if funct3 == 1 || funct3 == 5 {
+                shamt as i32
+            } else {
+                imm
+            };
             (op, InstrArgs::I { rd, rs1, imm })
         }
         0x1B if X::VALUE == 64 => {
@@ -247,33 +596,51 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
                 5 if funct7 == 0x20 => OP_SRAIW,
                 _ => return None,
             };
-            let imm = if funct3 == 1 || funct3 == 5 { shamt } else { imm };
+            let imm = if funct3 == 1 || funct3 == 5 {
+                shamt
+            } else {
+                imm
+            };
             (op, InstrArgs::I { rd, rs1, imm })
         }
         0x33 if funct7 != 0x01 => {
             let op = match (funct7, funct3) {
-                (0x00, 0) => OP_ADD, (0x20, 0) => OP_SUB,
-                (0x00, 1) => OP_SLL, (0x00, 2) => OP_SLT, (0x00, 3) => OP_SLTU,
-                (0x00, 4) => OP_XOR, (0x00, 5) => OP_SRL, (0x20, 5) => OP_SRA,
-                (0x00, 6) => OP_OR, (0x00, 7) => OP_AND,
+                (0x00, 0) => OP_ADD,
+                (0x20, 0) => OP_SUB,
+                (0x00, 1) => OP_SLL,
+                (0x00, 2) => OP_SLT,
+                (0x00, 3) => OP_SLTU,
+                (0x00, 4) => OP_XOR,
+                (0x00, 5) => OP_SRL,
+                (0x20, 5) => OP_SRA,
+                (0x00, 6) => OP_OR,
+                (0x00, 7) => OP_AND,
                 _ => return None,
             };
             (op, InstrArgs::R { rd, rs1, rs2 })
         }
         0x3B if X::VALUE == 64 && funct7 != 0x01 => {
             let op = match (funct7, funct3) {
-                (0x00, 0) => OP_ADDW, (0x20, 0) => OP_SUBW,
-                (0x00, 1) => OP_SLLW, (0x00, 5) => OP_SRLW, (0x20, 5) => OP_SRAW,
+                (0x00, 0) => OP_ADDW,
+                (0x20, 0) => OP_SUBW,
+                (0x00, 1) => OP_SLLW,
+                (0x00, 5) => OP_SRLW,
+                (0x20, 5) => OP_SRAW,
                 _ => return None,
             };
             (op, InstrArgs::R { rd, rs1, rs2 })
         }
         0x0F if funct3 == 0 => (OP_FENCE, InstrArgs::None),
         0x73 if funct3 == 0 => {
-            if instr == 0x00000073 { (OP_ECALL, InstrArgs::None) }
-            else if instr == 0x00100073 { (OP_EBREAK, InstrArgs::None) }
-            else if instr == 0x30200073 { (OP_MRET, InstrArgs::None) }
-            else { return None; }
+            if instr == 0x00000073 {
+                (OP_ECALL, InstrArgs::None)
+            } else if instr == 0x00100073 {
+                (OP_EBREAK, InstrArgs::None)
+            } else if instr == 0x30200073 {
+                (OP_MRET, InstrArgs::None)
+            } else {
+                return None;
+            }
         }
         _ => return None,
     };
@@ -284,7 +651,10 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
 // ===== Lift =====
 
 fn lift_base<X: Xlen>(
-    args: &InstrArgs, opid: OpId, pc: X::Reg, size: u8,
+    args: &InstrArgs,
+    opid: OpId,
+    pc: X::Reg,
+    size: u8,
 ) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {
         OP_ADD => lift_r(args, |a, b| Expr::add(a, b)),
@@ -355,12 +725,16 @@ fn lift_base<X: Xlen>(
 }
 
 fn lift_r<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::R { rd, rs1, rs2 } => {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::read(*rs2)))]
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -368,12 +742,19 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
 }
 
 fn lift_i<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -381,12 +762,19 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
 }
 
 fn lift_shamt<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -397,8 +785,13 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::U { rd, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, Expr::imm(X::sign_extend_32(*imm as u32)))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    Expr::imm(X::sign_extend_32(*imm as u32)),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -409,8 +802,13 @@ fn lift_auipc<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminato
     match args {
         InstrArgs::U { rd, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(*rd, Expr::add(Expr::imm(pc), Expr::imm(X::sign_extend_32(*imm as u32))))]
-            } else { Vec::new() };
+                vec![Stmt::write_reg(
+                    *rd,
+                    Expr::add(Expr::imm(pc), Expr::imm(X::sign_extend_32(*imm as u32))),
+                )]
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -422,9 +820,15 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
                 let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-                let val = if signed { Expr::mem_s(addr, width) } else { Expr::mem_u(addr, width) };
+                let val = if signed {
+                    Expr::mem_s(addr, width)
+                } else {
+                    Expr::mem_u(addr, width)
+                };
                 vec![Stmt::write_reg(*rd, val)]
-            } else { Vec::new() };
+            } else {
+                Vec::new()
+            };
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -435,7 +839,10 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
             let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-            (vec![Stmt::write_mem(addr, Expr::read(*rs2), width)], Terminator::Fall { target: None })
+            (
+                vec![Stmt::write_mem(addr, Expr::read(*rs2), width)],
+                Terminator::Fall { target: None },
+            )
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -446,7 +853,10 @@ fn lift_jal<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, T
         InstrArgs::J { rd, imm } => {
             let mut stmts = Vec::new();
             if *rd != 0 {
-                stmts.push(Stmt::write_reg(*rd, Expr::imm(pc + X::from_u64(size as u64))));
+                stmts.push(Stmt::write_reg(
+                    *rd,
+                    Expr::imm(pc + X::from_u64(size as u64)),
+                ));
             }
             let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
             let target = (X::to_u64(pc) as i64 + offset) as u64;
@@ -467,7 +877,10 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
                 Expr::read(*rs1)
             };
             if *rd != 0 {
-                stmts.push(Stmt::write_reg(*rd, Expr::imm(pc + X::from_u64(size as u64))));
+                stmts.push(Stmt::write_reg(
+                    *rd,
+                    Expr::imm(pc + X::from_u64(size as u64)),
+                ));
             }
             let target = Expr::and(
                 Expr::add(base, Expr::imm(X::sign_extend_32(*imm as u32))),
@@ -480,12 +893,20 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
 }
 
 fn lift_branch<X: Xlen, F>(args: &InstrArgs, pc: X::Reg, cond: F) -> (Vec<Stmt<X>>, Terminator<X>)
-where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
     match args {
         InstrArgs::B { rs1, rs2, imm } => {
             let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
             let target = (X::to_u64(pc) as i64 + offset) as u64;
-            (Vec::new(), Terminator::branch(cond(Expr::read(*rs1), Expr::read(*rs2)), X::from_u64(target)))
+            (
+                Vec::new(),
+                Terminator::branch(
+                    cond(Expr::read(*rs1), Expr::read(*rs2)),
+                    X::from_u64(target),
+                ),
+            )
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -496,20 +917,50 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
 fn format_instr(mnemonic: &str, args: &InstrArgs) -> String {
     match args {
         InstrArgs::R { rd, rs1, rs2 } => {
-            format!("{} {}, {}, {}", mnemonic, reg_name(*rd), reg_name(*rs1), reg_name(*rs2))
+            format!(
+                "{} {}, {}, {}",
+                mnemonic,
+                reg_name(*rd),
+                reg_name(*rs1),
+                reg_name(*rs2)
+            )
         }
         InstrArgs::I { rd, rs1, imm } => {
             if mnemonic.starts_with('l') && mnemonic != "lui" {
-                format!("{} {}, {}({})", mnemonic, reg_name(*rd), imm, reg_name(*rs1))
+                format!(
+                    "{} {}, {}({})",
+                    mnemonic,
+                    reg_name(*rd),
+                    imm,
+                    reg_name(*rs1)
+                )
             } else {
-                format!("{} {}, {}, {}", mnemonic, reg_name(*rd), reg_name(*rs1), imm)
+                format!(
+                    "{} {}, {}, {}",
+                    mnemonic,
+                    reg_name(*rd),
+                    reg_name(*rs1),
+                    imm
+                )
             }
         }
         InstrArgs::S { rs1, rs2, imm } => {
-            format!("{} {}, {}({})", mnemonic, reg_name(*rs2), imm, reg_name(*rs1))
+            format!(
+                "{} {}, {}({})",
+                mnemonic,
+                reg_name(*rs2),
+                imm,
+                reg_name(*rs1)
+            )
         }
         InstrArgs::B { rs1, rs2, imm } => {
-            format!("{} {}, {}, {}", mnemonic, reg_name(*rs1), reg_name(*rs2), imm)
+            format!(
+                "{} {}, {}, {}",
+                mnemonic,
+                reg_name(*rs1),
+                reg_name(*rs2),
+                imm
+            )
         }
         InstrArgs::U { rd, imm } => {
             format!("{} {}, {:#x}", mnemonic, reg_name(*rd), (*imm as u32) >> 12)

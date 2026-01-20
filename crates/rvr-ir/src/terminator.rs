@@ -65,7 +65,9 @@ impl<X: Xlen> Terminator<X> {
 
     /// Create a fall-through terminator with explicit target.
     pub fn fall(target: X::Reg) -> Self {
-        Self::Fall { target: Some(target) }
+        Self::Fall {
+            target: Some(target),
+        }
     }
 
     /// Create a conditional branch terminator.
@@ -130,7 +132,10 @@ impl<X: Xlen> Terminator<X> {
         match self {
             Self::Jump { target } => vec![*target],
             Self::Branch { target, .. } => vec![*target],
-            Self::JumpDyn { resolved: Some(targets), .. } => targets.clone(),
+            Self::JumpDyn {
+                resolved: Some(targets),
+                ..
+            } => targets.clone(),
             _ => Vec::new(),
         }
     }

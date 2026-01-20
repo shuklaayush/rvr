@@ -1,8 +1,8 @@
 //! Single instruction IR.
 
-use crate::xlen::Xlen;
 use crate::stmt::Stmt;
 use crate::terminator::Terminator;
+use crate::xlen::Xlen;
 
 /// Source location for debug info (#line directives).
 #[derive(Clone, Debug, Default)]

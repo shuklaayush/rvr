@@ -1,9 +1,9 @@
 //! Zifencei extension (instruction fence) - decode, lift, disasm.
 
-use rvr_ir::{Xlen, InstrIR, Terminator};
+use rvr_ir::{InstrIR, Terminator, Xlen};
 
-use crate::{DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_ZIFENCEI, encode::decode_funct3};
 use super::InstructionExtension;
+use crate::{encode::decode_funct3, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZIFENCEI};
 
 /// Zifencei instruction
 pub const OP_FENCE_I: OpId = OpId::new(EXT_ZIFENCEI, 0);
@@ -34,7 +34,13 @@ impl<X: Xlen> InstructionExtension<X> for ZifenceiExtension {
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         // FENCE.I is a no-op in recompilation (instruction cache is always coherent)
-        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::Fall { target: None })
+        InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            Vec::new(),
+            Terminator::Fall { target: None },
+        )
     }
 
     fn disasm(&self, _instr: &DecodedInstr<X>) -> String {
@@ -42,11 +48,17 @@ impl<X: Xlen> InstructionExtension<X> for ZifenceiExtension {
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        OP_INFO_ZIFENCEI.iter().find(|info| info.opid == opid).copied()
+        OP_INFO_ZIFENCEI
+            .iter()
+            .find(|info| info.opid == opid)
+            .copied()
     }
 }
 
 /// Table-driven OpInfo for Zifencei extension.
-const OP_INFO_ZIFENCEI: &[OpInfo] = &[
-    OpInfo { opid: OP_FENCE_I, name: "fence.i", class: OpClass::Fence, size_hint: 4 },
-];
+const OP_INFO_ZIFENCEI: &[OpInfo] = &[OpInfo {
+    opid: OP_FENCE_I,
+    name: "fence.i",
+    class: OpClass::Fence,
+    size_hint: 4,
+}];

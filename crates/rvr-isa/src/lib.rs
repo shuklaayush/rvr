@@ -4,13 +4,13 @@
 //! for RISC-V extensions. Each extension (I, M, A, C, Zicsr) is self-contained
 //! in its own module under `extensions/`.
 
-mod types;
 mod encode;
 pub mod extensions;
+mod types;
 
-pub use types::*;
 pub use encode::*;
 pub use extensions::*;
+pub use types::*;
 
 /// Decode an instruction using the standard RISC-V extensions.
 ///

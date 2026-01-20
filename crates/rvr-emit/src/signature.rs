@@ -14,10 +14,9 @@ use crate::config::EmitConfig;
 
 /// RISC-V register ABI names.
 pub const REG_ABI_NAMES: [&str; 32] = [
-    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
-    "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
-    "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
-    "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6",
+    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
+    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
+    "t5", "t6",
 ];
 
 /// Get ABI name for register.
@@ -124,12 +123,10 @@ impl FnSignature {
             } else {
                 abi_name(reg).to_string()
             }
+        } else if self.trace_regs {
+            format!("trd_reg(state, {})", reg)
         } else {
-            if self.trace_regs {
-                format!("trd_reg(state, {})", reg)
-            } else {
-                format!("state->regs[{}]", reg)
-            }
+            format!("state->regs[{}]", reg)
         }
     }
 
@@ -143,12 +140,10 @@ impl FnSignature {
             } else {
                 format!("{} = {};", abi_name(reg), value)
             }
+        } else if self.trace_regs {
+            format!("twr_reg(state, {}, {});", reg, value)
         } else {
-            if self.trace_regs {
-                format!("twr_reg(state, {}, {});", reg, value)
-            } else {
-                format!("state->regs[{}] = {};", reg, value)
-            }
+            format!("state->regs[{}] = {};", reg, value)
         }
     }
 
@@ -165,8 +160,8 @@ impl FnSignature {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rvr_ir::Rv64;
     use crate::config::{EmitConfig, InstretMode};
+    use rvr_ir::Rv64;
 
     #[test]
     fn test_signature_basic() {

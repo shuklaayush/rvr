@@ -20,10 +20,8 @@ pub const INSTRUCTION_SIZE: u64 = 2;
 pub struct DispatchConfig<X: Xlen> {
     /// Base name for output files.
     pub base_name: String,
-    /// Derived inputs.
+    /// Derived inputs (entry_point, pc_end, valid_addresses, initial_brk).
     pub inputs: EmitInputs,
-    /// Initial brk value.
-    pub initial_brk: u64,
     /// Instret counting mode.
     pub instret_mode: InstretMode,
     /// Function signature.
@@ -37,16 +35,10 @@ pub struct DispatchConfig<X: Xlen> {
 
 impl<X: Xlen> DispatchConfig<X> {
     /// Create dispatch config from emit config.
-    pub fn new(
-        config: &EmitConfig<X>,
-        base_name: impl Into<String>,
-        initial_brk: u64,
-        inputs: EmitInputs,
-    ) -> Self {
+    pub fn new(config: &EmitConfig<X>, base_name: impl Into<String>, inputs: EmitInputs) -> Self {
         Self {
             base_name: base_name.into(),
             inputs,
-            initial_brk,
             instret_mode: config.instret_mode,
             sig: FnSignature::new(config),
             memory_bits: config.memory_bits,
@@ -152,11 +144,11 @@ mod tests {
     #[test]
     fn test_gen_dispatch() {
         let config = EmitConfig::<Rv64>::standard();
-        let mut inputs = EmitInputs::new(0x80000000, 0x80000010);
+        let mut inputs = EmitInputs::new(0x80000000, 0x80000010).with_initial_brk(0x80010000);
         inputs.valid_addresses.insert(0x80000000u64);
         inputs.valid_addresses.insert(0x80000004u64);
 
-        let dispatch_cfg = DispatchConfig::new(&config, "test", 0x80010000, inputs);
+        let dispatch_cfg = DispatchConfig::new(&config, "test", inputs);
 
         let dispatch = gen_dispatch_file::<Rv64>(&dispatch_cfg);
 
@@ -170,11 +162,13 @@ mod tests {
     #[test]
     fn test_absorbed_mapping() {
         let config = EmitConfig::<Rv64>::standard();
-        let mut inputs = EmitInputs::new(0x80000000, 0x80000008);
+        let mut inputs = EmitInputs::new(0x80000000, 0x80000008).with_initial_brk(0x80010000);
         inputs.valid_addresses.insert(0x80000000u64);
-        inputs.absorbed_to_merged.insert(0x80000002u64, 0x80000000u64);
+        inputs
+            .absorbed_to_merged
+            .insert(0x80000002u64, 0x80000000u64);
 
-        let dispatch_cfg = DispatchConfig::new(&config, "test", 0x80010000, inputs);
+        let dispatch_cfg = DispatchConfig::new(&config, "test", inputs);
 
         let dispatch = gen_dispatch_file::<Rv64>(&dispatch_cfg);
 

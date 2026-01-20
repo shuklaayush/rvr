@@ -19,8 +19,8 @@ pub const NUM_REGS_E: usize = 16;
 /// x0 (zero) is excluded since it's always 0.
 pub const REG_PRIORITY: [u8; 31] = [
     // Highest priority - used constantly
-    1,  // ra
-    2,  // sp
+    1, // ra
+    2, // sp
     // Function arguments (a0-a7)
     10, 11, 12, 13, 14, 15, 16, 17, // a0-a7
     // Temporaries (t0-t2)
@@ -32,8 +32,8 @@ pub const REG_PRIORITY: [u8; 31] = [
     // Saved registers (s2-s11)
     18, 19, 20, 21, 22, 23, 24, 25, 26, 27, // s2-s11
     // Lowest priority - rarely used
-    3,  // gp
-    4,  // tp
+    3, // gp
+    4, // tp
 ];
 
 /// x86_64: 10 slots = 8 hot regs (optimal based on benchmarking).
@@ -52,11 +52,17 @@ pub const FIXED_SLOTS_NO_INSTRET: usize = 1;
 /// Get platform-specific default total slots.
 pub fn default_total_slots() -> usize {
     #[cfg(target_arch = "x86_64")]
-    { X86_64_DEFAULT_TOTAL_SLOTS }
+    {
+        X86_64_DEFAULT_TOTAL_SLOTS
+    }
     #[cfg(target_arch = "aarch64")]
-    { AARCH64_DEFAULT_TOTAL_SLOTS }
+    {
+        AARCH64_DEFAULT_TOTAL_SLOTS
+    }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    { X86_64_DEFAULT_TOTAL_SLOTS }
+    {
+        X86_64_DEFAULT_TOTAL_SLOTS
+    }
 }
 
 /// Compute number of hot RISC-V registers from total argument slots.
@@ -76,11 +82,12 @@ pub fn compute_num_hot_regs(
 }
 
 /// Instruction retirement counting mode.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InstretMode {
     /// No instruction counting.
     Off,
     /// Count instructions but don't suspend.
+    #[default]
     Count,
     /// Count instructions and suspend at limit.
     Suspend,
@@ -93,12 +100,6 @@ impl InstretMode {
 
     pub fn suspends(&self) -> bool {
         *self == Self::Suspend
-    }
-}
-
-impl Default for InstretMode {
-    fn default() -> Self {
-        Self::Count
     }
 }
 
@@ -154,11 +155,7 @@ impl<X: Xlen> EmitConfig<X> {
     ///
     /// This initializes hot registers based on platform-specific total slots
     /// and the given tracer configuration.
-    pub fn with_defaults(
-        num_regs: usize,
-        total_slots: usize,
-        tracer_config: TracerConfig,
-    ) -> Self {
+    pub fn with_defaults(num_regs: usize, total_slots: usize, tracer_config: TracerConfig) -> Self {
         let mut config = Self::new(num_regs);
         config.tracer_config = tracer_config;
         config.init_hot_regs(total_slots);
@@ -174,11 +171,8 @@ impl<X: Xlen> EmitConfig<X> {
     ///
     /// Only includes registers that exist (< num_regs) for E extension support.
     pub fn init_hot_regs(&mut self, total_slots: usize) {
-        let num_hot_regs = compute_num_hot_regs(
-            total_slots,
-            self.instret_mode,
-            &self.tracer_config,
-        );
+        let num_hot_regs =
+            compute_num_hot_regs(total_slots, self.instret_mode, &self.tracer_config);
         self.hot_regs.clear();
 
         let mut count = 0;
@@ -263,7 +257,7 @@ mod tests {
         assert_eq!(config.num_regs, 32);
         assert!(!config.hot_regs.is_empty());
         // Should have some hot regs based on platform
-        assert!(config.hot_regs.len() >= 1);
+        assert!(!config.hot_regs.is_empty());
     }
 
     #[test]

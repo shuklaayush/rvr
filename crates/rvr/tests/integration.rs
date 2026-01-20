@@ -1,7 +1,7 @@
 //! Integration tests for the recompiler pipeline.
 
+use rvr::{ElfImage, EmitConfig, Pipeline, Recompiler, Rv64};
 use std::path::Path;
-use rvr::{Recompiler, Rv64, Pipeline, ElfImage, EmitConfig};
 
 const RISCV_TESTS_DIR: &str = "/home/ayush/projects/openvm-mojo/bin/riscv/tests";
 
@@ -63,7 +63,10 @@ fn test_lift_rv64ui_addi() {
 
     let stats = pipeline.stats();
     assert!(stats.num_blocks > 0, "No blocks generated");
-    println!("rv64ui-p-addi: {} IR blocks, {} basic blocks", stats.num_blocks, stats.num_basic_blocks);
+    println!(
+        "rv64ui-p-addi: {} IR blocks, {} basic blocks",
+        stats.num_blocks, stats.num_basic_blocks
+    );
 }
 
 #[test]
@@ -87,23 +90,47 @@ fn test_emit_c_code() {
 
     pipeline.build_cfg().expect("CFG build failed");
     pipeline.lift_to_ir().expect("Lift failed");
-    pipeline.emit_c(&temp_dir, "rv64").expect("Failed to emit C code");
+    pipeline
+        .emit_c(&temp_dir, "rv64")
+        .expect("Failed to emit C code");
 
     // Verify generated files
-    assert!(temp_dir.join("rv64.h").exists(), "Header file not generated");
-    assert!(temp_dir.join("rv64_part0.c").exists(), "Partition file not generated");
-    assert!(temp_dir.join("rv64_dispatch.c").exists(), "Dispatch file not generated");
+    assert!(
+        temp_dir.join("rv64.h").exists(),
+        "Header file not generated"
+    );
+    assert!(
+        temp_dir.join("rv64_part0.c").exists(),
+        "Partition file not generated"
+    );
+    assert!(
+        temp_dir.join("rv64_dispatch.c").exists(),
+        "Dispatch file not generated"
+    );
     assert!(temp_dir.join("Makefile").exists(), "Makefile not generated");
 
     // Read and verify header content
     let header = std::fs::read_to_string(temp_dir.join("rv64.h")).expect("Failed to read header");
-    assert!(header.contains("#define XLEN 64"), "XLEN not set correctly in header");
-    assert!(header.contains("typedef struct RvState"), "RvState not defined");
+    assert!(
+        header.contains("#define XLEN 64"),
+        "XLEN not set correctly in header"
+    );
+    assert!(
+        header.contains("typedef struct RvState"),
+        "RvState not defined"
+    );
 
     // Read and verify partition content
-    let partition = std::fs::read_to_string(temp_dir.join("rv64_part0.c")).expect("Failed to read partition");
-    assert!(partition.contains("#include \"rv64_blocks.h\""), "Include missing in partition");
-    assert!(partition.contains("void B_"), "Block functions not generated");
+    let partition =
+        std::fs::read_to_string(temp_dir.join("rv64_part0.c")).expect("Failed to read partition");
+    assert!(
+        partition.contains("#include \"rv64_blocks.h\""),
+        "Include missing in partition"
+    );
+    assert!(
+        partition.contains("void B_"),
+        "Block functions not generated"
+    );
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&temp_dir);

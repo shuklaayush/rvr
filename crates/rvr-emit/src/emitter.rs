@@ -8,8 +8,8 @@
 //! - Optional tohost handling for riscv-tests
 
 use rvr_ir::{
-    BinaryOp, BlockIR, BranchHint, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp,
-    UnaryOp, WriteTarget, Xlen,
+    BinaryOp, BlockIR, BranchHint, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp,
+    WriteTarget, Xlen,
 };
 
 /// HTIF tohost address (matches riscv-tests expectation).
@@ -33,6 +33,8 @@ pub struct CEmitter<X: Xlen> {
     signed_type: &'static str,
     /// Current instruction PC.
     current_pc: u64,
+    /// Current instruction op (packed OpId for tracing).
+    current_op: u16,
     /// Instruction index within block (for instret).
     instr_idx: usize,
 }
@@ -55,6 +57,7 @@ impl<X: Xlen> CEmitter<X> {
             reg_type,
             signed_type,
             current_pc: 0,
+            current_op: 0,
             instr_idx: 0,
         }
     }
@@ -63,6 +66,7 @@ impl<X: Xlen> CEmitter<X> {
     pub fn reset(&mut self) {
         self.out.clear();
         self.current_pc = 0;
+        self.current_op = 0;
         self.instr_idx = 0;
     }
 
@@ -165,7 +169,10 @@ impl<X: Xlen> CEmitter<X> {
                         }
                     }
                     UnaryOp::Clz32 => format!("((uint64_t)__builtin_clz((uint32_t){} | 1))", o),
-                    UnaryOp::Ctz32 => format!("((uint64_t)((uint32_t){} ? __builtin_ctz((uint32_t){}) : 32))", o, o),
+                    UnaryOp::Ctz32 => format!(
+                        "((uint64_t)((uint32_t){} ? __builtin_ctz((uint32_t){}) : 32))",
+                        o, o
+                    ),
                     UnaryOp::Cpop32 => format!("((uint64_t)__builtin_popcount((uint32_t){}))", o),
                     UnaryOp::Orc8 => {
                         if X::VALUE == 64 {
@@ -282,7 +289,12 @@ impl<X: Xlen> CEmitter<X> {
                     BinaryOp::Pack16 => format!("((int64_t)(int32_t)(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16)))", l, r),
                 }
             }
-            Expr::Ternary { op, first, second, third } => match op {
+            Expr::Ternary {
+                op,
+                first,
+                second,
+                third,
+            } => match op {
                 TernaryOp::Select => {
                     let c = self.render_expr(first);
                     let t = self.render_expr(second);
@@ -301,7 +313,12 @@ impl<X: Xlen> CEmitter<X> {
     fn render_read(&self, expr: &ReadExpr<X>) -> String {
         match expr {
             ReadExpr::Reg(reg) => self.sig.reg_read(*reg),
-            ReadExpr::Mem { base, offset, width, signed } => {
+            ReadExpr::Mem {
+                base,
+                offset,
+                width,
+                signed,
+            } => {
                 let base = self.render_expr(base);
                 let load_fn = match (*width, *signed) {
                     (1, true) => "trd_mem_i8",
@@ -315,7 +332,11 @@ impl<X: Xlen> CEmitter<X> {
                 };
                 format!("{}(memory, {}, {})", load_fn, base, offset)
             }
-            ReadExpr::MemAddr { addr, width, signed } => {
+            ReadExpr::MemAddr {
+                addr,
+                width,
+                signed,
+            } => {
                 let base = self.render_expr(addr);
                 let load_fn = match (*width, *signed) {
                     (1, true) => "trd_mem_i8",
@@ -366,7 +387,11 @@ impl<X: Xlen> CEmitter<X> {
                         // Extract base and offset from address expression.
                         // Store addresses come from ISA as Expr::add(rs1, imm).
                         let (base, offset) = match addr {
-                            Expr::Binary { op: BinaryOp::Add, left, right } => {
+                            Expr::Binary {
+                                op: BinaryOp::Add,
+                                left,
+                                right,
+                            } => {
                                 let base_str = self.render_expr(left);
                                 if let Expr::Imm(imm) = right.as_ref() {
                                     (base_str, X::to_u64(*imm) as i64 as i16)
@@ -389,24 +414,39 @@ impl<X: Xlen> CEmitter<X> {
                                 8 => "twr_mem_u64",
                                 _ => "twr_mem_u32",
                             };
-                            self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
+                            self.writeln(
+                                indent,
+                                &format!(
+                                    "{}(memory, {}, {}, {});",
+                                    store_fn, base, offset, value_str
+                                ),
+                            );
                         }
                     }
                     WriteTarget::Csr(csr) => {
                         // Use traced helper (twr_csr)
-                        self.writeln(indent, &format!("twr_csr(state, 0x{:x}, {});", csr, value_str));
+                        self.writeln(
+                            indent,
+                            &format!("twr_csr(state, 0x{:x}, {});", csr, value_str),
+                        );
                     }
                     WriteTarget::Pc => {
                         self.writeln(indent, &format!("state->pc = {};", value_str));
                     }
                     WriteTarget::Temp(idx) => {
-                        self.writeln(indent, &format!("{} _t{} = {};", self.reg_type, idx, value_str));
+                        self.writeln(
+                            indent,
+                            &format!("{} _t{} = {};", self.reg_type, idx, value_str),
+                        );
                     }
                     WriteTarget::ResAddr => {
                         self.writeln(indent, &format!("state->reservation_addr = {};", value_str));
                     }
                     WriteTarget::ResValid => {
-                        self.writeln(indent, &format!("state->reservation_valid = {};", value_str));
+                        self.writeln(
+                            indent,
+                            &format!("state->reservation_valid = {};", value_str),
+                        );
                     }
                     WriteTarget::Exited => {
                         self.writeln(indent, &format!("state->has_exited = {};", value_str));
@@ -416,7 +456,11 @@ impl<X: Xlen> CEmitter<X> {
                     }
                 }
             }
-            Stmt::If { cond, then_stmts, else_stmts } => {
+            Stmt::If {
+                cond,
+                then_stmts,
+                else_stmts,
+            } => {
                 let cond_str = self.render_expr(cond);
                 self.writeln(indent, &format!("if ({}) {{", cond_str));
                 for s in then_stmts {
@@ -459,11 +503,17 @@ impl<X: Xlen> CEmitter<X> {
         };
 
         // Generate the tohost check
-        self.writeln(indent, &format!(
-            "if (unlikely((uint32_t){} + {} == 0x{:x}u)) {{",
-            base, offset, TOHOST_ADDR
-        ));
-        self.writeln(indent + 1, &format!("handle_tohost_write(state, {});", value));
+        self.writeln(
+            indent,
+            &format!(
+                "if (unlikely((uint32_t){} + {} == 0x{:x}u)) {{",
+                base, offset, TOHOST_ADDR
+            ),
+        );
+        self.writeln(
+            indent + 1,
+            &format!("handle_tohost_write(state, {});", value),
+        );
         self.writeln(indent + 1, "if (unlikely(state->has_exited)) {");
         self.writeln(indent + 2, &format!("state->pc = {};", pc_lit));
         if !instret_update.is_empty() || !save_call.is_empty() {
@@ -473,7 +523,10 @@ impl<X: Xlen> CEmitter<X> {
         self.writeln(indent + 1, "}");
         self.writeln(indent, "} else {");
         // Use traced helper for non-tohost writes
-        self.writeln(indent + 1, &format!("twr_mem_u32(memory, {}, {}, {});", base, offset, value));
+        self.writeln(
+            indent + 1,
+            &format!("twr_mem_u32(memory, {}, {}, {});", base, offset, value),
+        );
         self.writeln(indent, "}");
     }
 
@@ -507,6 +560,7 @@ impl<X: Xlen> CEmitter<X> {
     /// `fall_pc` is the address to fall through to (typically end_pc of the block).
     pub fn render_instruction(&mut self, ir: &InstrIR<X>, is_last: bool, fall_pc: u64) {
         self.current_pc = X::to_u64(ir.pc);
+        self.current_op = ir.op;
 
         // Optional: emit comment
         if self.config.emit_comments {
@@ -521,9 +575,19 @@ impl<X: Xlen> CEmitter<X> {
 
         self.instr_idx += 1;
 
-        // Render terminator if last instruction
+        // Render terminator
         if is_last {
             self.render_terminator(&ir.terminator, fall_pc);
+        } else {
+            // For superblocks: render BRANCH terminators as side exits even if not last
+            // If branch is taken, jump to target. If not, fall through to next inlined instr.
+            if let Terminator::Branch {
+                cond, target, hint, ..
+            } = &ir.terminator
+            {
+                let cond_str = self.render_expr(cond);
+                self.render_side_exit(&cond_str, X::to_u64(*target), *hint);
+            }
         }
     }
 
@@ -544,12 +608,20 @@ impl<X: Xlen> CEmitter<X> {
             }
             Terminator::JumpDyn { addr, resolved } => {
                 if let Some(targets) = resolved {
-                    self.render_jump_resolved(targets.iter().map(|t| X::to_u64(*t)).collect(), addr);
+                    self.render_jump_resolved(
+                        targets.iter().map(|t| X::to_u64(*t)).collect(),
+                        addr,
+                    );
                 } else {
                     self.render_jump_dynamic(addr, None);
                 }
             }
-            Terminator::Branch { cond, target, fall, hint } => {
+            Terminator::Branch {
+                cond,
+                target,
+                fall,
+                hint,
+            } => {
                 let cond_str = self.render_expr(cond);
                 let fall_target = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
                 self.render_branch(&cond_str, X::to_u64(*target), *hint, fall_target);
@@ -571,7 +643,13 @@ impl<X: Xlen> CEmitter<X> {
             // Resolve absorbed addresses to their merged block
             let resolved = self.inputs.resolve_address(target);
             let pc_str = self.fmt_pc(resolved);
-            self.writeln(1, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
+            self.writeln(
+                1,
+                &format!(
+                    "[[clang::musttail]] return B_{}({});",
+                    pc_str, self.sig.args
+                ),
+            );
         } else {
             self.render_exit("1");
         }
@@ -584,10 +662,13 @@ impl<X: Xlen> CEmitter<X> {
         let target = pre_eval_var
             .map(|s| s.to_string())
             .unwrap_or_else(|| self.render_expr(target_expr));
-        self.writeln(1, &format!(
-            "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
-            target, self.sig.args
-        ));
+        self.writeln(
+            1,
+            &format!(
+                "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
+                target, self.sig.args
+            ),
+        );
     }
 
     /// Render jump with resolved targets.
@@ -602,20 +683,34 @@ impl<X: Xlen> CEmitter<X> {
             self.writeln(1, &format!("{} target = {};", self.reg_type, target_var));
         }
 
-        let var_name = if targets.len() > 1 { "target" } else { &target_var };
+        let var_name = if targets.len() > 1 {
+            "target"
+        } else {
+            &target_var
+        };
 
         for target in &targets {
             if self.is_valid_address(*target) {
                 let pc_str = self.fmt_pc(*target);
                 let addr_lit = self.fmt_addr(*target);
                 self.writeln(1, &format!("if ({} == {}) {{", var_name, addr_lit));
-                self.writeln(2, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
+                self.writeln(
+                    2,
+                    &format!(
+                        "[[clang::musttail]] return B_{}({});",
+                        pc_str, self.sig.args
+                    ),
+                );
                 self.writeln(1, "}");
             }
         }
 
         // Fallback to dispatch table
-        let pre_eval = if targets.len() > 1 { Some("target") } else { None };
+        let pre_eval = if targets.len() > 1 {
+            Some("target")
+        } else {
+            None
+        };
         self.render_jump_dynamic(fallback, pre_eval);
     }
 
@@ -633,16 +728,24 @@ impl<X: Xlen> CEmitter<X> {
         // Tracing hooks (if enabled)
         let trace_taken = if self.config.has_tracing() {
             let target_lit = self.fmt_addr(target);
-            format!("trace_branch_taken(&state->tracer, {}, {});\n    ",
-                self.fmt_addr(self.current_pc), target_lit)
+            format!(
+                "trace_branch_taken(&state->tracer, {}, {}, {});\n    ",
+                self.fmt_addr(self.current_pc),
+                self.current_op,
+                target_lit
+            )
         } else {
             String::new()
         };
 
         let trace_not_taken = if self.config.has_tracing() {
             let fall_lit = self.fmt_addr(fall_pc);
-            format!("trace_branch_not_taken(&state->tracer, {}, {});\n",
-                self.fmt_addr(self.current_pc), fall_lit)
+            format!(
+                "trace_branch_not_taken(&state->tracer, {}, {}, {});\n",
+                self.fmt_addr(self.current_pc),
+                self.current_op,
+                fall_lit
+            )
         } else {
             String::new()
         };
@@ -659,7 +762,10 @@ impl<X: Xlen> CEmitter<X> {
             if !trace_taken.is_empty() {
                 self.writeln(2, trace_taken.trim_end());
             }
-            self.writeln(2, &format!("[[clang::musttail]] return B_{}({});", pc_str, args));
+            self.writeln(
+                2,
+                &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
+            );
             self.writeln(1, "}");
         } else {
             self.writeln(1, &format!("if ({}) {{", cond_str));
@@ -686,7 +792,10 @@ impl<X: Xlen> CEmitter<X> {
         if self.is_valid_address(fall_pc) {
             let resolved = self.inputs.resolve_address(fall_pc);
             let pc_str = self.fmt_pc(resolved);
-            self.writeln(1, &format!("[[clang::musttail]] return B_{}({});", pc_str, args));
+            self.writeln(
+                1,
+                &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
+            );
         } else {
             // Invalid fall address - exit
             self.writeln(1, "state->has_exited = true;");
@@ -697,6 +806,50 @@ impl<X: Xlen> CEmitter<X> {
                 self.writeln(1, &save_to_state);
             }
             self.writeln(1, "return;");
+        }
+    }
+
+    /// Render superblock side exit (branch with instret update).
+    /// Unlike full branch, this only handles the taken path - fall-through goes to next instruction.
+    fn render_side_exit(&mut self, cond: &str, target: u64, hint: BranchHint) {
+        let cond_str = match hint {
+            BranchHint::Taken => format!("likely({})", cond),
+            BranchHint::NotTaken => format!("unlikely({})", cond),
+            BranchHint::None => cond.to_string(),
+        };
+
+        let args = self.sig.args.clone();
+        let save_to_state = self.sig.save_to_state.clone();
+
+        if self.is_valid_address(target) {
+            let resolved = self.inputs.resolve_address(target);
+            let pc_str = self.fmt_pc(resolved);
+            self.writeln(1, &format!("if ({}) {{", cond_str));
+            if self.config.instret_mode.counts() {
+                self.writeln(2, &format!("instret += {};", self.instr_idx));
+            }
+            self.writeln(
+                2,
+                &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
+            );
+            self.writeln(1, "}");
+        } else {
+            self.writeln(1, &format!("if ({}) {{", cond_str));
+            self.writeln(2, "state->has_exited = true;");
+            self.writeln(2, "state->exit_code = 1;");
+            let pc_lit = self.fmt_addr(target);
+            self.writeln(2, &format!("state->pc = {};", pc_lit));
+            if self.config.instret_mode.counts() {
+                self.writeln(
+                    2,
+                    &format!("state->instret = instret + {};", self.instr_idx),
+                );
+            }
+            if !save_to_state.is_empty() {
+                self.writeln(2, &save_to_state);
+            }
+            self.writeln(2, "return;");
+            self.writeln(1, "}");
         }
     }
 
@@ -756,7 +909,10 @@ impl<X: Xlen> CEmitter<X> {
     pub fn emit_trace_pc(&mut self) {
         if self.config.has_tracing() {
             let pc_lit = self.fmt_addr(self.current_pc);
-            self.writeln(1, &format!("trace_pc(&state->tracer, {});", pc_lit));
+            self.writeln(
+                1,
+                &format!("trace_pc(&state->tracer, {}, {});", pc_lit, self.current_op),
+            );
         }
     }
 
@@ -794,8 +950,15 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Render instruction with custom indent (for inlined blocks).
-    pub fn render_instruction_indented(&mut self, ir: &InstrIR<X>, is_last: bool, fall_pc: u64, indent: usize) {
+    pub fn render_instruction_indented(
+        &mut self,
+        ir: &InstrIR<X>,
+        is_last: bool,
+        fall_pc: u64,
+        indent: usize,
+    ) {
         self.current_pc = X::to_u64(ir.pc);
+        self.current_op = ir.op;
 
         // Optional: emit comment
         if self.config.emit_comments {
@@ -810,9 +973,67 @@ impl<X: Xlen> CEmitter<X> {
 
         self.instr_idx += 1;
 
-        // Render terminator if last instruction
+        // Render terminator
         if is_last {
             self.render_terminator_indented(&ir.terminator, fall_pc, indent);
+        } else {
+            // For superblocks: render BRANCH terminators as side exits even if not last
+            if let Terminator::Branch {
+                cond, target, hint, ..
+            } = &ir.terminator
+            {
+                let cond_str = self.render_expr(cond);
+                self.render_side_exit_indented(&cond_str, X::to_u64(*target), *hint, indent);
+            }
+        }
+    }
+
+    /// Render superblock side exit with custom indent.
+    fn render_side_exit_indented(
+        &mut self,
+        cond: &str,
+        target: u64,
+        hint: BranchHint,
+        indent: usize,
+    ) {
+        let cond_str = match hint {
+            BranchHint::Taken => format!("likely({})", cond),
+            BranchHint::NotTaken => format!("unlikely({})", cond),
+            BranchHint::None => cond.to_string(),
+        };
+
+        let args = self.sig.args.clone();
+        let save_to_state = self.sig.save_to_state.clone();
+
+        if self.is_valid_address(target) {
+            let resolved = self.inputs.resolve_address(target);
+            let pc_str = self.fmt_pc(resolved);
+            self.writeln(indent, &format!("if ({}) {{", cond_str));
+            if self.config.instret_mode.counts() {
+                self.writeln(indent + 1, &format!("instret += {};", self.instr_idx));
+            }
+            self.writeln(
+                indent + 1,
+                &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
+            );
+            self.writeln(indent, "}");
+        } else {
+            self.writeln(indent, &format!("if ({}) {{", cond_str));
+            self.writeln(indent + 1, "state->has_exited = true;");
+            self.writeln(indent + 1, "state->exit_code = 1;");
+            let pc_lit = self.fmt_addr(target);
+            self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
+            if self.config.instret_mode.counts() {
+                self.writeln(
+                    indent + 1,
+                    &format!("state->instret = instret + {};", self.instr_idx),
+                );
+            }
+            if !save_to_state.is_empty() {
+                self.writeln(indent + 1, &save_to_state);
+            }
+            self.writeln(indent + 1, "return;");
+            self.writeln(indent, "}");
         }
     }
 
@@ -828,15 +1049,30 @@ impl<X: Xlen> CEmitter<X> {
             }
             Terminator::JumpDyn { addr, resolved } => {
                 if let Some(targets) = resolved {
-                    self.render_jump_resolved_indented(targets.iter().map(|t| X::to_u64(*t)).collect(), addr, indent);
+                    self.render_jump_resolved_indented(
+                        targets.iter().map(|t| X::to_u64(*t)).collect(),
+                        addr,
+                        indent,
+                    );
                 } else {
                     self.render_jump_dynamic_indented(addr, None, indent);
                 }
             }
-            Terminator::Branch { cond, target, fall, hint } => {
+            Terminator::Branch {
+                cond,
+                target,
+                fall,
+                hint,
+            } => {
                 let cond_str = self.render_expr(cond);
                 let fall_target = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
-                self.render_branch_indented(&cond_str, X::to_u64(*target), *hint, fall_target, indent);
+                self.render_branch_indented(
+                    &cond_str,
+                    X::to_u64(*target),
+                    *hint,
+                    fall_target,
+                    indent,
+                );
             }
             Terminator::Exit { code } => {
                 let code_str = self.render_expr(code);
@@ -854,25 +1090,44 @@ impl<X: Xlen> CEmitter<X> {
         if self.is_valid_address(target) {
             let resolved = self.inputs.resolve_address(target);
             let pc_str = self.fmt_pc(resolved);
-            self.writeln(indent, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
+            self.writeln(
+                indent,
+                &format!(
+                    "[[clang::musttail]] return B_{}({});",
+                    pc_str, self.sig.args
+                ),
+            );
         } else {
             self.render_exit_indented("1", indent);
         }
     }
 
     /// Render dynamic jump with custom indent.
-    fn render_jump_dynamic_indented(&mut self, target_expr: &Expr<X>, pre_eval_var: Option<&str>, indent: usize) {
+    fn render_jump_dynamic_indented(
+        &mut self,
+        target_expr: &Expr<X>,
+        pre_eval_var: Option<&str>,
+        indent: usize,
+    ) {
         let target = pre_eval_var
             .map(|s| s.to_string())
             .unwrap_or_else(|| self.render_expr(target_expr));
-        self.writeln(indent, &format!(
-            "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
-            target, self.sig.args
-        ));
+        self.writeln(
+            indent,
+            &format!(
+                "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
+                target, self.sig.args
+            ),
+        );
     }
 
     /// Render jump with resolved targets with custom indent.
-    fn render_jump_resolved_indented(&mut self, targets: Vec<u64>, fallback: &Expr<X>, indent: usize) {
+    fn render_jump_resolved_indented(
+        &mut self,
+        targets: Vec<u64>,
+        fallback: &Expr<X>,
+        indent: usize,
+    ) {
         if targets.is_empty() {
             self.render_jump_dynamic_indented(fallback, None, indent);
             return;
@@ -880,27 +1135,51 @@ impl<X: Xlen> CEmitter<X> {
 
         let target_var = self.render_expr(fallback);
         if targets.len() > 1 {
-            self.writeln(indent, &format!("{} target = {};", self.reg_type, target_var));
+            self.writeln(
+                indent,
+                &format!("{} target = {};", self.reg_type, target_var),
+            );
         }
 
-        let var_name = if targets.len() > 1 { "target" } else { &target_var };
+        let var_name = if targets.len() > 1 {
+            "target"
+        } else {
+            &target_var
+        };
 
         for target in &targets {
             if self.is_valid_address(*target) {
                 let pc_str = self.fmt_pc(*target);
                 let addr_lit = self.fmt_addr(*target);
                 self.writeln(indent, &format!("if ({} == {}) {{", var_name, addr_lit));
-                self.writeln(indent + 1, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
+                self.writeln(
+                    indent + 1,
+                    &format!(
+                        "[[clang::musttail]] return B_{}({});",
+                        pc_str, self.sig.args
+                    ),
+                );
                 self.writeln(indent, "}");
             }
         }
 
-        let pre_eval = if targets.len() > 1 { Some("target") } else { None };
+        let pre_eval = if targets.len() > 1 {
+            Some("target")
+        } else {
+            None
+        };
         self.render_jump_dynamic_indented(fallback, pre_eval, indent);
     }
 
     /// Render branch with custom indent.
-    fn render_branch_indented(&mut self, cond: &str, target: u64, hint: BranchHint, _fall_pc: u64, indent: usize) {
+    fn render_branch_indented(
+        &mut self,
+        cond: &str,
+        target: u64,
+        hint: BranchHint,
+        _fall_pc: u64,
+        indent: usize,
+    ) {
         let cond_str = match hint {
             BranchHint::Taken => format!("likely({})", cond),
             BranchHint::NotTaken => format!("unlikely({})", cond),
@@ -914,7 +1193,10 @@ impl<X: Xlen> CEmitter<X> {
             let resolved = self.inputs.resolve_address(target);
             let pc_str = self.fmt_pc(resolved);
             self.writeln(indent, &format!("if ({}) {{", cond_str));
-            self.writeln(indent + 1, &format!("[[clang::musttail]] return B_{}({});", pc_str, args));
+            self.writeln(
+                indent + 1,
+                &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
+            );
             self.writeln(indent, "}");
         } else {
             self.writeln(indent, &format!("if ({}) {{", cond_str));

@@ -79,7 +79,6 @@ struct TracerArgs {
     tracer_pass: Vec<String>,
 }
 
-
 #[derive(Subcommand)]
 enum Commands {
     /// Compile an ELF file to a shared library
@@ -138,7 +137,6 @@ enum Commands {
     },
 }
 
-
 fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
     let mut vars = Vec::new();
     for item in items {
@@ -152,7 +150,12 @@ fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
             "ptr" => PassedVar::ptr(name),
             "index" => PassedVar::index(name),
             "value" => PassedVar::value(name),
-            _ => return Err(format!("invalid tracer var kind '{}', expected ptr/index/value", kind)),
+            _ => {
+                return Err(format!(
+                    "invalid tracer var kind '{}', expected ptr/index/value",
+                    kind
+                ))
+            }
         };
         vars.push(var);
     }

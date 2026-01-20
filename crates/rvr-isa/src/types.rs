@@ -3,7 +3,7 @@
 use std::fmt::Display;
 
 // Re-export Xlen types from rvr-ir
-pub use rvr_ir::{Xlen, Rv32, Rv64};
+pub use rvr_ir::{Rv32, Rv64, Xlen};
 
 /// Decoded instruction with all fields extracted.
 #[derive(Clone, Debug)]
@@ -20,7 +20,12 @@ pub struct DecodedInstr<X: Xlen> {
 
 impl<X: Xlen> DecodedInstr<X> {
     pub fn new(opid: OpId, pc: X::Reg, size: u8, args: InstrArgs) -> Self {
-        Self { opid, pc, size, args }
+        Self {
+            opid,
+            pc,
+            size,
+            args,
+        }
     }
 }
 
@@ -46,7 +51,13 @@ pub enum InstrArgs {
     /// CSRI: rd, imm, csr
     CsrI { rd: u8, imm: u8, csr: u16 },
     /// AMO: rd, rs1, rs2, aq, rl
-    Amo { rd: u8, rs1: u8, rs2: u8, aq: bool, rl: bool },
+    Amo {
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+        aq: bool,
+        rl: bool,
+    },
     /// No arguments (ECALL, EBREAK, etc.)
     None,
     /// Custom instruction arguments

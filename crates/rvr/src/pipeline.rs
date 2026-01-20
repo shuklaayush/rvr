@@ -103,7 +103,9 @@ impl<X: Xlen> Pipeline<X> {
         let entry_pc = X::to_u64(self.image.entry_point);
 
         // Collect all executable segments
-        let exec_segments: Vec<_> = self.image.memory_segments
+        let exec_segments: Vec<_> = self
+            .image
+            .memory_segments
             .iter()
             .filter(|seg| seg.is_executable())
             .collect();
@@ -168,13 +170,13 @@ impl<X: Xlen> Pipeline<X> {
     ///
     /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
     pub fn lift_to_ir(&mut self) -> Result<()> {
-        let block_table = self.block_table.as_ref()
+        let block_table = self
+            .block_table
+            .as_ref()
             .ok_or(Error::CfgNotBuilt("lift_to_ir"))?;
 
         // Collect block info first to avoid borrow issues
-        let blocks_info: Vec<_> = block_table.iter()
-            .map(|b| (b.start, b.end))
-            .collect();
+        let blocks_info: Vec<_> = block_table.iter().map(|b| (b.start, b.end)).collect();
         let continuations = block_table.block_continuations.clone();
 
         // Lift each block from BlockTable, following continuations
@@ -265,13 +267,17 @@ impl<X: Xlen> Pipeline<X> {
     /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
     /// Returns `Error::Io` if file writing fails.
     pub fn emit_c(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
-        let block_table = self.block_table.as_ref()
+        let block_table = self
+            .block_table
+            .as_ref()
             .ok_or(Error::CfgNotBuilt("emit_c"))?;
 
         let entry_point = X::to_u64(self.image.entry_point);
 
         // Convert memory segments
-        let segments: Vec<MemorySegment> = self.image.memory_segments
+        let segments: Vec<MemorySegment> = self
+            .image
+            .memory_segments
             .iter()
             .map(|seg| {
                 MemorySegment::new(
@@ -284,7 +290,9 @@ impl<X: Xlen> Pipeline<X> {
             .collect();
 
         // Compute pc_end from blocks
-        let pc_end = self.ir_blocks.values()
+        let pc_end = self
+            .ir_blocks
+            .values()
             .map(|b| X::to_u64(b.end_pc))
             .max()
             .unwrap_or(0);
@@ -297,7 +305,9 @@ impl<X: Xlen> Pipeline<X> {
 
         // Build derived emission inputs
         let mut inputs = EmitInputs::new(entry_point, pc_end);
-        inputs.valid_addresses.extend(self.ir_blocks.keys().copied());
+        inputs
+            .valid_addresses
+            .extend(self.ir_blocks.keys().copied());
         inputs.absorbed_to_merged = absorbed_to_merged.clone();
 
         // Create CProject with block transform mappings

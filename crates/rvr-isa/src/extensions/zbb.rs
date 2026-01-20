@@ -6,11 +6,11 @@
 
 use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
-use crate::{
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBB,
-    encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-};
 use super::InstructionExtension;
+use crate::{
+    encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
+    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBB,
+};
 
 // Instruction OpIds
 pub const OP_ANDN: OpId = OpId::new(EXT_ZBB, 0);
@@ -91,7 +91,12 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     0b100 => OP_XNOR,
                     _ => return None,
                 };
-                return Some(DecodedInstr::new(opid, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
+                return Some(DecodedInstr::new(
+                    opid,
+                    pc,
+                    4,
+                    InstrArgs::R { rd, rs1, rs2 },
+                ));
             }
             // min, max, minu, maxu (funct7=0000101)
             if funct7 == FUNCT7_MINMAX {
@@ -102,7 +107,12 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     0b111 => OP_MAXU,
                     _ => return None,
                 };
-                return Some(DecodedInstr::new(opid, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
+                return Some(DecodedInstr::new(
+                    opid,
+                    pc,
+                    4,
+                    InstrArgs::R { rd, rs1, rs2 },
+                ));
             }
             // rol, ror (funct7=0110000)
             if funct7 == FUNCT7_ROL_ROR {
@@ -111,11 +121,21 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     0b101 => OP_ROR,
                     _ => return None,
                 };
-                return Some(DecodedInstr::new(opid, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
+                return Some(DecodedInstr::new(
+                    opid,
+                    pc,
+                    4,
+                    InstrArgs::R { rd, rs1, rs2 },
+                ));
             }
             // zext.h on RV32 (funct7=0000100, funct3=100, rs2=0)
             if funct7 == FUNCT7_ZEXT_H && funct3 == 0b100 && rs2 == 0 && X::VALUE == 32 {
-                return Some(DecodedInstr::new(OP_ZEXT_H, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                return Some(DecodedInstr::new(
+                    OP_ZEXT_H,
+                    pc,
+                    4,
+                    InstrArgs::I { rd, rs1, imm: 0 },
+                ));
             }
         }
 
@@ -131,16 +151,35 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     IMM_SEXT_H => OP_SEXT_H,
                     _ => return None,
                 };
-                return Some(DecodedInstr::new(opid, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                return Some(DecodedInstr::new(
+                    opid,
+                    pc,
+                    4,
+                    InstrArgs::I { rd, rs1, imm: 0 },
+                ));
             }
             // rori, orc.b, rev8 (funct3=101)
             if funct3 == 0b101 {
                 if imm12 == IMM_ORC_B {
-                    return Some(DecodedInstr::new(OP_ORC_B, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                    return Some(DecodedInstr::new(
+                        OP_ORC_B,
+                        pc,
+                        4,
+                        InstrArgs::I { rd, rs1, imm: 0 },
+                    ));
                 }
-                let rev8_imm = if X::VALUE == 32 { IMM_REV8_32 } else { IMM_REV8_64 };
+                let rev8_imm = if X::VALUE == 32 {
+                    IMM_REV8_32
+                } else {
+                    IMM_REV8_64
+                };
                 if imm12 == rev8_imm {
-                    return Some(DecodedInstr::new(OP_REV8, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                    return Some(DecodedInstr::new(
+                        OP_REV8,
+                        pc,
+                        4,
+                        InstrArgs::I { rd, rs1, imm: 0 },
+                    ));
                 }
                 // rori: check funct6
                 let funct6 = (raw >> 26) & 0x3F;
@@ -154,7 +193,16 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     } else {
                         ((raw >> 20) & 0x3F) as i32
                     };
-                    return Some(DecodedInstr::new(OP_RORI, pc, 4, InstrArgs::I { rd, rs1, imm: shamt }));
+                    return Some(DecodedInstr::new(
+                        OP_RORI,
+                        pc,
+                        4,
+                        InstrArgs::I {
+                            rd,
+                            rs1,
+                            imm: shamt,
+                        },
+                    ));
                 }
             }
         }
@@ -163,7 +211,12 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
         if opcode == OPCODE_OP_32 && X::VALUE == 64 {
             // zext.h on RV64 (funct7=0000100, funct3=100, rs2=0)
             if funct7 == FUNCT7_ZEXT_H && funct3 == 0b100 && rs2 == 0 {
-                return Some(DecodedInstr::new(OP_ZEXT_H, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                return Some(DecodedInstr::new(
+                    OP_ZEXT_H,
+                    pc,
+                    4,
+                    InstrArgs::I { rd, rs1, imm: 0 },
+                ));
             }
             // rolw, rorw (funct7=0110000)
             if funct7 == FUNCT7_ROL_ROR {
@@ -172,7 +225,12 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     0b101 => OP_RORW,
                     _ => return None,
                 };
-                return Some(DecodedInstr::new(opid, pc, 4, InstrArgs::R { rd, rs1, rs2 }));
+                return Some(DecodedInstr::new(
+                    opid,
+                    pc,
+                    4,
+                    InstrArgs::R { rd, rs1, rs2 },
+                ));
             }
         }
 
@@ -186,11 +244,25 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     0b00010 => OP_CPOPW,
                     _ => return None,
                 };
-                return Some(DecodedInstr::new(opid, pc, 4, InstrArgs::I { rd, rs1, imm: 0 }));
+                return Some(DecodedInstr::new(
+                    opid,
+                    pc,
+                    4,
+                    InstrArgs::I { rd, rs1, imm: 0 },
+                ));
             }
             if funct3 == 0b101 && funct7 == FUNCT7_ROL_ROR {
                 let shamt = ((raw >> 20) & 0x1F) as i32;
-                return Some(DecodedInstr::new(OP_RORIW, pc, 4, InstrArgs::I { rd, rs1, imm: shamt }));
+                return Some(DecodedInstr::new(
+                    OP_RORIW,
+                    pc,
+                    4,
+                    InstrArgs::I {
+                        rd,
+                        rs1,
+                        imm: shamt,
+                    },
+                ));
             }
         }
 
@@ -223,7 +295,13 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
             OP_RORIW => lift_roriw::<X>(instr),
             OP_ORC_B => lift_unary::<X, _>(instr, |v| Expr::orc8(v)),
             OP_REV8 => lift_unary::<X, _>(instr, |v| Expr::rev8(v)),
-            _ => InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unknown Zbb opid")),
+            _ => InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("unknown Zbb opid"),
+            ),
         }
     }
 
@@ -267,34 +345,76 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
 fn lift_andn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // rd = rs1 & ~rs2
     let result = Expr::and(Expr::reg(rs1), Expr::not(Expr::reg(rs2)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_orn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // rd = rs1 | ~rs2
     let result = Expr::or(Expr::reg(rs1), Expr::not(Expr::reg(rs2)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_xnor<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // rd = ~(rs1 ^ rs2)
     let result = Expr::not(Expr::xor(Expr::reg(rs1), Expr::reg(rs2)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_unary<X: Xlen, F>(instr: &DecodedInstr<X>, op: F) -> InstrIR<X>
@@ -303,11 +423,25 @@ where
 {
     let (rd, rs1) = match instr.args {
         InstrArgs::I { rd, rs1, .. } => (rd, rs1),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     let result = op(Expr::reg(rs1));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_binary<X: Xlen, F>(instr: &DecodedInstr<X>, op: F) -> InstrIR<X>
@@ -316,17 +450,39 @@ where
 {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     let result = op(Expr::reg(rs1), Expr::reg(rs2));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // rd = (rs1 << (rs2 & mask)) | (rs1 >> ((XLEN - rs2) & mask))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -338,13 +494,27 @@ fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let right = Expr::srl(val, complement);
     let result = Expr::or(left, right);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // rd = (rs1 >> (rs2 & mask)) | (rs1 << ((XLEN - rs2) & mask))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -356,13 +526,27 @@ fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, complement);
     let result = Expr::or(right, left);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // rd = (rs1 >> shamt) | (rs1 << (XLEN - shamt))
     let xlen = X::VALUE as u64;
@@ -372,13 +556,27 @@ fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, Expr::imm(X::from_u64(complement)));
     let result = Expr::or(right, left);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // 32-bit rotate left, sign-extend result
     // rd = sext32((rs1[31:0] << (rs2 & 0x1F)) | (rs1[31:0] >> (32 - (rs2 & 0x1F))))
@@ -392,13 +590,27 @@ fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let right = Expr::srl(val, complement);
     let result = Expr::sext32(Expr::or(left, right));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // 32-bit rotate right, sign-extend result
     let val = Expr::zext32(Expr::reg(rs1));
@@ -411,13 +623,27 @@ fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, complement);
     let result = Expr::sext32(Expr::or(right, left));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
+        _ => {
+            return InstrIR::new(
+                instr.pc,
+                instr.size,
+                instr.opid.pack(),
+                Vec::new(),
+                Terminator::trap("bad args"),
+            )
+        }
     };
     // 32-bit rotate right immediate, sign-extend result
     let complement = (32 - shamt as u64) & 0x1F;
@@ -426,7 +652,13 @@ fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, Expr::imm(X::from_u64(complement)));
     let result = Expr::sext32(Expr::or(right, left));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(
+        instr.pc,
+        instr.size,
+        instr.opid.pack(),
+        vec![stmt],
+        Terminator::Fall { target: None },
+    )
 }
 
 // === Disasm helpers ===
@@ -434,7 +666,13 @@ fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
 fn disasm_r<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
     match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => {
-            format!("{} {}, {}, {}", mnemonic, reg_name(rd), reg_name(rs1), reg_name(rs2))
+            format!(
+                "{} {}, {}, {}",
+                mnemonic,
+                reg_name(rd),
+                reg_name(rs1),
+                reg_name(rs2)
+            )
         }
         _ => format!("{} ???", mnemonic),
     }
@@ -460,35 +698,158 @@ fn disasm_shift<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
 
 /// Table-driven OpInfo for Zbb extension.
 const OP_INFO_ZBB: &[OpInfo] = &[
-    OpInfo { opid: OP_ANDN, name: "andn", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ORN, name: "orn", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_XNOR, name: "xnor", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_CLZ, name: "clz", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_CTZ, name: "ctz", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_CPOP, name: "cpop", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_CLZW, name: "clzw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_CTZW, name: "ctzw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_CPOPW, name: "cpopw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_MAX, name: "max", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_MAXU, name: "maxu", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_MIN, name: "min", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_MINU, name: "minu", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SEXT_B, name: "sext.b", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_SEXT_H, name: "sext.h", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ZEXT_H, name: "zext.h", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ROL, name: "rol", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ROR, name: "ror", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_RORI, name: "rori", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ROLW, name: "rolw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_RORW, name: "rorw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_RORIW, name: "roriw", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_ORC_B, name: "orc.b", class: OpClass::Alu, size_hint: 4 },
-    OpInfo { opid: OP_REV8, name: "rev8", class: OpClass::Alu, size_hint: 4 },
+    OpInfo {
+        opid: OP_ANDN,
+        name: "andn",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ORN,
+        name: "orn",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_XNOR,
+        name: "xnor",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CLZ,
+        name: "clz",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CTZ,
+        name: "ctz",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CPOP,
+        name: "cpop",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CLZW,
+        name: "clzw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CTZW,
+        name: "ctzw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_CPOPW,
+        name: "cpopw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MAX,
+        name: "max",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MAXU,
+        name: "maxu",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MIN,
+        name: "min",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_MINU,
+        name: "minu",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SEXT_B,
+        name: "sext.b",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_SEXT_H,
+        name: "sext.h",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ZEXT_H,
+        name: "zext.h",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ROL,
+        name: "rol",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ROR,
+        name: "ror",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_RORI,
+        name: "rori",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ROLW,
+        name: "rolw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_RORW,
+        name: "rorw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_RORIW,
+        name: "roriw",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_ORC_B,
+        name: "orc.b",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
+    OpInfo {
+        opid: OP_REV8,
+        name: "rev8",
+        class: OpClass::Alu,
+        size_hint: 4,
+    },
 ];
 
 /// Get mnemonic for Zbb instruction.
 pub fn zbb_mnemonic(opid: OpId) -> Option<&'static str> {
-    OP_INFO_ZBB.iter().find(|info| info.opid == opid).map(|info| info.name)
+    OP_INFO_ZBB
+        .iter()
+        .find(|info| info.opid == opid)
+        .map(|info| info.name)
 }
 
 #[cfg(test)]
@@ -507,11 +868,8 @@ mod tests {
     }
 
     fn encode_i(opcode: u32, funct3: u32, rd: u8, rs1: u8, imm12: u32) -> [u8; 4] {
-        let raw = opcode
-            | ((rd as u32) << 7)
-            | (funct3 << 12)
-            | ((rs1 as u32) << 15)
-            | (imm12 << 20);
+        let raw =
+            opcode | ((rd as u32) << 7) | (funct3 << 12) | ((rs1 as u32) << 15) | (imm12 << 20);
         raw.to_le_bytes()
     }
 
@@ -519,7 +877,8 @@ mod tests {
     fn test_andn_decode() {
         let ext = ZbbExtension;
         let bytes = encode_r(OPCODE_OP, 0b111, FUNCT7_ANDN_ORN_XNOR, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_ANDN);
     }
 
@@ -527,7 +886,8 @@ mod tests {
     fn test_clz_decode() {
         let ext = ZbbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b001, 1, 2, IMM_CLZ);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_CLZ);
     }
 
@@ -535,7 +895,8 @@ mod tests {
     fn test_max_decode() {
         let ext = ZbbExtension;
         let bytes = encode_r(OPCODE_OP, 0b110, FUNCT7_MINMAX, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_MAX);
     }
 
@@ -543,7 +904,8 @@ mod tests {
     fn test_rol_decode() {
         let ext = ZbbExtension;
         let bytes = encode_r(OPCODE_OP, 0b001, FUNCT7_ROL_ROR, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_ROL);
     }
 
@@ -553,7 +915,8 @@ mod tests {
         // rori rd, rs1, 5 (shamt=5)
         let imm = (0b011000u32 << 6) | 5;
         let bytes = encode_i(OPCODE_OP_IMM, 0b101, 1, 2, imm);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_RORI);
         match instr.args {
             InstrArgs::I { imm, .. } => assert_eq!(imm, 5),
@@ -565,7 +928,8 @@ mod tests {
     fn test_rev8_decode() {
         let ext = ZbbExtension;
         let bytes = encode_i(OPCODE_OP_IMM, 0b101, 1, 2, IMM_REV8_64);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         assert_eq!(instr.opid, OP_REV8);
     }
 
@@ -573,7 +937,8 @@ mod tests {
     fn test_disasm() {
         let ext = ZbbExtension;
         let bytes = encode_r(OPCODE_OP, 0b111, FUNCT7_ANDN_ORN_XNOR, 10, 11, 12);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         let disasm = InstructionExtension::<Rv64>::disasm(&ext, &instr);
         assert_eq!(disasm, "andn a0, a1, a2");
     }
@@ -582,7 +947,8 @@ mod tests {
     fn test_lift_andn() {
         let ext = ZbbExtension;
         let bytes = encode_r(OPCODE_OP, 0b111, FUNCT7_ANDN_ORN_XNOR, 1, 2, 3);
-        let instr = InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
+        let instr =
+            InstructionExtension::<Rv64>::decode32(&ext, u32::from_le_bytes(bytes), 0u64).unwrap();
         let ir = InstructionExtension::<Rv64>::lift(&ext, &instr);
         assert_eq!(ir.statements.len(), 1);
     }

@@ -3,13 +3,11 @@
 use std::collections::{HashMap, HashSet};
 
 use rvr_isa::{
-    DecodedInstr, InstrArgs, Xlen,
-    OP_ADD, OP_ADDI, OP_AUIPC, OP_JAL, OP_JALR, OP_LUI,
-    OP_LB, OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LW, OP_LWU,
-    OP_BEQ, OP_BNE, OP_BLT, OP_BGE, OP_BLTU, OP_BGEU,
-    OP_C_ADDI, OP_C_ADDI16SP, OP_C_ADDI4SPN, OP_C_ADD, OP_C_J, OP_C_JAL,
-    OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW,
-    OP_C_LWSP, OP_C_MV, OP_C_BEQZ, OP_C_BNEZ,
+    DecodedInstr, InstrArgs, Xlen, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT,
+    OP_BLTU, OP_BNE, OP_C_ADD, OP_C_ADDI, OP_C_ADDI16SP, OP_C_ADDI4SPN, OP_C_BEQZ, OP_C_BNEZ,
+    OP_C_J, OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW,
+    OP_C_LWSP, OP_C_MV, OP_JAL, OP_JALR, OP_LB, OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW,
+    OP_LWU,
 };
 
 use crate::InstructionTable;
@@ -244,18 +242,20 @@ impl DecodedInstruction {
                 },
                 _ => Self::unknown(),
             },
-            OP_ADDI | OP_C_ADDI | OP_C_ADDI16SP | OP_C_ADDI4SPN | OP_C_LI => match instr.args.clone() {
-                InstrArgs::I { rd, rs1, imm } => Self {
-                    kind: InstrKind::Addi,
-                    rd: Some(rd),
-                    rs1: Some(rs1),
-                    rs2: None,
-                    imm,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
+            OP_ADDI | OP_C_ADDI | OP_C_ADDI16SP | OP_C_ADDI4SPN | OP_C_LI => {
+                match instr.args.clone() {
+                    InstrArgs::I { rd, rs1, imm } => Self {
+                        kind: InstrKind::Addi,
+                        rd: Some(rd),
+                        rs1: Some(rs1),
+                        rs2: None,
+                        imm,
+                        width: 0,
+                        is_unsigned: false,
+                    },
+                    _ => Self::unknown(),
+                }
+            }
             OP_ADD | OP_C_ADD => match instr.args.clone() {
                 InstrArgs::R { rd, rs1, rs2 } => Self {
                     kind: InstrKind::Add,
@@ -304,8 +304,8 @@ impl DecodedInstruction {
                 },
                 _ => Self::unknown(),
             },
-            OP_LB | OP_LBU | OP_LH | OP_LHU | OP_LW | OP_LWU | OP_LD
-            | OP_C_LW | OP_C_LWSP | OP_C_LD | OP_C_LDSP => match instr.args.clone() {
+            OP_LB | OP_LBU | OP_LH | OP_LHU | OP_LW | OP_LWU | OP_LD | OP_C_LW | OP_C_LWSP
+            | OP_C_LD | OP_C_LDSP => match instr.args.clone() {
                 InstrArgs::I { rd, rs1, imm } => {
                     let (width, is_unsigned) = match opid {
                         OP_LB => (1, false),
@@ -355,7 +355,10 @@ impl DecodedInstruction {
     }
 
     fn is_control_flow(&self) -> bool {
-        matches!(self.kind, InstrKind::Jal | InstrKind::Jalr | InstrKind::Branch)
+        matches!(
+            self.kind,
+            InstrKind::Jal | InstrKind::Jalr | InstrKind::Branch
+        )
     }
 
     fn is_static_call(&self) -> bool {
@@ -530,9 +533,11 @@ fn collect_potential_targets<X: Xlen>(
                 if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
                     if let Some(base) = regs[rs1 as usize] {
                         let addr = add_signed(base, decoded.imm);
-                        let maybe_val = instruction_table.read_readonly(addr, decoded.width as usize);
+                        let maybe_val =
+                            instruction_table.read_readonly(addr, decoded.width as usize);
                         if let Some(raw) = maybe_val {
-                            let extended = extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
+                            let extended =
+                                extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
                             regs[rd as usize] = Some(extended);
                             if instruction_table.is_valid_pc(extended) {
                                 internal_targets.insert(extended);
@@ -627,10 +632,7 @@ fn build_call_return_map<X: Xlen>(
         if decoded.is_static_call() {
             let callee = add_signed(pc, decoded.imm);
             if instruction_table.is_valid_pc(callee) {
-                call_return_map
-                    .entry(callee)
-                    .or_default()
-                    .insert(pc + size);
+                call_return_map.entry(callee).or_default().insert(pc + size);
             }
         }
 
@@ -674,9 +676,9 @@ fn worklist<X: Xlen>(
         }
     }
 
-    let max_iterations =
-        (instruction_table.end_address() - instruction_table.base_address()) as usize
-            * MAX_ITERATIONS_MULTIPLIER;
+    let max_iterations = (instruction_table.end_address() - instruction_table.base_address())
+        as usize
+        * MAX_ITERATIONS_MULTIPLIER;
 
     let mut idx = 0;
     while idx < worklist.len() {
@@ -722,10 +724,8 @@ fn worklist<X: Xlen>(
 
         for target in &succs {
             if let Some(existing) = states.get_mut(target) {
-                if existing.merge(&state_out) {
-                    if in_worklist.insert(*target) {
-                        worklist.push(*target);
-                    }
+                if existing.merge(&state_out) && in_worklist.insert(*target) {
+                    worklist.push(*target);
                 }
             } else {
                 states.insert(*target, state_out.clone());
@@ -846,7 +846,8 @@ fn transfer<X: Xlen>(
             if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
                 let base = state.get(rs1);
                 if base.is_constant() && !base.values.is_empty() {
-                    let mut result = RegisterValue::constant(add_signed(base.values[0], decoded.imm));
+                    let mut result =
+                        RegisterValue::constant(add_signed(base.values[0], decoded.imm));
                     for value in base.values.iter().skip(1) {
                         result.add_value(add_signed(*value, decoded.imm));
                         if !result.is_constant() {
@@ -863,8 +864,13 @@ fn transfer<X: Xlen>(
             if let (Some(rd), Some(rs1), Some(rs2)) = (decoded.rd, decoded.rs1, decoded.rs2) {
                 let lhs = state.get(rs1);
                 let rhs = state.get(rs2);
-                if lhs.is_constant() && rhs.is_constant() && !lhs.values.is_empty() && !rhs.values.is_empty() {
-                    let mut result = RegisterValue::constant(lhs.values[0].wrapping_add(rhs.values[0]));
+                if lhs.is_constant()
+                    && rhs.is_constant()
+                    && !lhs.values.is_empty()
+                    && !rhs.values.is_empty()
+                {
+                    let mut result =
+                        RegisterValue::constant(lhs.values[0].wrapping_add(rhs.values[0]));
                     'outer: for l in &lhs.values {
                         for r in &rhs.values {
                             if l == &lhs.values[0] && r == &rhs.values[0] {
@@ -894,7 +900,8 @@ fn transfer<X: Xlen>(
                 let mut resolved = false;
                 if rs1 != 2 && base.is_constant() && !base.values.is_empty() {
                     let addr = add_signed(base.values[0], decoded.imm);
-                    if let Some(raw) = instruction_table.read_readonly(addr, decoded.width as usize) {
+                    if let Some(raw) = instruction_table.read_readonly(addr, decoded.width as usize)
+                    {
                         let extended = extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
                         state.set_constant(rd, extended);
                         resolved = true;
@@ -953,9 +960,7 @@ fn compute_leaders<X: Xlen>(
     leaders
 }
 
-fn build_predecessors(
-    successors: &HashMap<u64, HashSet<u64>>,
-) -> HashMap<u64, HashSet<u64>> {
+fn build_predecessors(successors: &HashMap<u64, HashSet<u64>>) -> HashMap<u64, HashSet<u64>> {
     let mut predecessors: HashMap<u64, HashSet<u64>> = HashMap::new();
     for (&pc, succs) in successors {
         for succ in succs {

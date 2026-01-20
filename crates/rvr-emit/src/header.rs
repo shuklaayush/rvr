@@ -600,7 +600,8 @@ static inline uint32_t rv_unzip32(uint32_t x) {
     return lo | (hi << 16);
 }
 
-"#.to_string()
+"#
+    .to_string()
 }
 
 fn gen_no_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
@@ -773,7 +774,8 @@ fn gen_block_declarations<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
             decls,
             "__attribute__((preserve_none)) void B_{:016x}({});",
             addr, cfg.sig.params
-        ).unwrap();
+        )
+        .unwrap();
     }
     decls
 }
