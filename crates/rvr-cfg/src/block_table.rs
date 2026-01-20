@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use rvr_isa::{ExtensionRegistry, Xlen};
 
+use crate::analysis::ControlFlowAnalyzer;
 use crate::InstructionTable;
 
 /// Basic block with start/end addresses.
@@ -49,6 +50,8 @@ pub struct BlockTable<X: Xlen> {
     pub taken_inlines: HashMap<u64, (u64, u64)>,
     /// Predecessors map: PC -> set of predecessor PCs.
     pub predecessors: HashMap<u64, HashSet<u64>>,
+    /// Successors map: PC -> set of successor PCs.
+    pub successors: HashMap<u64, HashSet<u64>>,
     /// Unresolved dynamic jumps.
     pub unresolved_jumps: HashSet<u64>,
     /// Call return map: callee -> set of return addresses.
@@ -76,6 +79,7 @@ impl<X: Xlen> BlockTable<X> {
             block_continuations: HashMap::new(),
             taken_inlines: HashMap::new(),
             predecessors: HashMap::new(),
+            successors: HashMap::new(),
             unresolved_jumps: HashSet::new(),
             call_return_map: HashMap::new(),
             block_to_function: HashMap::new(),
@@ -93,6 +97,7 @@ impl<X: Xlen> BlockTable<X> {
             block_continuations: HashMap::new(),
             taken_inlines: HashMap::new(),
             predecessors: HashMap::new(),
+            successors: HashMap::new(),
             unresolved_jumps: HashSet::new(),
             call_return_map: HashMap::new(),
             block_to_function: HashMap::new(),
@@ -125,81 +130,15 @@ impl<X: Xlen> BlockTable<X> {
 
     /// Build blocks using CFG analysis.
     fn build_blocks(&mut self, registry: &ExtensionRegistry<X>) {
-        // Find block leaders
-        let leaders = self.find_leaders(registry);
+        let analysis = ControlFlowAnalyzer::analyze(&self.instruction_table);
 
-        // Create blocks from leaders
-        self.create_blocks_from_leaders(&leaders, registry);
-    }
+        self.predecessors = analysis.predecessors;
+        self.successors = analysis.successors;
+        self.unresolved_jumps = analysis.unresolved_dynamic_jumps;
+        self.call_return_map = analysis.call_return_map;
+        self.block_to_function = analysis.block_to_function;
 
-    /// Find basic block leaders.
-    fn find_leaders(&mut self, registry: &ExtensionRegistry<X>) -> HashSet<u64> {
-        let mut leaders = HashSet::new();
-        let _base = self.instruction_table.base_address();
-        let end = self.instruction_table.end_address();
-
-        // Entry point is always a leader
-        leaders.insert(self.instruction_table.entry_point());
-
-        // Find all branch/jump targets
-        for (pc, instr) in self.instruction_table.valid_instructions() {
-            let ir = registry.lift(instr);
-            let next_pc = pc + instr.size as u64;
-
-            // Add predecessor mapping
-            match &ir.terminator {
-                rvr_ir::Terminator::Fall { .. } => {
-                    if next_pc < end {
-                        self.predecessors
-                            .entry(next_pc)
-                            .or_default()
-                            .insert(pc);
-                    }
-                }
-                rvr_ir::Terminator::Jump { target } => {
-                    let target_pc = X::to_u64(*target);
-                    leaders.insert(target_pc);
-                    self.predecessors
-                        .entry(target_pc)
-                        .or_default()
-                        .insert(pc);
-                }
-                rvr_ir::Terminator::JumpDyn { resolved, .. } => {
-                    if let Some(targets) = resolved {
-                        for target in targets {
-                            let target_pc = X::to_u64(*target);
-                            leaders.insert(target_pc);
-                            self.predecessors
-                                .entry(target_pc)
-                                .or_default()
-                                .insert(pc);
-                        }
-                    } else {
-                        self.unresolved_jumps.insert(pc);
-                    }
-                }
-                rvr_ir::Terminator::Branch { target, .. } => {
-                    let target_pc = X::to_u64(*target);
-                    leaders.insert(target_pc);
-                    self.predecessors
-                        .entry(target_pc)
-                        .or_default()
-                        .insert(pc);
-
-                    // Fall-through is also a leader
-                    if next_pc < end {
-                        leaders.insert(next_pc);
-                        self.predecessors
-                            .entry(next_pc)
-                            .or_default()
-                            .insert(pc);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        leaders
+        self.create_blocks_from_leaders(&analysis.leaders, registry);
     }
 
     /// Create blocks from leader set.

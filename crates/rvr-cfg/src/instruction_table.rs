@@ -231,6 +231,11 @@ impl<X: Xlen> InstructionTable<X> {
         self.ro_segments.push(RoSegment::new(start, end, data));
     }
 
+    /// Get read-only segments for scanning.
+    pub fn ro_segments(&self) -> &[RoSegment] {
+        &self.ro_segments
+    }
+
     // ============= Accessors =============
 
     /// Get base address.
