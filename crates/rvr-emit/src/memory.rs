@@ -109,7 +109,7 @@ static const Segment segments[] = {
         let data_ptr = if seg.has_data() {
             format!("segment_{}_data", i)
         } else {
-            "NULL".to_string()
+            "nullptr".to_string()
         };
         writeln!(
             s,
@@ -166,7 +166,7 @@ int rv_init_memory(RvState* state) {{
     size_t total_size = RV_MEMORY_SIZE + 2 * GUARD_SIZE;
 
     /* Allocate with guard pages on each side */
-    uint8_t* region = (uint8_t*)mmap(NULL, total_size,
+    uint8_t* region = (uint8_t*)mmap(nullptr, total_size,
         PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (region == MAP_FAILED) {{
         perror("mmap");
@@ -177,7 +177,7 @@ int rv_init_memory(RvState* state) {{
 
     /* Copy segment data */
     for (size_t i = 0; i < sizeof(segments)/sizeof(segments[0]); i++) {{
-        if (segments[i].data != NULL && segments[i].filesz > 0) {{
+        if (segments[i].data != nullptr && segments[i].filesz > 0) {{
             memcpy(state->memory + segments[i].vaddr,
                    segments[i].data, segments[i].filesz);
         }}
@@ -189,9 +189,9 @@ int rv_init_memory(RvState* state) {{
 }}
 
 void rv_free_memory(RvState* state) {{
-    if (state->memory != NULL) {{
+    if (state->memory != nullptr) {{
         munmap(state->memory - GUARD_SIZE, RV_MEMORY_SIZE + 2 * GUARD_SIZE);
-        state->memory = NULL;
+        state->memory = nullptr;
     }}
 }}
 "#,
@@ -263,7 +263,7 @@ static const Segment segments[] = {
         let data_ptr = if seg.has_data() {
             format!("segment_{}_data", i)
         } else {
-            "NULL".to_string()
+            "nullptr".to_string()
         };
         writeln!(
             s,

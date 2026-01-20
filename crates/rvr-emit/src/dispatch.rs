@@ -157,7 +157,7 @@ void rv_set_pc(RvState* state, uint64_t pc) {{
 
 /* Get memory pointer */
 uint8_t* rv_get_memory(const RvState* state) {{
-    return state ? state->memory : NULL;
+    return state ? state->memory : nullptr;
 }}
 
 /* Get memory size */
