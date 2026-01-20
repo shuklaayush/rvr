@@ -339,11 +339,11 @@ impl<X: Xlen> ElfFile<X> {
         let start = strtab_offset + string_offset;
         let mut result = String::new();
 
-        for i in start..data.len() {
-            if data[i] == 0 {
+        for &byte in &data[start..] {
+            if byte == 0 {
                 break;
             }
-            result.push(data[i] as char);
+            result.push(byte as char);
         }
 
         result

@@ -741,6 +741,8 @@ fn worklist<X: Xlen>(
     (successors, unresolved_dynamic_jumps)
 }
 
+// Many parameters needed for inter-procedural analysis context
+#[allow(clippy::too_many_arguments)]
 fn get_successors<X: Xlen>(
     instruction_table: &InstructionTable<X>,
     pc: u64,

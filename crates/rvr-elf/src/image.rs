@@ -146,13 +146,13 @@ impl<X: Xlen> ElfImage<X> {
         }
 
         // Check for overlapping virtual ranges
-        for i in 0..loadable.len() {
-            let seg_i_start = X::to_u64(loadable[i].vaddr);
-            let seg_i_end = seg_i_start + X::to_u64(loadable[i].memsz);
+        for (i, seg_i) in loadable.iter().enumerate() {
+            let seg_i_start = X::to_u64(seg_i.vaddr);
+            let seg_i_end = seg_i_start + X::to_u64(seg_i.memsz);
 
-            for j in (i + 1)..loadable.len() {
-                let seg_j_start = X::to_u64(loadable[j].vaddr);
-                let seg_j_end = seg_j_start + X::to_u64(loadable[j].memsz);
+            for seg_j in loadable.iter().skip(i + 1) {
+                let seg_j_start = X::to_u64(seg_j.vaddr);
+                let seg_j_end = seg_j_start + X::to_u64(seg_j.memsz);
 
                 // Check if ranges overlap
                 if !(seg_i_end <= seg_j_start || seg_j_end <= seg_i_start) {

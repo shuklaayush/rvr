@@ -129,6 +129,8 @@ pub enum Expr<X: Xlen> {
     },
 }
 
+// These are factory methods, not trait implementations
+#[allow(clippy::should_implement_trait)]
 impl<X: Xlen> Expr<X> {
     /// Create an immediate expression.
     pub fn imm(val: X::Reg) -> Self {

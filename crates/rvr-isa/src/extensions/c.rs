@@ -707,11 +707,9 @@ fn decode_q2<X: Xlen>(instr: u16, funct3: u8) -> Option<(crate::OpId, InstrArgs)
 fn format_c_instr(mnemonic: &str, args: &InstrArgs, opid: crate::OpId) -> String {
     match args {
         InstrArgs::R { rd, rs1: _, rs2 } => {
-            if opid == OP_C_MV {
-                format!("{} {}, {}", mnemonic, reg_name(*rd), reg_name(*rs2))
-            } else {
-                format!("{} {}, {}", mnemonic, reg_name(*rd), reg_name(*rs2))
-            }
+            // C.MV and C.ADD use the same format
+            let _ = opid; // silence unused warning
+            format!("{} {}, {}", mnemonic, reg_name(*rd), reg_name(*rs2))
         }
         InstrArgs::I { rd, rs1: _, imm } => {
             format!("{} {}, {}", mnemonic, reg_name(*rd), imm)
