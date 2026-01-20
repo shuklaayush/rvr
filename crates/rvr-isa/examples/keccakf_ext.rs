@@ -9,12 +9,12 @@
 use rvr_ir::{Expr, InstrIR, Rv64, Stmt, Terminator, Xlen};
 use rvr_isa::{
     DecodedInstr, ExtensionRegistry, InstrArgs, InstructionExtension, OpClass, OpId, OpInfo,
-    EXT_CUSTOM,
 };
 
 // Custom opcode for keccakf.round
-// Using EXT_CUSTOM (128) as the extension ID for custom extensions.
-const OP_KECCAKF_ROUND: OpId = OpId::new(EXT_CUSTOM, 0);
+// Custom extensions should define their own extension IDs.
+const EXT_KECCAKF: u8 = 128;
+const OP_KECCAKF_ROUND: OpId = OpId::new(EXT_KECCAKF, 0);
 
 /// Custom R4-type encoding for keccakf.round:
 ///   31-27: funct5 = 0b00001 (identifies keccakf.round)
@@ -42,8 +42,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
     }
 
     fn ext_id(&self) -> u8 {
-        EXT_CUSTOM
-    }
+        }
 
     fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         let opcode = raw & 0x7F;

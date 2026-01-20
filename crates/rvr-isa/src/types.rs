@@ -137,7 +137,6 @@ pub const EXT_ZBB: u8 = 7;
 pub const EXT_ZBS: u8 = 8;
 pub const EXT_ZBKB: u8 = 9;
 pub const EXT_ZICOND: u8 = 10;
-pub const EXT_CUSTOM: u8 = 128;
 
 // Number of registers
 pub const NUM_REGS_I: usize = 32;
