@@ -5,8 +5,12 @@
 //! - Branch emits both taken and not-taken paths
 //! - save_to_state on all exit paths
 //! - Optional tracing hooks (trace_block, trace_pc, trace_branch_*)
+//! - Optional tohost handling for riscv-tests
 
 use rvr_ir::{BlockIR, BranchHint, Expr, ExprKind, InstrIR, Space, Stmt, Terminator, Xlen};
+
+/// HTIF tohost address (matches riscv-tests expectation).
+const TOHOST_ADDR: u64 = 0x80001000;
 
 use crate::config::EmitConfig;
 use crate::signature::FnSignature;
@@ -540,14 +544,20 @@ impl<X: Xlen> CEmitter<X> {
                             // Plain address expression (fallback)
                             (self.render_expr(addr), 0i16)
                         };
-                        let store_fn = match width {
-                            1 => "wr_mem_u8",
-                            2 => "wr_mem_u16",
-                            4 => "wr_mem_u32",
-                            8 => "wr_mem_u64",
-                            _ => "wr_mem_u32",
-                        };
-                        self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
+
+                        // Check for tohost handling on 32-bit stores
+                        if self.config.tohost_enabled && *width == 4 {
+                            self.render_mem_write_tohost(&base, offset, &value_str, indent);
+                        } else {
+                            let store_fn = match width {
+                                1 => "wr_mem_u8",
+                                2 => "wr_mem_u16",
+                                4 => "wr_mem_u32",
+                                8 => "wr_mem_u64",
+                                _ => "wr_mem_u32",
+                            };
+                            self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
+                        }
                     }
                     Space::Csr => {
                         let csr = X::to_u64(addr.imm) as u16;
@@ -582,6 +592,45 @@ impl<X: Xlen> CEmitter<X> {
                 self.writeln(indent, &format!("{}({});", fn_name, args_str.join(", ")));
             }
         }
+    }
+
+    /// Render memory write with tohost check.
+    ///
+    /// When writing to TOHOST address, calls handle_tohost_write and checks for exit.
+    fn render_mem_write_tohost(&mut self, base: &str, offset: i16, value: &str, indent: usize) {
+        let pc_lit = self.fmt_addr(self.current_pc);
+        let save_to_state = self.sig.save_to_state.clone();
+
+        // Build instret update if needed
+        let instret_update = if self.config.instret_mode.counts() {
+            format!("instret += {};", self.instr_idx + 1)
+        } else {
+            String::new()
+        };
+
+        // Build save_to_state call if needed
+        let save_call = if !save_to_state.is_empty() {
+            format!(" {}", save_to_state)
+        } else {
+            String::new()
+        };
+
+        // Generate the tohost check
+        self.writeln(indent, &format!(
+            "if (unlikely((uint32_t){} + {} == 0x{:x}u)) {{",
+            base, offset, TOHOST_ADDR
+        ));
+        self.writeln(indent + 1, &format!("handle_tohost_write(state, {});", value));
+        self.writeln(indent + 1, "if (unlikely(state->has_exited)) {");
+        self.writeln(indent + 2, &format!("state->pc = {};", pc_lit));
+        if !instret_update.is_empty() || !save_call.is_empty() {
+            self.writeln(indent + 2, &format!("{}{}", instret_update, save_call));
+        }
+        self.writeln(indent + 2, "return;");
+        self.writeln(indent + 1, "}");
+        self.writeln(indent, "} else {");
+        self.writeln(indent + 1, &format!("wr_mem_u32(memory, {}, {}, {});", base, offset, value));
+        self.writeln(indent, "}");
     }
 
     // ============= Block rendering =============
