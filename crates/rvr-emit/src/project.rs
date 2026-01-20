@@ -425,7 +425,7 @@ impl<X: Xlen> CProject<X> {
         // Base flags: optimization and performance settings
         // These work on both clang and gcc
         writeln!(content, "# Base flags (clang and gcc compatible)").unwrap();
-        let base_cflags = vec![
+        let base_cflags = [
             "-O3",
             "-march=native",
             "-pipe",
