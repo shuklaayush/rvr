@@ -42,7 +42,8 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
     }
 
     fn ext_id(&self) -> u8 {
-        }
+        EXT_KECCAKF
+    }
 
     fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         let opcode = raw & 0x7F;
