@@ -63,42 +63,77 @@ pub use zicsr::{
 };
 
 use rvr_ir::{InstrIR, Xlen, Terminator};
-use crate::DecodedInstr;
+use crate::{DecodedInstr, OpId, OpInfo};
 
 /// Extension point for instruction decoding and lifting.
 ///
 /// Each extension implements decode, lift, and disasm for its instructions.
+/// Extensions are composable and can be registered with an `ExtensionRegistry`.
 pub trait InstructionExtension<X: Xlen>: Send + Sync {
-    /// Extension IDs this handles (EXT_I, EXT_M, etc.).
-    /// Return empty slice to try all instructions.
-    fn handled_extensions(&self) -> &[u8] {
-        &[]
+    /// Human-readable extension name (e.g., "I", "M", "C").
+    fn name(&self) -> &'static str;
+
+    /// Extension ID constant (EXT_I, EXT_M, etc.).
+    fn ext_id(&self) -> u8;
+
+    /// Try to decode a 16-bit (compressed) instruction.
+    /// Return None to fall through to next decoder or if not a compressed instruction.
+    fn decode16(&self, _raw: u16, _pc: X::Reg) -> Option<DecodedInstr<X>> {
+        None
     }
 
-    /// Try to decode bytes at pc. Return None to fall through to next decoder.
-    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>>;
+    /// Try to decode a 32-bit instruction.
+    /// Return None to fall through to next decoder.
+    fn decode32(&self, _raw: u32, _pc: X::Reg) -> Option<DecodedInstr<X>> {
+        None
+    }
+
+    /// Try to decode bytes at pc. Default implementation dispatches to decode16/decode32.
+    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
+        if bytes.len() < 2 {
+            return None;
+        }
+        let low = u16::from_le_bytes([bytes[0], bytes[1]]);
+
+        // Check for compressed instruction (bits 0-1 != 0b11)
+        if (low & 0x3) != 0x3 {
+            self.decode16(low, pc)
+        } else if bytes.len() >= 4 {
+            let raw = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            self.decode32(raw, pc)
+        } else {
+            None
+        }
+    }
 
     /// Lift instruction to IR.
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X>;
 
     /// Disassembly string for debugging.
     fn disasm(&self, instr: &DecodedInstr<X>) -> String;
+
+    /// Get metadata for an instruction. Returns None for unknown OpIds.
+    fn op_info(&self, _opid: OpId) -> Option<OpInfo> {
+        None
+    }
 }
 
-/// Composite decoder that chains multiple extensions.
+/// Registry for RISC-V instruction set extensions.
 ///
-/// Tries extensions in order until one handles the instruction.
-pub struct CompositeDecoder<X: Xlen> {
+/// Chains multiple extensions and dispatches decode/lift/disasm to the appropriate one.
+/// Extensions are tried in order; C extension should be first to handle compressed instructions.
+pub struct ExtensionRegistry<X: Xlen> {
     extensions: Vec<Box<dyn InstructionExtension<X>>>,
 }
 
-impl<X: Xlen> CompositeDecoder<X> {
-    /// Create a new composite decoder with the given extensions.
+impl<X: Xlen> ExtensionRegistry<X> {
+    /// Create a new registry with the given extensions.
     pub fn new(extensions: Vec<Box<dyn InstructionExtension<X>>>) -> Self {
         Self { extensions }
     }
 
-    /// Create a composite decoder with all standard RISC-V extensions.
+    /// Create a registry with all standard RISC-V extensions.
+    /// Order: C (compressed first), I (base), M (multiply), A (atomic), Zicsr.
     pub fn standard() -> Self {
         Self::new(vec![
             Box::new(CExtension),      // C first (handles 16-bit instructions)
@@ -109,17 +144,22 @@ impl<X: Xlen> CompositeDecoder<X> {
         ])
     }
 
-    /// Create an empty composite decoder (no extensions).
+    /// Create an empty registry (no extensions).
     pub fn empty() -> Self {
         Self {
             extensions: Vec::new(),
         }
     }
 
-    /// Add an extension to the decoder chain.
+    /// Add an extension to the registry chain.
     pub fn with_extension(mut self, ext: impl InstructionExtension<X> + 'static) -> Self {
         self.extensions.push(Box::new(ext));
         self
+    }
+
+    /// Get all registered extensions.
+    pub fn extensions(&self) -> &[Box<dyn InstructionExtension<X>>] {
+        &self.extensions
     }
 
     /// Decode an instruction using registered extensions.
@@ -135,8 +175,7 @@ impl<X: Xlen> CompositeDecoder<X> {
     /// Lift an instruction using the appropriate extension.
     pub fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         for ext in &self.extensions {
-            let handled = ext.handled_extensions();
-            if handled.is_empty() || handled.contains(&instr.opid.ext) {
+            if ext.ext_id() == instr.opid.ext {
                 return ext.lift(instr);
             }
         }
@@ -147,31 +186,52 @@ impl<X: Xlen> CompositeDecoder<X> {
     /// Disassemble an instruction.
     pub fn disasm(&self, instr: &DecodedInstr<X>) -> String {
         for ext in &self.extensions {
-            let handled = ext.handled_extensions();
-            if handled.is_empty() || handled.contains(&instr.opid.ext) {
+            if ext.ext_id() == instr.opid.ext {
                 return ext.disasm(instr);
             }
         }
         format!("??? (ext={})", instr.opid.ext)
     }
+
+    /// Get metadata for an instruction by OpId.
+    pub fn op_info(&self, opid: OpId) -> Option<OpInfo> {
+        for ext in &self.extensions {
+            if ext.ext_id() == opid.ext {
+                return ext.op_info(opid);
+            }
+        }
+        None
+    }
 }
 
-impl<X: Xlen> Default for CompositeDecoder<X> {
+impl<X: Xlen> Default for ExtensionRegistry<X> {
     fn default() -> Self {
         Self::standard()
     }
 }
 
+/// Type alias for backward compatibility.
+pub type CompositeDecoder<X> = ExtensionRegistry<X>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rvr_ir::Rv64;
-    use crate::OP_ADDI;
+    use crate::{OP_ADDI, EXT_I, EXT_C};
 
     #[test]
-    fn test_composite_decoder_default() {
-        let decoder = CompositeDecoder::<Rv64>::default();
+    fn test_extension_registry_default() {
+        let registry = ExtensionRegistry::<Rv64>::default();
         // ADDI x1, x0, 42
+        let bytes = [0x93, 0x00, 0xa0, 0x02];
+        let instr = registry.decode(&bytes, 0u64).unwrap();
+        assert_eq!(instr.opid, OP_ADDI);
+    }
+
+    #[test]
+    fn test_backward_compat_alias() {
+        // CompositeDecoder is now an alias for ExtensionRegistry
+        let decoder = CompositeDecoder::<Rv64>::default();
         let bytes = [0x93, 0x00, 0xa0, 0x02];
         let instr = decoder.decode(&bytes, 0u64).unwrap();
         assert_eq!(instr.opid, OP_ADDI);
@@ -179,10 +239,40 @@ mod tests {
 
     #[test]
     fn test_disasm() {
-        let decoder = CompositeDecoder::<Rv64>::default();
+        let registry = ExtensionRegistry::<Rv64>::default();
         let bytes = [0x93, 0x00, 0xa0, 0x02]; // addi x1, x0, 42
-        let instr = decoder.decode(&bytes, 0u64).unwrap();
-        let disasm = decoder.disasm(&instr);
+        let instr = registry.decode(&bytes, 0u64).unwrap();
+        let disasm = registry.disasm(&instr);
         assert!(disasm.contains("addi"));
+    }
+
+    #[test]
+    fn test_decode16_compressed() {
+        let registry = ExtensionRegistry::<Rv64>::default();
+        // c.addi x1, 1 (encoded as 0x0085)
+        let bytes = [0x85, 0x00];
+        let instr = registry.decode(&bytes, 0u64).unwrap();
+        assert_eq!(instr.opid.ext, EXT_C);
+        assert_eq!(instr.size, 2);
+    }
+
+    #[test]
+    fn test_extension_name_and_id() {
+        let base = BaseExtension;
+        assert_eq!(InstructionExtension::<Rv64>::name(&base), "I");
+        assert_eq!(InstructionExtension::<Rv64>::ext_id(&base), EXT_I);
+
+        let c = CExtension;
+        assert_eq!(InstructionExtension::<Rv64>::name(&c), "C");
+        assert_eq!(InstructionExtension::<Rv64>::ext_id(&c), EXT_C);
+    }
+
+    #[test]
+    fn test_registry_extensions() {
+        let registry = ExtensionRegistry::<Rv64>::standard();
+        let extensions = registry.extensions();
+        assert_eq!(extensions.len(), 5); // C, I, M, A, Zicsr
+        assert_eq!(extensions[0].name(), "C"); // C first
+        assert_eq!(extensions[1].name(), "I");
     }
 }

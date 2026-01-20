@@ -67,24 +67,24 @@ pub fn csr_name(csr: u16) -> &'static str {
 pub struct ZicsrExtension;
 
 impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
-    fn handled_extensions(&self) -> &[u8] {
-        &[EXT_ZICSR, EXT_ZIFENCEI]
+    fn name(&self) -> &'static str {
+        "Zicsr"
     }
 
-    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
-        if bytes.len() < 4 || (bytes[0] & 0x03) != 0x03 {
-            return None;
-        }
-        let instr = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let opcode = decode_opcode(instr);
-        let funct3 = decode_funct3(instr);
+    fn ext_id(&self) -> u8 {
+        EXT_ZICSR
+    }
+
+    fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
+        let opcode = decode_opcode(raw);
+        let funct3 = decode_funct3(raw);
 
         match opcode {
             0x0F if funct3 == 1 => Some(DecodedInstr::new(OP_FENCE_I, pc, 4, InstrArgs::None)),
             0x73 if funct3 != 0 => {
-                let rd = decode_rd(instr);
-                let rs1 = decode_rs1(instr);
-                let csr = ((instr >> 20) & 0xFFF) as u16;
+                let rd = decode_rd(raw);
+                let rs1 = decode_rs1(raw);
+                let csr = ((raw >> 20) & 0xFFF) as u16;
 
                 let (opid, args) = match funct3 {
                     1 => (OP_CSRRW, InstrArgs::Csr { rd, rs1, csr }),

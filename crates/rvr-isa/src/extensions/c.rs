@@ -90,26 +90,22 @@ pub fn c_mnemonic(opid: OpId) -> &'static str {
 pub struct CExtension;
 
 impl<X: Xlen> InstructionExtension<X> for CExtension {
-    fn handled_extensions(&self) -> &[u8] {
-        &[EXT_C]
+    fn name(&self) -> &'static str {
+        "C"
     }
 
-    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
-        if bytes.len() < 2 {
-            return None;
-        }
-        // Compressed if bits [1:0] != 0b11
-        if (bytes[0] & 0x03) == 0x03 {
-            return None;
-        }
-        let instr = u16::from_le_bytes([bytes[0], bytes[1]]);
-        let quadrant = instr & 0x3;
-        let funct3 = ((instr >> 13) & 0x7) as u8;
+    fn ext_id(&self) -> u8 {
+        EXT_C
+    }
+
+    fn decode16(&self, raw: u16, pc: X::Reg) -> Option<DecodedInstr<X>> {
+        let quadrant = raw & 0x3;
+        let funct3 = ((raw >> 13) & 0x7) as u8;
 
         let (opid, args) = match quadrant {
-            0b00 => decode_q0::<X>(instr, funct3)?,
-            0b01 => decode_q1::<X>(instr, funct3)?,
-            0b10 => decode_q2::<X>(instr, funct3)?,
+            0b00 => decode_q0::<X>(raw, funct3)?,
+            0b01 => decode_q1::<X>(raw, funct3)?,
+            0b10 => decode_q2::<X>(raw, funct3)?,
             _ => return None,
         };
 

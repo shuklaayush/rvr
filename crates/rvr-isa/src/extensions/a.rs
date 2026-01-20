@@ -67,27 +67,27 @@ pub fn a_mnemonic(opid: OpId) -> &'static str {
 pub struct AExtension;
 
 impl<X: Xlen> InstructionExtension<X> for AExtension {
-    fn handled_extensions(&self) -> &[u8] {
-        &[EXT_A]
+    fn name(&self) -> &'static str {
+        "A"
     }
 
-    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
-        if bytes.len() < 4 || (bytes[0] & 0x03) != 0x03 {
-            return None;
-        }
-        let instr = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let opcode = decode_opcode(instr);
+    fn ext_id(&self) -> u8 {
+        EXT_A
+    }
+
+    fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
+        let opcode = decode_opcode(raw);
         if opcode != 0x2F {
             return None;
         }
 
-        let funct3 = decode_funct3(instr);
-        let rd = decode_rd(instr);
-        let rs1 = decode_rs1(instr);
-        let rs2 = decode_rs2(instr);
-        let aq = ((instr >> 26) & 1) != 0;
-        let rl = ((instr >> 25) & 1) != 0;
-        let funct5 = (instr >> 27) & 0x1F;
+        let funct3 = decode_funct3(raw);
+        let rd = decode_rd(raw);
+        let rs1 = decode_rs1(raw);
+        let rs2 = decode_rs2(raw);
+        let aq = ((raw >> 26) & 1) != 0;
+        let rl = ((raw >> 25) & 1) != 0;
+        let funct5 = (raw >> 27) & 0x1F;
 
         if funct3 != 2 && !(funct3 == 3 && X::VALUE == 64) {
             return None;

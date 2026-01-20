@@ -49,21 +49,21 @@ pub fn m_mnemonic(opid: OpId) -> &'static str {
 pub struct MExtension;
 
 impl<X: Xlen> InstructionExtension<X> for MExtension {
-    fn handled_extensions(&self) -> &[u8] {
-        &[EXT_M]
+    fn name(&self) -> &'static str {
+        "M"
     }
 
-    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
-        if bytes.len() < 4 || (bytes[0] & 0x03) != 0x03 {
-            return None;
-        }
-        let instr = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let opcode = decode_opcode(instr);
-        let funct3 = decode_funct3(instr);
-        let funct7 = decode_funct7(instr);
-        let rd = decode_rd(instr);
-        let rs1 = decode_rs1(instr);
-        let rs2 = decode_rs2(instr);
+    fn ext_id(&self) -> u8 {
+        EXT_M
+    }
+
+    fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
+        let opcode = decode_opcode(raw);
+        let funct3 = decode_funct3(raw);
+        let funct7 = decode_funct7(raw);
+        let rd = decode_rd(raw);
+        let rs1 = decode_rs1(raw);
+        let rs2 = decode_rs2(raw);
 
         if funct7 != 0x01 {
             return None;

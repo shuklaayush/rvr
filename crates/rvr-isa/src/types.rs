@@ -74,6 +74,52 @@ impl Display for OpId {
     }
 }
 
+/// Instruction classification for control flow and optimization.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OpClass {
+    /// Arithmetic/logical operation (ADD, SUB, AND, etc.)
+    Alu,
+    /// Load from memory
+    Load,
+    /// Store to memory
+    Store,
+    /// Conditional branch (BEQ, BNE, etc.)
+    Branch,
+    /// Unconditional jump (JAL)
+    Jump,
+    /// Indirect jump (JALR)
+    JumpIndirect,
+    /// CSR read/write
+    Csr,
+    /// Atomic memory operation
+    Atomic,
+    /// Fence/barrier
+    Fence,
+    /// System call (ECALL, EBREAK)
+    System,
+    /// Multiply operation
+    Mul,
+    /// Division operation
+    Div,
+    /// No operation
+    Nop,
+    /// Unknown/other
+    Other,
+}
+
+/// Instruction metadata for analysis and optimization.
+#[derive(Clone, Debug)]
+pub struct OpInfo {
+    /// Instruction identifier
+    pub opid: OpId,
+    /// Mnemonic name (e.g., "add", "beq")
+    pub name: &'static str,
+    /// Instruction class for control flow analysis
+    pub class: OpClass,
+    /// Typical size in bytes (2 for compressed, 4 for normal)
+    pub size_hint: u8,
+}
+
 // Extension constants
 pub const EXT_I: u8 = 0;
 pub const EXT_M: u8 = 1;

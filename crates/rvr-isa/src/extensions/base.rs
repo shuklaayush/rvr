@@ -90,16 +90,16 @@ pub fn base_mnemonic(opid: OpId) -> &'static str {
 pub struct BaseExtension;
 
 impl<X: Xlen> InstructionExtension<X> for BaseExtension {
-    fn handled_extensions(&self) -> &[u8] {
-        &[EXT_I]
+    fn name(&self) -> &'static str {
+        "I"
     }
 
-    fn decode(&self, bytes: &[u8], pc: X::Reg) -> Option<DecodedInstr<X>> {
-        if bytes.len() < 4 || (bytes[0] & 0x03) != 0x03 {
-            return None;
-        }
-        let instr = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        decode_32bit(instr, pc)
+    fn ext_id(&self) -> u8 {
+        EXT_I
+    }
+
+    fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
+        decode_32bit(raw, pc)
     }
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
