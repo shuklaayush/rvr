@@ -275,4 +275,59 @@ mod tests {
         assert_eq!(extensions[0].name(), "C"); // C first
         assert_eq!(extensions[1].name(), "I");
     }
+
+    #[test]
+    fn test_op_info_base() {
+        use crate::{OpClass, OP_JAL, OP_LW, OP_SW, OP_FENCE, OP_ECALL};
+        let registry = ExtensionRegistry::<Rv64>::standard();
+
+        let info = registry.op_info(OP_ADDI).unwrap();
+        assert_eq!(info.name, "addi");
+        assert_eq!(info.class, OpClass::Alu);
+        assert_eq!(info.size_hint, 4);
+
+        let info = registry.op_info(OP_JAL).unwrap();
+        assert_eq!(info.class, OpClass::Jump);
+
+        let info = registry.op_info(OP_LW).unwrap();
+        assert_eq!(info.class, OpClass::Load);
+
+        let info = registry.op_info(OP_SW).unwrap();
+        assert_eq!(info.class, OpClass::Store);
+
+        let info = registry.op_info(OP_FENCE).unwrap();
+        assert_eq!(info.class, OpClass::Fence);
+
+        let info = registry.op_info(OP_ECALL).unwrap();
+        assert_eq!(info.class, OpClass::System);
+    }
+
+    #[test]
+    fn test_op_info_extensions() {
+        use crate::{OpClass, OP_MUL, OP_DIV, OP_LR_W, OP_C_J, OP_C_LW, OP_CSRRW};
+        let registry = ExtensionRegistry::<Rv64>::standard();
+
+        let info = registry.op_info(OP_MUL).unwrap();
+        assert_eq!(info.name, "mul");
+        assert_eq!(info.class, OpClass::Mul);
+
+        let info = registry.op_info(OP_DIV).unwrap();
+        assert_eq!(info.class, OpClass::Div);
+
+        let info = registry.op_info(OP_LR_W).unwrap();
+        assert_eq!(info.name, "lr.w");
+        assert_eq!(info.class, OpClass::Atomic);
+
+        let info = registry.op_info(OP_C_J).unwrap();
+        assert_eq!(info.name, "c.j");
+        assert_eq!(info.class, OpClass::Jump);
+        assert_eq!(info.size_hint, 2); // compressed
+
+        let info = registry.op_info(OP_C_LW).unwrap();
+        assert_eq!(info.class, OpClass::Load);
+
+        let info = registry.op_info(OP_CSRRW).unwrap();
+        assert_eq!(info.name, "csrrw");
+        assert_eq!(info.class, OpClass::Csr);
+    }
 }

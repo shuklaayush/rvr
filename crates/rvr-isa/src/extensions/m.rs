@@ -3,7 +3,7 @@
 use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
 
 use crate::{
-    DecodedInstr, InstrArgs, OpId, EXT_M, reg_name,
+    DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_M, reg_name,
     encode::{decode_opcode, decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
 };
 use super::InstructionExtension;
@@ -98,6 +98,18 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
             }
             _ => format!("{} <?>", mnemonic),
         }
+    }
+
+    fn op_info(&self, opid: OpId) -> Option<OpInfo> {
+        if opid.ext != EXT_M {
+            return None;
+        }
+        let (name, class) = match opid.idx {
+            0..=3 | 8 => (m_mnemonic(opid), OpClass::Mul),
+            4..=7 | 9..=12 => (m_mnemonic(opid), OpClass::Div),
+            _ => return None,
+        };
+        Some(OpInfo { opid, name, class, size_hint: 4 })
     }
 }
 

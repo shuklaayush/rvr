@@ -2,7 +2,7 @@
 
 use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
 
-use crate::{DecodedInstr, InstrArgs, OpId, EXT_C, reg_name};
+use crate::{DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_C, reg_name};
 use super::InstructionExtension;
 
 // Quadrant 0
@@ -120,6 +120,29 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
         let mnemonic = c_mnemonic(instr.opid);
         format_c_instr(mnemonic, &instr.args, instr.opid)
+    }
+
+    fn op_info(&self, opid: OpId) -> Option<OpInfo> {
+        if opid.ext != EXT_C {
+            return None;
+        }
+        let class = match opid.idx {
+            0 | 6 | 9..=20 | 24 | 28 | 31 => OpClass::Alu,
+            1 | 3 | 25 | 26 => OpClass::Load,
+            2 | 4 | 32 | 33 => OpClass::Store,
+            5 => OpClass::Nop,
+            7 | 21 => OpClass::Jump,
+            22 | 23 => OpClass::Branch,
+            27 | 30 => OpClass::JumpIndirect,
+            29 => OpClass::System,
+            _ => return None,
+        };
+        Some(OpInfo {
+            opid,
+            name: c_mnemonic(opid),
+            class,
+            size_hint: 2,
+        })
     }
 }
 

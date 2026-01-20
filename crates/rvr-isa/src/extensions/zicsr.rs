@@ -3,7 +3,7 @@
 use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
 
 use crate::{
-    DecodedInstr, InstrArgs, OpId, EXT_ZICSR, EXT_ZIFENCEI, reg_name,
+    DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_ZICSR, EXT_ZIFENCEI, reg_name,
     encode::{decode_opcode, decode_funct3, decode_rd, decode_rs1},
 };
 use super::InstructionExtension;
@@ -120,6 +120,29 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
             }
             _ => format!("{} <?>", mnemonic),
         }
+    }
+
+    fn op_info(&self, opid: OpId) -> Option<OpInfo> {
+        if opid.ext == EXT_ZIFENCEI {
+            if opid.idx == 0 {
+                return Some(OpInfo {
+                    opid,
+                    name: "fence.i",
+                    class: OpClass::Fence,
+                    size_hint: 4,
+                });
+            }
+            return None;
+        }
+        if opid.ext != EXT_ZICSR || opid.idx > 5 {
+            return None;
+        }
+        Some(OpInfo {
+            opid,
+            name: zicsr_mnemonic(opid),
+            class: OpClass::Csr,
+            size_hint: 4,
+        })
     }
 }
 

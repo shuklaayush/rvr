@@ -3,7 +3,7 @@
 use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
 
 use crate::{
-    OpId, DecodedInstr, InstrArgs, EXT_I, reg_name,
+    OpId, OpInfo, OpClass, DecodedInstr, InstrArgs, EXT_I, reg_name,
     encode::{decode_opcode, decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2,
              decode_i_imm, decode_s_imm, decode_b_imm, decode_u_imm, decode_j_imm},
 };
@@ -109,6 +109,30 @@ impl<X: Xlen> InstructionExtension<X> for BaseExtension {
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
         format_instr(base_mnemonic(instr.opid), &instr.args)
+    }
+
+    fn op_info(&self, opid: OpId) -> Option<OpInfo> {
+        if opid.ext != EXT_I {
+            return None;
+        }
+        let (name, class) = match opid.idx {
+            0 => ("lui", OpClass::Alu),
+            1 => ("auipc", OpClass::Alu),
+            2 => ("jal", OpClass::Jump),
+            3 => ("jalr", OpClass::JumpIndirect),
+            4..=9 => (base_mnemonic(opid), OpClass::Branch),
+            10..=14 => (base_mnemonic(opid), OpClass::Load),
+            15..=17 => (base_mnemonic(opid), OpClass::Store),
+            18..=36 => (base_mnemonic(opid), OpClass::Alu),
+            37 => ("fence", OpClass::Fence),
+            38 => ("ecall", OpClass::System),
+            39 => ("ebreak", OpClass::System),
+            40 | 41 => (base_mnemonic(opid), OpClass::Load),
+            42 => ("sd", OpClass::Store),
+            43..=51 => (base_mnemonic(opid), OpClass::Alu),
+            _ => return None,
+        };
+        Some(OpInfo { opid, name, class, size_hint: 4 })
     }
 }
 
