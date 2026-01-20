@@ -328,7 +328,10 @@ impl<X: Xlen> CEmitter<X> {
                             pc_lit, op_lit, reg, val
                         )
                     } else {
-                        format!("trd_reg(&state->tracer, {}, {}, state, {})", pc_lit, op_lit, reg)
+                        format!(
+                            "trd_reg(&state->tracer, {}, {}, state, {})",
+                            pc_lit, op_lit, reg
+                        )
                     }
                 } else {
                     self.sig.reg_read(*reg)
