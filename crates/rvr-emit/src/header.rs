@@ -143,7 +143,10 @@ static inline int unlikely(int x) {{ return __builtin_expect(!!(x), 0); }}
 
 fn gen_constants<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     format!(
-        r#"/* Memory configuration */
+        r#"/* Architecture constants */
+#define XLEN {xlen}
+
+/* Memory configuration */
 #define MEMORY_BITS {memory_bits}
 #define RV_MEMORY_SIZE (1ull << {memory_bits})
 #define RV_MEMORY_MASK ((1ull << {memory_bits}) - 1)
@@ -167,6 +170,7 @@ fn gen_constants<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 #define RV_INT32_MIN   INT32_MIN
 
 "#,
+        xlen = X::VALUE,
         memory_bits = cfg.memory_bits,
         entry_point = cfg.entry_point,
         csr_misa = CSR_MISA,

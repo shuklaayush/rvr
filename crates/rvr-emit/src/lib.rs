@@ -5,6 +5,7 @@ mod dispatch;
 mod emitter;
 mod header;
 mod memory;
+mod project;
 mod signature;
 mod tracer;
 
@@ -13,5 +14,6 @@ pub use dispatch::*;
 pub use emitter::*;
 pub use header::*;
 pub use memory::*;
+pub use project::*;
 pub use signature::*;
 pub use tracer::*;

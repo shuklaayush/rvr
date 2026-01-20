@@ -103,7 +103,7 @@ fn test_emit_c_code() {
 
     // Read and verify partition content
     let partition = std::fs::read_to_string(temp_dir.join("rv64_part0.c")).expect("Failed to read partition");
-    assert!(partition.contains("#include \"rv64.h\""), "Include missing in partition");
+    assert!(partition.contains("#include \"rv64_blocks.h\""), "Include missing in partition");
     assert!(partition.contains("void B_"), "Block functions not generated");
 
     // Cleanup
