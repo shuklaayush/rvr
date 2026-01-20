@@ -304,7 +304,8 @@ impl<X: Xlen> Pipeline<X> {
         let taken_inlines = block_table.taken_inlines.clone();
 
         // Build derived emission inputs
-        let mut inputs = EmitInputs::new(entry_point, pc_end);
+        let initial_brk = X::to_u64(self.image.get_initial_program_break());
+        let mut inputs = EmitInputs::new(entry_point, pc_end).with_initial_brk(initial_brk);
         inputs
             .valid_addresses
             .extend(self.ir_blocks.keys().copied());

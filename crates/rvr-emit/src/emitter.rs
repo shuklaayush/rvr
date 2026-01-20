@@ -149,9 +149,9 @@ impl<X: Xlen> CEmitter<X> {
                     }
                     UnaryOp::Clz => {
                         if X::VALUE == 64 {
-                            format!("__builtin_clzll({} | 1) - ({} == 0 ? 0 : 0)", o, o)
+                            format!("({} ? __builtin_clzll({}) : 64)", o, o)
                         } else {
-                            format!("__builtin_clz({} | 1) - ({} == 0 ? 0 : 0)", o, o)
+                            format!("({} ? __builtin_clz({}) : 32)", o, o)
                         }
                     }
                     UnaryOp::Ctz => {
@@ -168,7 +168,10 @@ impl<X: Xlen> CEmitter<X> {
                             format!("__builtin_popcount({})", o)
                         }
                     }
-                    UnaryOp::Clz32 => format!("((uint64_t)__builtin_clz((uint32_t){} | 1))", o),
+                    UnaryOp::Clz32 => format!(
+                        "((uint64_t)((uint32_t){} ? __builtin_clz((uint32_t){}) : 32))",
+                        o, o
+                    ),
                     UnaryOp::Ctz32 => format!(
                         "((uint64_t)((uint32_t){} ? __builtin_ctz((uint32_t){}) : 32))",
                         o, o
@@ -312,7 +315,25 @@ impl<X: Xlen> CEmitter<X> {
     /// Render read expression.
     fn render_read(&self, expr: &ReadExpr<X>) -> String {
         match expr {
-            ReadExpr::Reg(reg) => self.sig.reg_read(*reg),
+            ReadExpr::Reg(reg) => {
+                if *reg == 0 {
+                    "0".to_string()
+                } else if self.config.has_tracing() {
+                    let pc_lit = self.fmt_addr(self.current_pc);
+                    let op_lit = self.current_op;
+                    if self.sig.is_hot_reg(*reg) {
+                        let val = self.sig.reg_read(*reg);
+                        format!(
+                            "trd_regval(&state->tracer, {}, {}, {}, {})",
+                            pc_lit, op_lit, reg, val
+                        )
+                    } else {
+                        format!("trd_reg(&state->tracer, {}, {}, state, {})", pc_lit, op_lit, reg)
+                    }
+                } else {
+                    self.sig.reg_read(*reg)
+                }
+            }
             ReadExpr::Mem {
                 base,
                 offset,
@@ -330,7 +351,16 @@ impl<X: Xlen> CEmitter<X> {
                     (8, _) => "trd_mem_u64",
                     _ => "trd_mem_u32",
                 };
-                format!("{}(memory, {}, {})", load_fn, base, offset)
+                if self.config.has_tracing() {
+                    let pc_lit = self.fmt_addr(self.current_pc);
+                    let op_lit = self.current_op;
+                    format!(
+                        "{}(&state->tracer, {}, {}, memory, {}, {})",
+                        load_fn, pc_lit, op_lit, base, offset
+                    )
+                } else {
+                    format!("{}(memory, {}, {})", load_fn, base, offset)
+                }
             }
             ReadExpr::MemAddr {
                 addr,
@@ -348,10 +378,33 @@ impl<X: Xlen> CEmitter<X> {
                     (8, _) => "trd_mem_u64",
                     _ => "trd_mem_u32",
                 };
-                format!("{}(memory, {}, 0)", load_fn, base)
+                if self.config.has_tracing() {
+                    let pc_lit = self.fmt_addr(self.current_pc);
+                    let op_lit = self.current_op;
+                    format!(
+                        "{}(&state->tracer, {}, {}, memory, {}, 0)",
+                        load_fn, pc_lit, op_lit, base
+                    )
+                } else {
+                    format!("{}(memory, {}, 0)", load_fn, base)
+                }
             }
             ReadExpr::Csr(csr) => {
-                if self.config.instret_mode.counts() {
+                if self.config.has_tracing() {
+                    let pc_lit = self.fmt_addr(self.current_pc);
+                    let op_lit = self.current_op;
+                    if self.config.instret_mode.counts() {
+                        format!(
+                            "trd_csr(&state->tracer, {}, {}, state, instret, 0x{:x})",
+                            pc_lit, op_lit, csr
+                        )
+                    } else {
+                        format!(
+                            "trd_csr(&state->tracer, {}, {}, state, 0x{:x})",
+                            pc_lit, op_lit, csr
+                        )
+                    }
+                } else if self.config.instret_mode.counts() {
                     format!("trd_csr(state, instret, 0x{:x})", csr)
                 } else {
                     format!("trd_csr(state, 0x{:x})", csr)
@@ -363,8 +416,8 @@ impl<X: Xlen> CEmitter<X> {
             ReadExpr::Temp(idx) => format!("_t{}", idx),
             ReadExpr::TraceIdx => "state->trace_idx".to_string(),
             ReadExpr::PcIdx => "state->pc_idx".to_string(),
-            ReadExpr::ResAddr => "state->res_addr".to_string(),
-            ReadExpr::ResValid => "state->res_valid".to_string(),
+            ReadExpr::ResAddr => "state->reservation_addr".to_string(),
+            ReadExpr::ResValid => "state->reservation_valid".to_string(),
             ReadExpr::Exited => "state->exited".to_string(),
             ReadExpr::ExitCode => "state->exit_code".to_string(),
         }
@@ -378,9 +431,35 @@ impl<X: Xlen> CEmitter<X> {
                 let value_str = self.render_expr(value);
                 match target {
                     WriteTarget::Reg(reg) => {
-                        let code = self.sig.reg_write(*reg, &value_str);
-                        if !code.is_empty() {
-                            self.writeln(indent, &code);
+                        if *reg == 0 {
+                            return;
+                        }
+                        if self.config.has_tracing() {
+                            let pc_lit = self.fmt_addr(self.current_pc);
+                            let op_lit = self.current_op;
+                            if self.sig.is_hot_reg(*reg) {
+                                let name = self.sig.reg_read(*reg);
+                                self.writeln(
+                                    indent,
+                                    &format!(
+                                        "{} = twr_regval(&state->tracer, {}, {}, {}, {});",
+                                        name, pc_lit, op_lit, reg, value_str
+                                    ),
+                                );
+                            } else {
+                                self.writeln(
+                                    indent,
+                                    &format!(
+                                        "twr_reg(&state->tracer, {}, {}, state, {}, {});",
+                                        pc_lit, op_lit, reg, value_str
+                                    ),
+                                );
+                            }
+                        } else {
+                            let code = self.sig.reg_write(*reg, &value_str);
+                            if !code.is_empty() {
+                                self.writeln(indent, &code);
+                            }
                         }
                     }
                     WriteTarget::Mem { addr, width } => {
@@ -406,7 +485,6 @@ impl<X: Xlen> CEmitter<X> {
                         if self.config.tohost_enabled && *width == 4 {
                             self.render_mem_write_tohost(&base, offset, &value_str, indent);
                         } else {
-                            // Use traced helpers (twr_*) - passthroughs when tracing is disabled
                             let store_fn = match width {
                                 1 => "twr_mem_u8",
                                 2 => "twr_mem_u16",
@@ -414,21 +492,44 @@ impl<X: Xlen> CEmitter<X> {
                                 8 => "twr_mem_u64",
                                 _ => "twr_mem_u32",
                             };
-                            self.writeln(
-                                indent,
-                                &format!(
-                                    "{}(memory, {}, {}, {});",
-                                    store_fn, base, offset, value_str
-                                ),
-                            );
+                            if self.config.has_tracing() {
+                                let pc_lit = self.fmt_addr(self.current_pc);
+                                let op_lit = self.current_op;
+                                self.writeln(
+                                    indent,
+                                    &format!(
+                                        "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
+                                        store_fn, pc_lit, op_lit, base, offset, value_str
+                                    ),
+                                );
+                            } else {
+                                self.writeln(
+                                    indent,
+                                    &format!(
+                                        "{}(memory, {}, {}, {});",
+                                        store_fn, base, offset, value_str
+                                    ),
+                                );
+                            }
                         }
                     }
                     WriteTarget::Csr(csr) => {
-                        // Use traced helper (twr_csr)
-                        self.writeln(
-                            indent,
-                            &format!("twr_csr(state, 0x{:x}, {});", csr, value_str),
-                        );
+                        if self.config.has_tracing() {
+                            let pc_lit = self.fmt_addr(self.current_pc);
+                            let op_lit = self.current_op;
+                            self.writeln(
+                                indent,
+                                &format!(
+                                    "twr_csr(&state->tracer, {}, {}, state, 0x{:x}, {});",
+                                    pc_lit, op_lit, csr, value_str
+                                ),
+                            );
+                        } else {
+                            self.writeln(
+                                indent,
+                                &format!("twr_csr(state, 0x{:x}, {});", csr, value_str),
+                            );
+                        }
                     }
                     WriteTarget::Pc => {
                         self.writeln(indent, &format!("state->pc = {};", value_str));
@@ -522,11 +623,22 @@ impl<X: Xlen> CEmitter<X> {
         self.writeln(indent + 2, "return;");
         self.writeln(indent + 1, "}");
         self.writeln(indent, "} else {");
-        // Use traced helper for non-tohost writes
-        self.writeln(
-            indent + 1,
-            &format!("twr_mem_u32(memory, {}, {}, {});", base, offset, value),
-        );
+        if self.config.has_tracing() {
+            let pc_lit = self.fmt_addr(self.current_pc);
+            let op_lit = self.current_op;
+            self.writeln(
+                indent + 1,
+                &format!(
+                    "twr_mem_u32(&state->tracer, {}, {}, memory, {}, {}, {});",
+                    pc_lit, op_lit, base, offset, value
+                ),
+            );
+        } else {
+            self.writeln(
+                indent + 1,
+                &format!("twr_mem_u32(memory, {}, {}, {});", base, offset, value),
+            );
+        }
         self.writeln(indent, "}");
     }
 
@@ -582,6 +694,8 @@ impl<X: Xlen> CEmitter<X> {
             self.writeln(indent, &format!("// PC: {}", pc_hex));
         }
 
+        self.emit_trace_pc();
+
         // Render statements
         for stmt in &ir.statements {
             self.render_stmt(stmt, indent);
@@ -595,6 +709,10 @@ impl<X: Xlen> CEmitter<X> {
 
         // Render terminator
         if is_last {
+            // Update instret BEFORE the terminator (tail call) so the incremented value is passed
+            if self.config.instret_mode.counts() {
+                self.render_instret_update_impl(self.instr_idx as u64, indent);
+            }
             if use_simple_branch {
                 self.render_terminator_simple(&ir.terminator, fall_pc, indent);
             } else {
@@ -863,7 +981,7 @@ impl<X: Xlen> CEmitter<X> {
         };
 
         let args = self.sig.args.clone();
-        let save_to_state = self.sig.save_to_state.clone();
+        let save_to_state_no_instret = self.sig.save_to_state_no_instret.clone();
 
         if self.is_valid_address(target) {
             let resolved = self.inputs.resolve_address(target);
@@ -889,8 +1007,9 @@ impl<X: Xlen> CEmitter<X> {
                     &format!("state->instret = instret + {};", self.instr_idx),
                 );
             }
-            if !save_to_state.is_empty() {
-                self.writeln(indent + 1, &save_to_state);
+            // Use save_to_state_no_instret since we already handled instret above
+            if !save_to_state_no_instret.is_empty() {
+                self.writeln(indent + 1, &save_to_state_no_instret);
             }
             self.writeln(indent + 1, "return;");
             self.writeln(indent, "}");
@@ -971,17 +1090,14 @@ impl<X: Xlen> CEmitter<X> {
         let end_pc = X::to_u64(block.end_pc);
 
         self.render_block_header(start_pc, end_pc);
+        self.render_block_trace(start_pc);
 
         let num_instrs = block.instructions.len();
         for (i, instr) in block.instructions.iter().enumerate() {
             let is_last = i == num_instrs - 1;
             // For last instruction, fall_pc is end_pc (next block's start)
+            // Note: instret update is now done inside render_instruction for is_last=true
             self.render_instruction(instr, is_last, end_pc);
-        }
-
-        // Update instret before terminator
-        if self.config.instret_mode.counts() && num_instrs > 0 {
-            self.render_instret_update(num_instrs as u64);
         }
 
         self.render_block_footer();

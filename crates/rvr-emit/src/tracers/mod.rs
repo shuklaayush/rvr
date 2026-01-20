@@ -4,6 +4,7 @@ use rvr_ir::Xlen;
 
 use crate::tracer::TracerKind;
 
+mod debug;
 mod dynamic;
 mod ffi;
 mod none;
@@ -17,5 +18,6 @@ pub fn gen_tracer_header<X: Xlen>(kind: TracerKind) -> String {
         TracerKind::Stats => stats::gen_tracer_stats::<X>(),
         TracerKind::Ffi => ffi::gen_tracer_ffi::<X>(),
         TracerKind::Dynamic => dynamic::gen_tracer_dynamic::<X>(),
+        TracerKind::Debug => debug::gen_tracer_debug::<X>(),
     }
 }

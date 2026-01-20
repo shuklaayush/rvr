@@ -24,6 +24,8 @@ pub enum TracerKind {
     Ffi,
     /// Dynamic tracer - runtime function pointers.
     Dynamic,
+    /// Debug tracer - detects repeated PCs.
+    Debug,
 }
 
 impl TracerKind {
@@ -40,6 +42,7 @@ impl TracerKind {
             Self::Stats => "stats",
             Self::Ffi => "ffi",
             Self::Dynamic => "dynamic",
+            Self::Debug => "debug",
         }
     }
 
@@ -51,6 +54,7 @@ impl TracerKind {
             Self::Stats => 2,
             Self::Ffi => 3,
             Self::Dynamic => 4,
+            Self::Debug => 5,
         }
     }
 }
@@ -76,6 +80,7 @@ impl TracerSource {
                 TracerKind::Stats => "stats",
                 TracerKind::Ffi => "ffi",
                 TracerKind::Dynamic => "dynamic",
+                TracerKind::Debug => "debug",
             },
             TracerSource::Inline { name, .. } => name,
             TracerSource::File { name, .. } => name,
@@ -184,6 +189,11 @@ impl TracerConfig {
     /// Dynamic tracer.
     pub fn dynamic() -> Self {
         Self::builtin(TracerKind::Dynamic)
+    }
+
+    /// Debug tracer.
+    pub fn debug() -> Self {
+        Self::builtin(TracerKind::Debug)
     }
 
     /// Custom tracer with inline header content.

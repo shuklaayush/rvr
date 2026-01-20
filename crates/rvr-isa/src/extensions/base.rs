@@ -817,12 +817,8 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
-                let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-                let val = if signed {
-                    Expr::mem_s(addr, width)
-                } else {
-                    Expr::mem_u(addr, width)
-                };
+                // Keep base and offset separate for better codegen
+                let val = Expr::mem(Expr::read(*rs1), *imm as i16, width, signed);
                 vec![Stmt::write_reg(*rd, val)]
             } else {
                 Vec::new()

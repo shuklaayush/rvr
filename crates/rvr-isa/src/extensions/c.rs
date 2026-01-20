@@ -45,6 +45,9 @@ pub const OP_C_ADD: OpId = OpId::new(EXT_C, 31);
 pub const OP_C_SWSP: OpId = OpId::new(EXT_C, 32);
 pub const OP_C_SDSP: OpId = OpId::new(EXT_C, 33); // RV64C
 
+// Invalid encoding
+pub const OP_C_INVALID: OpId = OpId::new(EXT_C, 34);
+
 /// Get the mnemonic for a C extension instruction.
 pub fn c_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
@@ -82,6 +85,7 @@ pub fn c_mnemonic(opid: OpId) -> &'static str {
         31 => "c.add",
         32 => "c.swsp",
         33 => "c.sdsp",
+        34 => "c.invalid",
         _ => "???",
     }
 }
@@ -102,12 +106,22 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
         let quadrant = raw & 0x3;
         let funct3 = ((raw >> 13) & 0x7) as u8;
 
-        let (opid, args) = match quadrant {
-            0b00 => decode_q0::<X>(raw, funct3)?,
-            0b01 => decode_q1::<X>(raw, funct3)?,
-            0b10 => decode_q2::<X>(raw, funct3)?,
-            _ => return None,
+        let result = match quadrant {
+            0b00 => decode_q0::<X>(raw, funct3),
+            0b01 => decode_q1::<X>(raw, funct3),
+            0b10 => decode_q2::<X>(raw, funct3),
+            _ => None,
         };
+
+        // Return invalid instruction instead of None for illegal encodings
+        let (opid, args) = result.unwrap_or((
+            OP_C_INVALID,
+            InstrArgs::I {
+                rd: 0,
+                rs1: 0,
+                imm: raw as i32,
+            },
+        ));
 
         Some(DecodedInstr::new(opid, pc, 2, args))
     }
@@ -870,6 +884,9 @@ fn lift_c<X: Xlen>(
         OP_C_NOP => (Vec::new(), Terminator::Fall { target: None }),
         OP_C_EBREAK => (Vec::new(), Terminator::trap("ebreak")),
 
+        // Invalid instruction - trap with exit
+        OP_C_INVALID => (Vec::new(), Terminator::trap("invalid")),
+
         _ => (Vec::new(), Terminator::trap("unknown C instruction")),
     }
 }
@@ -966,12 +983,8 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
-                let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-                let val = if signed {
-                    Expr::mem_s(addr, width)
-                } else {
-                    Expr::mem_u(addr, width)
-                };
+                // Keep base and offset separate for better codegen
+                let val = Expr::mem(Expr::read(*rs1), *imm as i16, width, signed);
                 vec![Stmt::write_reg(*rd, val)]
             } else {
                 Vec::new()

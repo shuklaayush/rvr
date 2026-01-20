@@ -220,7 +220,8 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let instret_align_offset = offset_pad0 + 4;
     let instret_padding = (8 - (instret_align_offset % 8)) % 8;
     let offset_instret = instret_align_offset + instret_padding;
-    let offset_reservation_addr = offset_instret + 8;
+    let offset_target_instret = offset_instret + 8; // 8 bytes for instret
+    let offset_reservation_addr = offset_target_instret + 8; // 8 bytes for target_instret
     let offset_reservation_valid = offset_reservation_addr + reg_bytes;
     let offset_has_exited = offset_reservation_valid + 1;
     let offset_exit_code = offset_has_exited + 1;
@@ -253,6 +254,7 @@ typedef struct RvState {{
     {rtype} pc;                         /* offset {offset_pc} */
     uint32_t _pad0;                     /* offset {offset_pad0} */
     uint64_t instret;                   /* offset {offset_instret} */
+    uint64_t target_instret;            /* suspend when instret >= target */
 
     /* Reservation for LR/SC */
     {rtype} reservation_addr;           /* offset {offset_reservation_addr} */
@@ -691,91 +693,120 @@ fn gen_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     format!(
-        r#"/* Traced helpers (with trace function calls) */
-
-/* Memory reads with tracing */
-__attribute__((always_inline)) static inline uint32_t trd_mem_u8(uint8_t* m, {addr_type} b, int16_t o) {{
-    uint32_t v = rd_mem_u8(m, b, o);
-    trace_mem_read_byte(({addr_type})b + o, (uint8_t)v);
-    return v;
-}}
-__attribute__((always_inline)) static inline int32_t trd_mem_i8(uint8_t* m, {addr_type} b, int16_t o) {{
-    int32_t v = rd_mem_i8(m, b, o);
-    trace_mem_read_byte(({addr_type})b + o, (uint8_t)v);
-    return v;
-}}
-__attribute__((always_inline)) static inline uint32_t trd_mem_u16(uint8_t* m, {addr_type} b, int16_t o) {{
-    uint32_t v = rd_mem_u16(m, b, o);
-    trace_mem_read_halfword(({addr_type})b + o, (uint16_t)v);
-    return v;
-}}
-__attribute__((always_inline)) static inline int32_t trd_mem_i16(uint8_t* m, {addr_type} b, int16_t o) {{
-    int32_t v = rd_mem_i16(m, b, o);
-    trace_mem_read_halfword(({addr_type})b + o, (uint16_t)v);
-    return v;
-}}
-__attribute__((always_inline)) static inline uint32_t trd_mem_u32(uint8_t* m, {addr_type} b, int16_t o) {{
-    uint32_t v = rd_mem_u32(m, b, o);
-    trace_mem_read_word(({addr_type})b + o, v);
-    return v;
-}}
-__attribute__((always_inline)) static inline int64_t trd_mem_i32(uint8_t* m, {addr_type} b, int16_t o) {{
-    int64_t v = rd_mem_i32(m, b, o);
-    trace_mem_read_word(({addr_type})b + o, (uint32_t)v);
-    return v;
-}}
-__attribute__((always_inline)) static inline uint64_t trd_mem_u64(uint8_t* m, {addr_type} b, int16_t o) {{
-    uint64_t v = rd_mem_u64(m, b, o);
-    trace_mem_read_dword(({addr_type})b + o, v);
-    return v;
+        r#"/* Traced memory read helpers - call optimized base functions */
+__attribute__((hot, nonnull, always_inline))
+static inline uint32_t trd_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    uint32_t val = rd_mem_u8(memory, base, off);
+    trace_mem_read_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
+    return val;
 }}
 
-/* Memory writes with tracing */
-__attribute__((always_inline)) static inline void twr_mem_u8(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{
-    wr_mem_u8(m, b, o, v);
-    trace_mem_write_byte(({addr_type})b + o, (uint8_t)v);
-}}
-__attribute__((always_inline)) static inline void twr_mem_u16(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{
-    wr_mem_u16(m, b, o, v);
-    trace_mem_write_halfword(({addr_type})b + o, (uint16_t)v);
-}}
-__attribute__((always_inline)) static inline void twr_mem_u32(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{
-    wr_mem_u32(m, b, o, v);
-    trace_mem_write_word(({addr_type})b + o, v);
-}}
-__attribute__((always_inline)) static inline void twr_mem_u64(uint8_t* m, {addr_type} b, int16_t o, uint64_t v) {{
-    wr_mem_u64(m, b, o, v);
-    trace_mem_write_dword(({addr_type})b + o, v);
+__attribute__((hot, nonnull, always_inline))
+static inline int32_t trd_mem_i8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    int32_t val = rd_mem_i8(memory, base, off);
+    trace_mem_read_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
+    return val;
 }}
 
-/* Register access with tracing */
-__attribute__((always_inline)) static inline {rtype} trd_regval(uint32_t r, {rtype} v) {{
-    trace_reg_read(r, v);
-    return v;
-}}
-__attribute__((always_inline)) static inline {rtype} twr_regval(uint32_t r, {rtype} v) {{
-    trace_reg_write(r, v);
-    return v;
-}}
-__attribute__((always_inline)) static inline {rtype} trd_reg(RvState* s, uint32_t r) {{
-    {rtype} v = s->regs[r];
-    trace_reg_read(r, v);
-    return v;
-}}
-__attribute__((always_inline)) static inline void twr_reg(RvState* s, uint32_t r, {rtype} v) {{
-    s->regs[r] = v;
-    trace_reg_write(r, v);
+__attribute__((hot, nonnull, always_inline))
+static inline uint32_t trd_mem_u16(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    uint32_t val = rd_mem_u16(memory, base, off);
+    trace_mem_read_halfword(t, pc, op, phys_addr(base) + off, (uint16_t)val);
+    return val;
 }}
 
-/* CSR access with tracing */
-__attribute__((always_inline)) static inline uint32_t trd_csr(RvState* s{instret_param}, uint32_t c) {{
-    uint32_t v = rd_csr(s{instret_arg}, c);
-    trace_csr_read(c, v);
-    return v;
+__attribute__((hot, nonnull, always_inline))
+static inline int32_t trd_mem_i16(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    int32_t val = rd_mem_i16(memory, base, off);
+    trace_mem_read_halfword(t, pc, op, phys_addr(base) + off, (uint16_t)val);
+    return val;
 }}
-__attribute__((always_inline)) static inline void twr_csr(RvState* s, uint32_t c, uint32_t v) {{
-    wr_csr(s, c, v);
-    trace_csr_write(c, v);
+
+__attribute__((hot, nonnull, always_inline))
+static inline uint32_t trd_mem_u32(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    uint32_t val = rd_mem_u32(memory, base, off);
+    trace_mem_read_word(t, pc, op, phys_addr(base) + off, val);
+    return val;
+}}
+
+__attribute__((hot, nonnull, always_inline))
+static inline int64_t trd_mem_i32(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    int64_t val = rd_mem_i32(memory, base, off);
+    trace_mem_read_word(t, pc, op, phys_addr(base) + off, (uint32_t)val);
+    return val;
+}}
+
+__attribute__((hot, nonnull, always_inline))
+static inline uint64_t trd_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
+    uint64_t val = rd_mem_u64(memory, base, off);
+    trace_mem_read_dword(t, pc, op, phys_addr(base) + off, val);
+    return val;
+}}
+
+/* Traced memory write helpers - call optimized base functions */
+__attribute__((hot, nonnull, always_inline))
+static inline void twr_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
+    trace_mem_write_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
+    wr_mem_u8(memory, base, off, val);
+}}
+
+__attribute__((hot, nonnull, always_inline))
+static inline void twr_mem_u16(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
+    trace_mem_write_halfword(t, pc, op, phys_addr(base) + off, (uint16_t)val);
+    wr_mem_u16(memory, base, off, val);
+}}
+
+__attribute__((hot, nonnull, always_inline))
+static inline void twr_mem_u32(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
+    trace_mem_write_word(t, pc, op, phys_addr(base) + off, val);
+    wr_mem_u32(memory, base, off, val);
+}}
+
+__attribute__((hot, nonnull, always_inline))
+static inline void twr_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint64_t val) {{
+    trace_mem_write_dword(t, pc, op, phys_addr(base) + off, val);
+    wr_mem_u64(memory, base, off, val);
+}}
+
+/* Traced register helpers - call trace functions */
+__attribute__((hot, nonnull, always_inline))
+static inline {rtype} trd_reg(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s, uint8_t reg) {{
+    {rtype} val = s->regs[reg];
+    trace_reg_read(t, pc, op, reg, val);
+    return val;
+}}
+
+__attribute__((hot, nonnull, always_inline))
+static inline void twr_reg(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s, uint8_t reg, {rtype} val) {{
+    trace_reg_write(t, pc, op, reg, val);
+    s->regs[reg] = val;
+}}
+
+/* Traced hot register helpers - for registers in local vars/args */
+__attribute__((hot, always_inline))
+static inline {rtype} trd_regval(Tracer* t, {addr_type} pc, uint16_t op, uint8_t reg, {rtype} val) {{
+    trace_reg_read(t, pc, op, reg, val);
+    return val;
+}}
+
+__attribute__((hot, always_inline))
+static inline {rtype} twr_regval(Tracer* t, {addr_type} pc, uint16_t op, uint8_t reg, {rtype} val) {{
+    trace_reg_write(t, pc, op, reg, val);
+    return val;
+}}
+
+/* Traced CSR access - call trace functions */
+__attribute__((hot, nonnull))
+static inline {rtype} trd_csr(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s{instret_param}, uint16_t csr) {{
+    {rtype} val = rd_csr(s{instret_arg}, csr);
+    trace_csr_read(t, pc, op, csr, val);
+    return val;
+}}
+
+__attribute__((hot, nonnull))
+static inline void twr_csr(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s, uint16_t csr, {rtype} val) {{
+    trace_csr_write(t, pc, op, csr, val);
+    wr_csr(s, csr, val);
 }}
 
 "#,
@@ -864,8 +895,8 @@ int rv_execute_from(RvState* state, uint32_t start_pc);
 /* C API helpers for external runners */
 size_t rv_state_size(void);
 size_t rv_state_align(void);
-extern constexpr uint32_t RV_REG_BYTES;
-extern constexpr uint32_t RV_TRACER_KIND;
+extern const uint32_t RV_REG_BYTES;
+extern const uint32_t RV_TRACER_KIND;
 void rv_state_reset(RvState* state);
 uint64_t rv_get_instret(const RvState* state);
 uint8_t rv_get_exit_code(const RvState* state);

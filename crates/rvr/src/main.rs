@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rvr::{CompileOptions, InstretMode};
+use rvr::{CompileOptions, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
 
 #[derive(Parser)]
@@ -45,6 +45,7 @@ enum TracerKindArg {
     Stats,
     Ffi,
     Dynamic,
+    Debug,
 }
 
 impl From<TracerKindArg> for TracerKind {
@@ -55,6 +56,26 @@ impl From<TracerKindArg> for TracerKind {
             TracerKindArg::Stats => TracerKind::Stats,
             TracerKindArg::Ffi => TracerKind::Ffi,
             TracerKindArg::Dynamic => TracerKind::Dynamic,
+            TracerKindArg::Debug => TracerKind::Debug,
+        }
+    }
+}
+
+/// Syscall handling mode.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+enum SyscallModeArg {
+    /// Bare-metal syscalls (exit only).
+    #[default]
+    Baremetal,
+    /// Linux-style syscalls (brk/mmap/read/write, etc).
+    Linux,
+}
+
+impl From<SyscallModeArg> for SyscallMode {
+    fn from(arg: SyscallModeArg) -> Self {
+        match arg {
+            SyscallModeArg::Baremetal => SyscallMode::BareMetal,
+            SyscallModeArg::Linux => SyscallMode::Linux,
         }
     }
 }
@@ -115,9 +136,17 @@ enum Commands {
         #[arg(long, value_enum, default_value = "count")]
         instret: InstretModeArg,
 
+        /// Syscall handling mode
+        #[arg(long, value_enum, default_value = "baremetal")]
+        syscalls: SyscallModeArg,
+
         /// Number of parallel compile jobs (0 = auto)
         #[arg(short = 'j', long, default_value = "0")]
         jobs: usize,
+
+        /// C compiler to use (e.g. clang or gcc)
+        #[arg(long)]
+        cc: Option<String>,
 
         #[command(flatten)]
         tracer: TracerArgs,
@@ -143,6 +172,10 @@ enum Commands {
         /// Instruction retirement mode
         #[arg(long, value_enum, default_value = "count")]
         instret: InstretModeArg,
+
+        /// Syscall handling mode
+        #[arg(long, value_enum, default_value = "baremetal")]
+        syscalls: SyscallModeArg,
 
         #[command(flatten)]
         tracer: TracerArgs,
@@ -276,7 +309,9 @@ fn main() {
             addr_check,
             tohost,
             instret,
+            syscalls,
             jobs,
+            cc,
             tracer,
         } => {
             println!("Compiling {} to {}", input.display(), output.display());
@@ -291,8 +326,14 @@ fn main() {
                 .with_addr_check(addr_check)
                 .with_tohost(tohost)
                 .with_instret_mode(instret.into())
+                .with_syscall_mode(syscalls.into())
                 .with_tracer_config(tracer_config)
                 .with_jobs(jobs);
+            let options = if let Some(cc) = cc {
+                options.with_compiler(cc)
+            } else {
+                options
+            };
             match rvr::compile_with_options(&input, &output, options) {
                 Ok(path) => println!("Output: {}", path.display()),
                 Err(e) => {
@@ -307,6 +348,7 @@ fn main() {
             addr_check,
             tohost,
             instret,
+            syscalls,
             tracer,
         } => {
             println!("Lifting {} to {}", input.display(), output.display());
@@ -321,6 +363,7 @@ fn main() {
                 .with_addr_check(addr_check)
                 .with_tohost(tohost)
                 .with_instret_mode(instret.into())
+                .with_syscall_mode(syscalls.into())
                 .with_tracer_config(tracer_config);
             match rvr::lift_to_c_with_options(&input, &output, options) {
                 Ok(path) => println!("Output: {}", path.display()),

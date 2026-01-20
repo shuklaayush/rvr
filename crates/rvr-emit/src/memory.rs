@@ -181,6 +181,10 @@ int rv_init_memory(RvState* state) {{
             memcpy(state->memory + segments[i].vaddr,
                    segments[i].data, segments[i].filesz);
         }}
+        if (segments[i].memsz > segments[i].filesz) {{
+            memset(state->memory + segments[i].vaddr + segments[i].filesz, 0,
+                   segments[i].memsz - segments[i].filesz);
+        }}
     }}
 
     state->start_brk = {initial_brk};

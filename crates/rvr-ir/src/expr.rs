@@ -528,6 +528,42 @@ impl<X: Xlen> Expr<X> {
         let cond = Self::ltu(left.clone(), right.clone());
         Self::select(cond, right, left)
     }
+
+    // ===== 32-bit AMO min/max operations (for .w variants) =====
+
+    /// Min of two values compared as signed 32-bit integers.
+    pub fn min32(left: Self, right: Self) -> Self {
+        // Truncate both to 32 bits, sign-extend, then compare
+        let l32 = Self::sext32(left.clone());
+        let r32 = Self::sext32(right.clone());
+        let cond = Self::lt(l32, r32);
+        Self::select(cond, left, right)
+    }
+
+    /// Max of two values compared as signed 32-bit integers.
+    pub fn max32(left: Self, right: Self) -> Self {
+        let l32 = Self::sext32(left.clone());
+        let r32 = Self::sext32(right.clone());
+        let cond = Self::lt(l32, r32);
+        Self::select(cond, right, left)
+    }
+
+    /// Min of two values compared as unsigned 32-bit integers.
+    pub fn minu32(left: Self, right: Self) -> Self {
+        // Truncate both to 32 bits, zero-extend, then compare unsigned
+        let l32 = Self::zext32(left.clone());
+        let r32 = Self::zext32(right.clone());
+        let cond = Self::ltu(l32, r32);
+        Self::select(cond, left, right)
+    }
+
+    /// Max of two values compared as unsigned 32-bit integers.
+    pub fn maxu32(left: Self, right: Self) -> Self {
+        let l32 = Self::zext32(left.clone());
+        let r32 = Self::zext32(right.clone());
+        let cond = Self::ltu(l32, r32);
+        Self::select(cond, right, left)
+    }
 }
 
 #[cfg(test)]

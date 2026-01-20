@@ -239,6 +239,7 @@ impl<X: Xlen> CProject<X> {
             let num_instrs = block.instructions.len();
 
             emitter.render_block_header(start_pc, end_pc);
+            emitter.render_instret_check(start_pc);
 
             if num_instrs == 0 {
                 emitter.render_block_footer();

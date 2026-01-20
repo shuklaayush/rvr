@@ -49,6 +49,10 @@ pub struct FnSignature {
     /// Code to save hot registers back to state.
     /// Example: "state->instret = instret; state->regs[1] = ra; state->regs[2] = sp;"
     pub save_to_state: String,
+    /// Code to save hot registers back to state, WITHOUT instret.
+    /// Used in exit paths where instret is handled explicitly with increment.
+    /// Example: "state->regs[1] = ra; state->regs[2] = sp;"
+    pub save_to_state_no_instret: String,
     /// Set of hot register indices for fast lookup.
     pub hot_reg_set: HashSet<u8>,
     /// Whether instret counting is enabled.
@@ -69,6 +73,7 @@ impl FnSignature {
         let mut args = String::from("state, memory");
         let mut args_from_state = String::from("state, state->memory");
         let mut save_to_state = String::new();
+        let mut save_to_state_no_instret = String::new();
 
         // Add instret if counting is enabled
         if counts_instret {
@@ -76,13 +81,16 @@ impl FnSignature {
             args.push_str(", instret");
             args_from_state.push_str(", state->instret");
             save_to_state.push_str("state->instret = instret;");
+            // save_to_state_no_instret does NOT include instret
         }
 
         // Add tracer passed variables
         params.push_str(&config.tracer_config.passed_var_params::<X>());
         args.push_str(&config.tracer_config.passed_var_args());
         args_from_state.push_str(&config.tracer_config.passed_var_args_from_state());
-        save_to_state.push_str(&config.tracer_config.passed_var_save_to_state());
+        let tracer_save = config.tracer_config.passed_var_save_to_state();
+        save_to_state.push_str(&tracer_save);
+        save_to_state_no_instret.push_str(&tracer_save);
 
         // Add hot registers
         let mut hot_reg_set = HashSet::new();
@@ -92,7 +100,9 @@ impl FnSignature {
             params.push_str(&format!(", {} {}", rtype, name));
             args.push_str(&format!(", {}", name));
             args_from_state.push_str(&format!(", state->regs[{}]", reg));
-            save_to_state.push_str(&format!(" state->regs[{}] = {};", reg, name));
+            let reg_save = format!(" state->regs[{}] = {};", reg, name);
+            save_to_state.push_str(&reg_save);
+            save_to_state_no_instret.push_str(&reg_save);
         }
 
         Self {
@@ -100,6 +110,7 @@ impl FnSignature {
             args,
             args_from_state,
             save_to_state,
+            save_to_state_no_instret,
             hot_reg_set,
             counts_instret,
             trace_regs,
@@ -116,13 +127,7 @@ impl FnSignature {
         if reg == 0 {
             "0".to_string()
         } else if self.is_hot_reg(reg) {
-            if self.trace_regs {
-                format!("trd_regval({}, {})", reg, abi_name(reg))
-            } else {
-                abi_name(reg).to_string()
-            }
-        } else if self.trace_regs {
-            format!("trd_reg(state, {})", reg)
+            abi_name(reg).to_string()
         } else {
             format!("state->regs[{}]", reg)
         }
@@ -133,13 +138,7 @@ impl FnSignature {
         if reg == 0 {
             String::new()
         } else if self.is_hot_reg(reg) {
-            if self.trace_regs {
-                format!("{} = twr_regval({}, {});", abi_name(reg), reg, value)
-            } else {
-                format!("{} = {};", abi_name(reg), value)
-            }
-        } else if self.trace_regs {
-            format!("twr_reg(state, {}, {});", reg, value)
+            format!("{} = {};", abi_name(reg), value)
         } else {
             format!("state->regs[{}] = {};", reg, value)
         }

@@ -159,8 +159,8 @@ size_t rv_state_align(void) {{
 }}
 
 /* Exported metadata constants (read via dlsym) */
-constexpr uint32_t RV_REG_BYTES = XLEN / 8;
-constexpr uint32_t RV_TRACER_KIND = {tracer_kind};
+const uint32_t RV_REG_BYTES = XLEN / 8;
+const uint32_t RV_TRACER_KIND = {tracer_kind};
 
 /* Reset RvState to initial values (zero regs/csrs, set pc, clear exit) */
 void rv_state_reset(RvState* state) {{

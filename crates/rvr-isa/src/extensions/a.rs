@@ -390,28 +390,58 @@ fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
             let width: u8 = if is_64 { 8 } else { 4 };
 
             if opid == OP_LR_W || opid == OP_LR_D {
-                let stmts = vec![Stmt::write_reg(rd, Expr::mem_u(Expr::read(rs1), width))];
-                return (stmts, Terminator::Fall { target: None });
-            }
-
-            if opid == OP_SC_W || opid == OP_SC_D {
+                // LR: Set reservation and load value
+                // LR.W sign-extends, LR.D doesn't need sign extension
+                let mem_read = if is_64 {
+                    Expr::mem_u(Expr::read(rs1), width)
+                } else {
+                    Expr::mem_s(Expr::read(rs1), width)
+                };
                 let stmts = vec![
-                    Stmt::write_mem(Expr::read(rs1), Expr::read(rs2), width),
-                    Stmt::write_reg(rd, Expr::imm(X::from_u64(0))),
+                    Stmt::write_res_addr(Expr::read(rs1)),
+                    Stmt::write_res_valid(Expr::imm(X::from_u64(1))),
+                    Stmt::write_reg(rd, mem_read),
                 ];
                 return (stmts, Terminator::Fall { target: None });
             }
 
+            if opid == OP_SC_W || opid == OP_SC_D {
+                // SC: Conditional store based on reservation
+                // cond = res_valid && (res_addr == rs1)
+                let cond = Expr::and(
+                    Expr::ne(Expr::res_valid(), Expr::imm(X::from_u64(0))),
+                    Expr::eq(Expr::res_addr(), Expr::read(rs1)),
+                );
+                // If valid: store, write 0 to rd, clear reservation
+                let then_stmts = vec![
+                    Stmt::write_mem(Expr::read(rs1), Expr::read(rs2), width),
+                    Stmt::write_reg(rd, Expr::imm(X::from_u64(0))),
+                    Stmt::write_res_valid(Expr::imm(X::from_u64(0))),
+                ];
+                // Else: write 1 to rd (failure)
+                let else_stmts = vec![Stmt::write_reg(rd, Expr::imm(X::from_u64(1)))];
+                let stmts = vec![Stmt::if_then_else(cond, then_stmts, else_stmts)];
+                return (stmts, Terminator::Fall { target: None });
+            }
+
+            // .W operations sign-extend, .D operations don't
+            let signed = !is_64;
             match opid {
-                OP_AMOSWAP_W | OP_AMOSWAP_D => lift_amo(rd, rs1, rs2, width, |_, b| b),
-                OP_AMOADD_W | OP_AMOADD_D => lift_amo(rd, rs1, rs2, width, Expr::add),
-                OP_AMOXOR_W | OP_AMOXOR_D => lift_amo(rd, rs1, rs2, width, Expr::xor),
-                OP_AMOAND_W | OP_AMOAND_D => lift_amo(rd, rs1, rs2, width, Expr::and),
-                OP_AMOOR_W | OP_AMOOR_D => lift_amo(rd, rs1, rs2, width, Expr::or),
-                OP_AMOMIN_W | OP_AMOMIN_D => lift_amo(rd, rs1, rs2, width, Expr::min),
-                OP_AMOMAX_W | OP_AMOMAX_D => lift_amo(rd, rs1, rs2, width, Expr::max),
-                OP_AMOMINU_W | OP_AMOMINU_D => lift_amo(rd, rs1, rs2, width, Expr::minu),
-                OP_AMOMAXU_W | OP_AMOMAXU_D => lift_amo(rd, rs1, rs2, width, Expr::maxu),
+                OP_AMOSWAP_W | OP_AMOSWAP_D => lift_amo(rd, rs1, rs2, width, signed, |_, b| b),
+                OP_AMOADD_W | OP_AMOADD_D => lift_amo(rd, rs1, rs2, width, signed, Expr::add),
+                OP_AMOXOR_W | OP_AMOXOR_D => lift_amo(rd, rs1, rs2, width, signed, Expr::xor),
+                OP_AMOAND_W | OP_AMOAND_D => lift_amo(rd, rs1, rs2, width, signed, Expr::and),
+                OP_AMOOR_W | OP_AMOOR_D => lift_amo(rd, rs1, rs2, width, signed, Expr::or),
+                // For .W min/max: use 32-bit comparison functions
+                OP_AMOMIN_W => lift_amo(rd, rs1, rs2, width, signed, Expr::min32),
+                OP_AMOMAX_W => lift_amo(rd, rs1, rs2, width, signed, Expr::max32),
+                OP_AMOMINU_W => lift_amo(rd, rs1, rs2, width, signed, Expr::minu32),
+                OP_AMOMAXU_W => lift_amo(rd, rs1, rs2, width, signed, Expr::maxu32),
+                // For .D min/max: use full 64-bit comparison
+                OP_AMOMIN_D => lift_amo(rd, rs1, rs2, width, signed, Expr::min),
+                OP_AMOMAX_D => lift_amo(rd, rs1, rs2, width, signed, Expr::max),
+                OP_AMOMINU_D => lift_amo(rd, rs1, rs2, width, signed, Expr::minu),
+                OP_AMOMAXU_D => lift_amo(rd, rs1, rs2, width, signed, Expr::maxu),
                 _ => (Vec::new(), Terminator::trap("unknown A instruction")),
             }
         }
@@ -419,12 +449,24 @@ fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
     }
 }
 
-fn lift_amo<X: Xlen, F>(rd: u8, rs1: u8, rs2: u8, width: u8, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
+fn lift_amo<X: Xlen, F>(
+    rd: u8,
+    rs1: u8,
+    rs2: u8,
+    width: u8,
+    signed: bool,
+    op: F,
+) -> (Vec<Stmt<X>>, Terminator<X>)
 where
     F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
 {
     let addr = Expr::read(rs1);
-    let old = Expr::mem_u(addr.clone(), width);
+    // .W operations sign-extend the loaded value, .D operations don't need extension
+    let old = if signed {
+        Expr::mem_s(addr.clone(), width)
+    } else {
+        Expr::mem_u(addr.clone(), width)
+    };
     let new = op(old.clone(), Expr::read(rs2));
     let stmts = vec![Stmt::write_reg(rd, old), Stmt::write_mem(addr, new, width)];
     (stmts, Terminator::Fall { target: None })

@@ -212,6 +212,8 @@ pub use runner::{RunError, RunResult, Runner};
 use std::marker::PhantomData;
 use std::path::Path;
 
+use rvr_isa::syscalls::{LinuxHandler, SyscallAbi};
+use rvr_isa::ExtensionRegistry;
 use thiserror::Error;
 
 /// Recompiler errors.
@@ -235,9 +237,21 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Syscall handling mode for ECALL instructions.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum SyscallMode {
+    /// Bare-metal syscalls (exit only).
+    #[default]
+    BareMetal,
+    /// Linux-style syscalls (brk/mmap/read/write, etc).
+    Linux,
+}
+
 /// RISC-V recompiler.
 pub struct Recompiler<X: Xlen> {
     config: EmitConfig<X>,
+    syscall_mode: SyscallMode,
+    compiler: Option<String>,
     _marker: PhantomData<X>,
 }
 
@@ -246,6 +260,8 @@ impl<X: Xlen> Recompiler<X> {
     pub fn new(config: EmitConfig<X>) -> Self {
         Self {
             config,
+            syscall_mode: SyscallMode::BareMetal,
+            compiler: None,
             _marker: PhantomData,
         }
     }
@@ -253,6 +269,18 @@ impl<X: Xlen> Recompiler<X> {
     /// Create a recompiler with default configuration.
     pub fn with_defaults() -> Self {
         Self::new(EmitConfig::default())
+    }
+
+    /// Set syscall handling mode.
+    pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
+        self.syscall_mode = mode;
+        self
+    }
+
+    /// Set the C compiler to use (e.g. "clang" or "gcc").
+    pub fn with_compiler(mut self, compiler: impl Into<String>) -> Self {
+        self.compiler = Some(compiler.into());
+        self
     }
 
     /// Get the configuration.
@@ -273,7 +301,7 @@ impl<X: Xlen> Recompiler<X> {
         let _c_path = self.lift(elf_path, output_dir)?;
 
         // Then compile C to .so
-        compile_c_to_shared(output_dir, jobs)?;
+        compile_c_to_shared(output_dir, jobs, self.compiler.as_deref())?;
 
         // Return the path to the shared library
         let lib_name = output_dir
@@ -293,8 +321,19 @@ impl<X: Xlen> Recompiler<X> {
         // Create output directory if it doesn't exist
         std::fs::create_dir_all(output_dir)?;
 
-        // Build pipeline
-        let mut pipeline = Pipeline::<X>::new(image, self.config.clone());
+        // Build pipeline with syscall handler selection.
+        let registry = match self.syscall_mode {
+            SyscallMode::BareMetal => ExtensionRegistry::standard(),
+            SyscallMode::Linux => {
+                let abi = if image.is_rve() {
+                    SyscallAbi::Embedded
+                } else {
+                    SyscallAbi::Standard
+                };
+                ExtensionRegistry::standard().with_syscall_handler(LinuxHandler::new(abi))
+            }
+        };
+        let mut pipeline = Pipeline::<X>::with_registry(image, self.config.clone(), registry);
 
         // Build CFG (InstructionTable → BlockTable → optimizations)
         pipeline.build_cfg()?;
@@ -328,6 +367,10 @@ pub struct CompileOptions {
     pub jobs: usize,
     /// Tracer configuration.
     pub tracer_config: TracerConfig,
+    /// Syscall handling mode.
+    pub syscall_mode: SyscallMode,
+    /// Optional C compiler override (e.g. "clang").
+    pub compiler: Option<String>,
 }
 
 impl CompileOptions {
@@ -366,6 +409,18 @@ impl CompileOptions {
         self
     }
 
+    /// Set syscall handling mode.
+    pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
+        self.syscall_mode = mode;
+        self
+    }
+
+    /// Set the C compiler to use (e.g. "clang" or "gcc").
+    pub fn with_compiler(mut self, compiler: impl Into<String>) -> Self {
+        self.compiler = Some(compiler.into());
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
@@ -394,13 +449,21 @@ pub fn compile_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config);
+            let mut recompiler =
+                Recompiler::<Rv32>::new(config).with_syscall_mode(options.syscall_mode);
+            if let Some(compiler) = &options.compiler {
+                recompiler = recompiler.with_compiler(compiler.clone());
+            }
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config);
+            let mut recompiler =
+                Recompiler::<Rv64>::new(config).with_syscall_mode(options.syscall_mode);
+            if let Some(compiler) = &options.compiler {
+                recompiler = recompiler.with_compiler(compiler.clone());
+            }
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
     )
@@ -425,13 +488,21 @@ pub fn lift_to_c_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config);
+            let mut recompiler =
+                Recompiler::<Rv32>::new(config).with_syscall_mode(options.syscall_mode);
+            if let Some(compiler) = &options.compiler {
+                recompiler = recompiler.with_compiler(compiler.clone());
+            }
             recompiler.lift(elf_path, output_dir)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config);
+            let mut recompiler =
+                Recompiler::<Rv64>::new(config).with_syscall_mode(options.syscall_mode);
+            if let Some(compiler) = &options.compiler {
+                recompiler = recompiler.with_compiler(compiler.clone());
+            }
             recompiler.lift(elf_path, output_dir)
         },
     )
@@ -455,7 +526,7 @@ fn dispatch_by_xlen<R>(
 /// Compile C source to shared library.
 ///
 /// If `jobs` is 0, auto-detects based on CPU count.
-fn compile_c_to_shared(output_dir: &Path, jobs: usize) -> Result<()> {
+fn compile_c_to_shared(output_dir: &Path, jobs: usize, compiler: Option<&str>) -> Result<()> {
     use std::process::Command;
 
     let makefile_path = output_dir.join("Makefile");
@@ -469,11 +540,15 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize) -> Result<()> {
         jobs
     };
 
-    let status = Command::new("make")
-        .arg("-C")
+    let mut cmd = Command::new("make");
+    cmd.arg("-C")
         .arg(output_dir)
         .arg("-j")
-        .arg(job_count.to_string())
+        .arg(job_count.to_string());
+    if let Some(cc) = compiler {
+        cmd.arg(format!("CC={}", cc));
+    }
+    let status = cmd
         .arg("shared")
         .status()
         .map_err(|e| Error::CompilationFailed(format!("Failed to run make: {}", e)))?;

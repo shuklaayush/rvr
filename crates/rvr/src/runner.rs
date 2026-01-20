@@ -48,6 +48,7 @@ type RvFreeMemory = unsafe extern "C" fn(*mut c_void);
 type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type RvGetInstret = unsafe extern "C" fn(*const c_void) -> u64;
 type RvGetExitCode = unsafe extern "C" fn(*const c_void) -> u8;
+type RvGetPc = unsafe extern "C" fn(*const c_void) -> u64;
 type RvGetEntryPoint = unsafe extern "C" fn() -> u32;
 type RvTracerPreflightSetup = unsafe extern "C" fn(*mut c_void, *mut u8, u32, *mut c_void, u32);
 type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
@@ -62,6 +63,7 @@ struct RvApi {
     execute_from: RvExecuteFrom,
     get_instret: RvGetInstret,
     get_exit_code: RvGetExitCode,
+    get_pc: RvGetPc,
     get_entry_point: RvGetEntryPoint,
     reg_bytes: u32,
     tracer_kind: u32,
@@ -81,6 +83,7 @@ impl RvApi {
             execute_from: load_symbol(lib, b"rv_execute_from", "rv_execute_from")?,
             get_instret: load_symbol(lib, b"rv_get_instret", "rv_get_instret")?,
             get_exit_code: load_symbol(lib, b"rv_get_exit_code", "rv_get_exit_code")?,
+            get_pc: load_symbol(lib, b"rv_get_pc", "rv_get_pc")?,
             get_entry_point: load_symbol(lib, b"rv_get_entry_point", "rv_get_entry_point")?,
             tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
             tracer_preflight_setup: load_optional_symbol(lib, b"rv_tracer_preflight_setup"),
@@ -344,6 +347,10 @@ impl<'a> RunState<'a> {
     fn exit_code(&self) -> u8 {
         unsafe { (self.api.get_exit_code)(self.ptr.as_ptr()) }
     }
+
+    fn pc(&self) -> u64 {
+        unsafe { (self.api.get_pc)(self.ptr.as_ptr()) }
+    }
 }
 
 impl Drop for RunState<'_> {
@@ -426,8 +433,11 @@ impl Runner {
 
         let instret = state.instret();
         let exit_code = state.exit_code();
+        let final_pc = state.pc();
         let time_secs = elapsed.as_secs_f64();
         let mips = (instret as f64 / time_secs) / 1_000_000.0;
+
+        eprintln!("Debug: final PC = 0x{:x}", final_pc);
 
         Ok(RunResult {
             exit_code,
