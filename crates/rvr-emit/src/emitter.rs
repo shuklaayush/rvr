@@ -639,19 +639,24 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render static jump.
     pub fn render_jump_static(&mut self, target: u64) {
+        self.render_jump_static_impl(target, 1);
+    }
+
+    /// Render static jump with custom indent.
+    fn render_jump_static_impl(&mut self, target: u64, indent: usize) {
         if self.is_valid_address(target) {
             // Resolve absorbed addresses to their merged block
             let resolved = self.inputs.resolve_address(target);
             let pc_str = self.fmt_pc(resolved);
             self.writeln(
-                1,
+                indent,
                 &format!(
                     "[[clang::musttail]] return B_{}({});",
                     pc_str, self.sig.args
                 ),
             );
         } else {
-            self.render_exit("1");
+            self.render_exit_impl("1", indent);
         }
     }
 
@@ -659,11 +664,21 @@ impl<X: Xlen> CEmitter<X> {
     ///
     /// If `pre_eval_var` is set, use that variable name instead of rendering the expression.
     fn render_jump_dynamic(&mut self, target_expr: &Expr<X>, pre_eval_var: Option<&str>) {
+        self.render_jump_dynamic_impl(target_expr, pre_eval_var, 1);
+    }
+
+    /// Render dynamic jump with custom indent.
+    fn render_jump_dynamic_impl(
+        &mut self,
+        target_expr: &Expr<X>,
+        pre_eval_var: Option<&str>,
+        indent: usize,
+    ) {
         let target = pre_eval_var
             .map(|s| s.to_string())
             .unwrap_or_else(|| self.render_expr(target_expr));
         self.writeln(
-            1,
+            indent,
             &format!(
                 "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
                 target, self.sig.args
@@ -673,14 +688,22 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render jump with resolved targets.
     fn render_jump_resolved(&mut self, targets: Vec<u64>, fallback: &Expr<X>) {
+        self.render_jump_resolved_impl(targets, fallback, 1);
+    }
+
+    /// Render jump with resolved targets with custom indent.
+    fn render_jump_resolved_impl(&mut self, targets: Vec<u64>, fallback: &Expr<X>, indent: usize) {
         if targets.is_empty() {
-            self.render_jump_dynamic(fallback, None);
+            self.render_jump_dynamic_impl(fallback, None, indent);
             return;
         }
 
         let target_var = self.render_expr(fallback);
         if targets.len() > 1 {
-            self.writeln(1, &format!("{} target = {};", self.reg_type, target_var));
+            self.writeln(
+                indent,
+                &format!("{} target = {};", self.reg_type, target_var),
+            );
         }
 
         let var_name = if targets.len() > 1 {
@@ -693,15 +716,15 @@ impl<X: Xlen> CEmitter<X> {
             if self.is_valid_address(*target) {
                 let pc_str = self.fmt_pc(*target);
                 let addr_lit = self.fmt_addr(*target);
-                self.writeln(1, &format!("if ({} == {}) {{", var_name, addr_lit));
+                self.writeln(indent, &format!("if ({} == {}) {{", var_name, addr_lit));
                 self.writeln(
-                    2,
+                    indent + 1,
                     &format!(
                         "[[clang::musttail]] return B_{}({});",
                         pc_str, self.sig.args
                     ),
                 );
-                self.writeln(1, "}");
+                self.writeln(indent, "}");
             }
         }
 
@@ -711,7 +734,7 @@ impl<X: Xlen> CEmitter<X> {
         } else {
             None
         };
-        self.render_jump_dynamic(fallback, pre_eval);
+        self.render_jump_dynamic_impl(fallback, pre_eval, indent);
     }
 
     /// Render branch with both taken and not-taken paths.
@@ -812,6 +835,11 @@ impl<X: Xlen> CEmitter<X> {
     /// Render superblock side exit (branch with instret update).
     /// Unlike full branch, this only handles the taken path - fall-through goes to next instruction.
     fn render_side_exit(&mut self, cond: &str, target: u64, hint: BranchHint) {
+        self.render_side_exit_impl(cond, target, hint, 1);
+    }
+
+    /// Render superblock side exit with custom indent.
+    fn render_side_exit_impl(&mut self, cond: &str, target: u64, hint: BranchHint, indent: usize) {
         let cond_str = match hint {
             BranchHint::Taken => format!("likely({})", cond),
             BranchHint::NotTaken => format!("unlikely({})", cond),
@@ -824,52 +852,62 @@ impl<X: Xlen> CEmitter<X> {
         if self.is_valid_address(target) {
             let resolved = self.inputs.resolve_address(target);
             let pc_str = self.fmt_pc(resolved);
-            self.writeln(1, &format!("if ({}) {{", cond_str));
+            self.writeln(indent, &format!("if ({}) {{", cond_str));
             if self.config.instret_mode.counts() {
-                self.writeln(2, &format!("instret += {};", self.instr_idx));
+                self.writeln(indent + 1, &format!("instret += {};", self.instr_idx));
             }
             self.writeln(
-                2,
+                indent + 1,
                 &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
             );
-            self.writeln(1, "}");
+            self.writeln(indent, "}");
         } else {
-            self.writeln(1, &format!("if ({}) {{", cond_str));
-            self.writeln(2, "state->has_exited = true;");
-            self.writeln(2, "state->exit_code = 1;");
+            self.writeln(indent, &format!("if ({}) {{", cond_str));
+            self.writeln(indent + 1, "state->has_exited = true;");
+            self.writeln(indent + 1, "state->exit_code = 1;");
             let pc_lit = self.fmt_addr(target);
-            self.writeln(2, &format!("state->pc = {};", pc_lit));
+            self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
             if self.config.instret_mode.counts() {
                 self.writeln(
-                    2,
+                    indent + 1,
                     &format!("state->instret = instret + {};", self.instr_idx),
                 );
             }
             if !save_to_state.is_empty() {
-                self.writeln(2, &save_to_state);
+                self.writeln(indent + 1, &save_to_state);
             }
-            self.writeln(2, "return;");
-            self.writeln(1, "}");
+            self.writeln(indent + 1, "return;");
+            self.writeln(indent, "}");
         }
     }
 
     /// Render exit with save_to_state.
     fn render_exit(&mut self, code: &str) {
+        self.render_exit_impl(code, 1);
+    }
+
+    /// Render exit with custom indent.
+    fn render_exit_impl(&mut self, code: &str, indent: usize) {
         let save_to_state = self.sig.save_to_state.clone();
-        self.writeln(1, "state->has_exited = true;");
-        self.writeln(1, &format!("state->exit_code = (uint8_t)({});", code));
+        self.writeln(indent, "state->has_exited = true;");
+        self.writeln(indent, &format!("state->exit_code = (uint8_t)({});", code));
         let pc_lit = self.fmt_addr(self.current_pc);
-        self.writeln(1, &format!("state->pc = {};", pc_lit));
+        self.writeln(indent, &format!("state->pc = {};", pc_lit));
         if !save_to_state.is_empty() {
-            self.writeln(1, &save_to_state);
+            self.writeln(indent, &save_to_state);
         }
-        self.writeln(1, "return;");
+        self.writeln(indent, "return;");
     }
 
     /// Render instret update.
     pub fn render_instret_update(&mut self, count: u64) {
+        self.render_instret_update_impl(count, 1);
+    }
+
+    /// Render instret update with custom indent.
+    fn render_instret_update_impl(&mut self, count: u64, indent: usize) {
         if self.config.instret_mode.counts() {
-            self.writeln(1, &format!("instret += {};", count));
+            self.writeln(indent, &format!("instret += {};", count));
         }
     }
 
@@ -996,45 +1034,7 @@ impl<X: Xlen> CEmitter<X> {
         hint: BranchHint,
         indent: usize,
     ) {
-        let cond_str = match hint {
-            BranchHint::Taken => format!("likely({})", cond),
-            BranchHint::NotTaken => format!("unlikely({})", cond),
-            BranchHint::None => cond.to_string(),
-        };
-
-        let args = self.sig.args.clone();
-        let save_to_state = self.sig.save_to_state.clone();
-
-        if self.is_valid_address(target) {
-            let resolved = self.inputs.resolve_address(target);
-            let pc_str = self.fmt_pc(resolved);
-            self.writeln(indent, &format!("if ({}) {{", cond_str));
-            if self.config.instret_mode.counts() {
-                self.writeln(indent + 1, &format!("instret += {};", self.instr_idx));
-            }
-            self.writeln(
-                indent + 1,
-                &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
-            );
-            self.writeln(indent, "}");
-        } else {
-            self.writeln(indent, &format!("if ({}) {{", cond_str));
-            self.writeln(indent + 1, "state->has_exited = true;");
-            self.writeln(indent + 1, "state->exit_code = 1;");
-            let pc_lit = self.fmt_addr(target);
-            self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
-            if self.config.instret_mode.counts() {
-                self.writeln(
-                    indent + 1,
-                    &format!("state->instret = instret + {};", self.instr_idx),
-                );
-            }
-            if !save_to_state.is_empty() {
-                self.writeln(indent + 1, &save_to_state);
-            }
-            self.writeln(indent + 1, "return;");
-            self.writeln(indent, "}");
-        }
+        self.render_side_exit_impl(cond, target, hint, indent);
     }
 
     /// Render terminator with custom indent.
@@ -1087,19 +1087,7 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render static jump with custom indent.
     fn render_jump_static_indented(&mut self, target: u64, indent: usize) {
-        if self.is_valid_address(target) {
-            let resolved = self.inputs.resolve_address(target);
-            let pc_str = self.fmt_pc(resolved);
-            self.writeln(
-                indent,
-                &format!(
-                    "[[clang::musttail]] return B_{}({});",
-                    pc_str, self.sig.args
-                ),
-            );
-        } else {
-            self.render_exit_indented("1", indent);
-        }
+        self.render_jump_static_impl(target, indent);
     }
 
     /// Render dynamic jump with custom indent.
@@ -1109,16 +1097,7 @@ impl<X: Xlen> CEmitter<X> {
         pre_eval_var: Option<&str>,
         indent: usize,
     ) {
-        let target = pre_eval_var
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| self.render_expr(target_expr));
-        self.writeln(
-            indent,
-            &format!(
-                "[[clang::musttail]] return dispatch_table[dispatch_index({})]({});",
-                target, self.sig.args
-            ),
-        );
+        self.render_jump_dynamic_impl(target_expr, pre_eval_var, indent);
     }
 
     /// Render jump with resolved targets with custom indent.
@@ -1128,47 +1107,7 @@ impl<X: Xlen> CEmitter<X> {
         fallback: &Expr<X>,
         indent: usize,
     ) {
-        if targets.is_empty() {
-            self.render_jump_dynamic_indented(fallback, None, indent);
-            return;
-        }
-
-        let target_var = self.render_expr(fallback);
-        if targets.len() > 1 {
-            self.writeln(
-                indent,
-                &format!("{} target = {};", self.reg_type, target_var),
-            );
-        }
-
-        let var_name = if targets.len() > 1 {
-            "target"
-        } else {
-            &target_var
-        };
-
-        for target in &targets {
-            if self.is_valid_address(*target) {
-                let pc_str = self.fmt_pc(*target);
-                let addr_lit = self.fmt_addr(*target);
-                self.writeln(indent, &format!("if ({} == {}) {{", var_name, addr_lit));
-                self.writeln(
-                    indent + 1,
-                    &format!(
-                        "[[clang::musttail]] return B_{}({});",
-                        pc_str, self.sig.args
-                    ),
-                );
-                self.writeln(indent, "}");
-            }
-        }
-
-        let pre_eval = if targets.len() > 1 {
-            Some("target")
-        } else {
-            None
-        };
-        self.render_jump_dynamic_indented(fallback, pre_eval, indent);
+        self.render_jump_resolved_impl(targets, fallback, indent);
     }
 
     /// Render branch with custom indent.
@@ -1214,22 +1153,12 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render exit with custom indent.
     fn render_exit_indented(&mut self, code: &str, indent: usize) {
-        let save_to_state = self.sig.save_to_state.clone();
-        self.writeln(indent, "state->has_exited = true;");
-        self.writeln(indent, &format!("state->exit_code = (uint8_t)({});", code));
-        let pc_lit = self.fmt_addr(self.current_pc);
-        self.writeln(indent, &format!("state->pc = {};", pc_lit));
-        if !save_to_state.is_empty() {
-            self.writeln(indent, &save_to_state);
-        }
-        self.writeln(indent, "return;");
+        self.render_exit_impl(code, indent);
     }
 
     /// Render instret update with custom indent.
     pub fn render_instret_update_indented(&mut self, count: u64, indent: usize) {
-        if self.config.instret_mode.counts() {
-            self.writeln(indent, &format!("instret += {};", count));
-        }
+        self.render_instret_update_impl(count, indent);
     }
 }
 

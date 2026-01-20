@@ -9,19 +9,17 @@
 use std::collections::HashSet;
 
 use rvr_ir::Xlen;
+use rvr_isa::reg_name;
 
 use crate::config::EmitConfig;
 
-/// RISC-V register ABI names.
-pub const REG_ABI_NAMES: [&str; 32] = [
-    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
-    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
-    "t5", "t6",
-];
+// Re-export for backwards compatibility
+pub use rvr_isa::REG_ABI_NAMES;
 
-/// Get ABI name for register.
+/// Get ABI name for register (alias for rvr_isa::reg_name).
+#[inline]
 pub fn abi_name(reg: u8) -> &'static str {
-    REG_ABI_NAMES.get(reg as usize).copied().unwrap_or("x?")
+    reg_name(reg)
 }
 
 /// Get C type for register width.

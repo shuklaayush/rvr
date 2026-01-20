@@ -189,43 +189,17 @@ pub const REG_T4: u8 = 29;
 pub const REG_T5: u8 = 30;
 pub const REG_T6: u8 = 31;
 
+/// Canonical register ABI names array.
+pub const REG_ABI_NAMES: [&str; 32] = [
+    "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
+    "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
+    "t5", "t6",
+];
+
 /// Get register ABI name.
+#[inline]
 pub fn reg_name(reg: u8) -> &'static str {
-    match reg {
-        0 => "zero",
-        1 => "ra",
-        2 => "sp",
-        3 => "gp",
-        4 => "tp",
-        5 => "t0",
-        6 => "t1",
-        7 => "t2",
-        8 => "s0",
-        9 => "s1",
-        10 => "a0",
-        11 => "a1",
-        12 => "a2",
-        13 => "a3",
-        14 => "a4",
-        15 => "a5",
-        16 => "a6",
-        17 => "a7",
-        18 => "s2",
-        19 => "s3",
-        20 => "s4",
-        21 => "s5",
-        22 => "s6",
-        23 => "s7",
-        24 => "s8",
-        25 => "s9",
-        26 => "s10",
-        27 => "s11",
-        28 => "t3",
-        29 => "t4",
-        30 => "t5",
-        31 => "t6",
-        _ => "??",
-    }
+    REG_ABI_NAMES.get(reg as usize).copied().unwrap_or("??")
 }
 
 #[cfg(test)]
