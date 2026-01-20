@@ -2,6 +2,7 @@
 
 mod analyzer;
 mod decoder;
+mod instruction_table;
 mod value;
 
 use std::collections::{HashMap, HashSet};
@@ -11,6 +12,7 @@ use rvr_ir::BlockIR;
 
 pub use analyzer::*;
 pub use decoder::*;
+pub use instruction_table::*;
 pub use value::*;
 
 /// Basic block information.
