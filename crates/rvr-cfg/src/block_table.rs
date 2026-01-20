@@ -389,6 +389,19 @@ impl<X: Xlen> BlockTable<X> {
                 _ => continue,
             };
 
+            // Only duplicate blocks that end in fall-through.
+            // Jump/branch terminators must stay explicit to preserve control flow.
+            let ends_with_fall = match self.instruction_table.get_at_pc(block.last_pc) {
+                Some(instr) => matches!(
+                    registry.lift(instr).terminator,
+                    rvr_ir::Terminator::Fall { .. }
+                ),
+                None => false,
+            };
+            if !ends_with_fall {
+                continue;
+            }
+
             // All predecessors must end with unconditional control flow
             let all_unconditional = preds.iter().all(|&pred_pc| {
                 if let Some(instr) = self.instruction_table.get_at_pc(pred_pc) {
@@ -424,19 +437,58 @@ impl<X: Xlen> BlockTable<X> {
                 None => continue,
             };
 
-            let mut first_pred = true;
-            for pred_pc in preds {
-                if let Some(&pred_start) = last_pc_to_block_start.get(&pred_pc) {
-                    self.block_continuations
-                        .entry(pred_start)
-                        .or_default()
-                        .push((dup_block.start, dup_block.end));
+                // Filter to only predecessors with direct (non-dynamic) control flow
+            // This avoids tail-duplicating into blocks that are only reachable via
+            // indirect jumps (which have conservative targets)
+            //
+            // Also prefer predecessors with Jump/Branch over Fall (explicit jumps are
+            // more likely to be the "real" predecessor vs dead code that happens to fall through)
+            let mut valid_preds: Vec<(u64, bool)> = preds
+                .iter()
+                .filter_map(|&pred_pc| {
+                    last_pc_to_block_start.get(&pred_pc).and_then(|&pred_start| {
+                        // Check if the predecessor instruction has direct control flow to dup_start
+                        let instr = self.instruction_table.get_at_pc(pred_pc)?;
+                        let ir = registry.lift(instr);
+                        let (is_direct, is_explicit) = match &ir.terminator {
+                            rvr_ir::Terminator::Jump { .. } => (true, true),
+                            rvr_ir::Terminator::Branch { .. } => (true, true),
+                            rvr_ir::Terminator::Fall { .. } => (true, false), // Fall is direct but not explicit
+                            _ => (false, false), // Skip JumpDyn (indirect jumps)
+                        };
+                        if is_direct {
+                            Some((pred_start, is_explicit))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
 
-                    // Map duplicated block to first predecessor for dispatch table
-                    if first_pred {
-                        self.absorbed_to_merged.insert(dup_start, pred_start);
-                        first_pred = false;
-                    }
+            // Sort: prefer explicit jumps over falls, then by address for determinism
+            valid_preds.sort_by(|a, b| {
+                // Explicit jumps (true) come before falls (false)
+                b.1.cmp(&a.1).then(a.0.cmp(&b.0))
+            });
+
+            let valid_preds: Vec<_> = valid_preds.into_iter().map(|(addr, _)| addr).collect();
+
+            // If no valid predecessors, skip this block
+            if valid_preds.is_empty() {
+                continue;
+            }
+
+            let mut first_pred = true;
+            for pred_start in valid_preds {
+                self.block_continuations
+                    .entry(pred_start)
+                    .or_default()
+                    .push((dup_block.start, dup_block.end));
+
+                // Map duplicated block to first predecessor for dispatch table
+                if first_pred {
+                    self.absorbed_to_merged.insert(dup_start, pred_start);
+                    first_pred = false;
                 }
             }
         }
@@ -692,6 +744,21 @@ impl<X: Xlen> BlockTable<X> {
         // Apply updates
         for (pc, target) in to_update {
             self.absorbed_to_merged.insert(pc, target);
+
+            let mut moved_range = None;
+            for ranges in self.block_continuations.values_mut() {
+                if let Some(pos) = ranges.iter().position(|(start, _)| *start == pc) {
+                    moved_range = Some(ranges.remove(pos));
+                    break;
+                }
+            }
+
+            if let Some(range) = moved_range {
+                self.block_continuations
+                    .entry(target)
+                    .or_default()
+                    .push(range);
+            }
         }
 
         // Remove broken chains
