@@ -12,6 +12,7 @@ use rvr_ir::Xlen;
 use crate::config::{EmitConfig, InstretMode};
 use crate::inputs::EmitInputs;
 use crate::signature::FnSignature;
+use crate::tracer::TracerKind;
 
 /// Instruction slot size (2 bytes for compressed instruction support).
 pub const INSTRUCTION_SIZE: u64 = 2;
@@ -30,6 +31,8 @@ pub struct DispatchConfig<X: Xlen> {
     pub memory_bits: u8,
     /// Whether tracing is enabled.
     pub has_tracing: bool,
+    /// Built-in tracer kind when available.
+    pub tracer_kind: Option<TracerKind>,
     _marker: std::marker::PhantomData<X>,
 }
 
@@ -43,6 +46,7 @@ impl<X: Xlen> DispatchConfig<X> {
             sig: FnSignature::new(config),
             memory_bits: config.memory_bits,
             has_tracing: !config.tracer_config.is_none(),
+            tracer_kind: config.tracer_config.builtin_kind(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -103,7 +107,44 @@ void rv_trap({}) {{
     )
 }
 
-fn gen_api_helpers<X: Xlen>(_cfg: &DispatchConfig<X>) -> String {
+fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
+    let tracer_kind_val = match cfg.tracer_kind {
+        Some(kind) => kind.as_c_kind(),
+        None => {
+            if cfg.has_tracing {
+                255
+            } else {
+                0
+            }
+        }
+    };
+    let tracer_helpers = match cfg.tracer_kind {
+        Some(TracerKind::Preflight) => format!(
+            r#"
+/* Tracer setup (preflight) */
+void rv_tracer_preflight_setup(RvState* state, uint8_t* data, uint32_t data_capacity, void* pc, uint32_t pc_capacity) {{
+    (void)data_capacity;
+    (void)pc_capacity;
+    if (!state) return;
+    memset(&state->tracer, 0, sizeof(Tracer));
+    state->tracer.data = data;
+    state->tracer.pc = ({rtype}*)pc;
+}}
+"#,
+            rtype = crate::signature::reg_type::<X>()
+        ),
+        Some(TracerKind::Stats) => r#"
+/* Tracer setup (stats) */
+void rv_tracer_stats_setup(RvState* state, uint64_t* addr_bitmap) {
+    if (!state) return;
+    memset(&state->tracer, 0, sizeof(Tracer));
+    state->tracer.addr_bitmap = addr_bitmap;
+}
+"#
+        .to_string(),
+        _ => String::new(),
+    };
+
     format!(
         r#"/* C API helpers for external runners */
 
@@ -115,6 +156,16 @@ size_t rv_state_size(void) {{
 /* Return alignment of RvState struct */
 size_t rv_state_align(void) {{
     return _Alignof(RvState);
+}}
+
+/* Return register size in bytes */
+uint32_t rv_reg_bytes(void) {{
+    return XLEN / 8;
+}}
+
+/* Return tracer kind (0=none,1=preflight,2=stats,3=ffi,4=dynamic,255=custom) */
+uint32_t rv_tracer_kind(void) {{
+    return {tracer_kind};
 }}
 
 /* Reset RvState to initial values (zero regs/csrs, set pc, clear exit) */
@@ -169,7 +220,11 @@ uint64_t rv_get_memory_size(void) {{
 uint32_t rv_get_entry_point(void) {{
     return RV_ENTRY_POINT;
 }}
+
+{tracer_helpers}
 "#,
+        tracer_kind = tracer_kind_val,
+        tracer_helpers = tracer_helpers,
         rtype = crate::signature::reg_type::<X>(),
     )
 }

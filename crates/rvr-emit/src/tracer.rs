@@ -31,6 +31,17 @@ impl TracerKind {
     pub fn is_none(&self) -> bool {
         *self == Self::None
     }
+
+    /// Numeric kind id for C API (matches runtime expectations).
+    pub fn as_c_kind(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Preflight => 1,
+            Self::Stats => 2,
+            Self::Ffi => 3,
+            Self::Dynamic => 4,
+        }
+    }
 }
 
 /// Tracer source.
@@ -208,6 +219,14 @@ impl TracerConfig {
     /// Check if tracing is disabled.
     pub fn is_none(&self) -> bool {
         self.source.is_none()
+    }
+
+    /// Return built-in tracer kind if configured.
+    pub fn builtin_kind(&self) -> Option<TracerKind> {
+        match &self.source {
+            TracerSource::Builtin(kind) => Some(*kind),
+            _ => None,
+        }
     }
 
     /// Check if RvState needs a Tracer field.

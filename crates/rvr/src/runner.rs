@@ -34,11 +34,15 @@ pub enum RunError {
 
     #[error("execution error: exit code {0}")]
     ExecutionError(u8),
+
+    #[error("tracer setup failed: {0}")]
+    TracerSetupFailed(String),
 }
 
 /// C API function types.
 type RvStateSize = unsafe extern "C" fn() -> usize;
 type RvStateAlign = unsafe extern "C" fn() -> usize;
+type RvRegBytes = unsafe extern "C" fn() -> u32;
 type RvStateReset = unsafe extern "C" fn(*mut c_void);
 type RvInitMemory = unsafe extern "C" fn(*mut c_void) -> i32;
 type RvFreeMemory = unsafe extern "C" fn(*mut c_void);
@@ -46,11 +50,15 @@ type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type RvGetInstret = unsafe extern "C" fn(*const c_void) -> u64;
 type RvGetExitCode = unsafe extern "C" fn(*const c_void) -> u8;
 type RvGetEntryPoint = unsafe extern "C" fn() -> u32;
+type RvTracerKind = unsafe extern "C" fn() -> u32;
+type RvTracerPreflightSetup = unsafe extern "C" fn(*mut c_void, *mut u8, u32, *mut c_void, u32);
+type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
 
 #[derive(Clone, Copy)]
 struct RvApi {
     state_size: RvStateSize,
     state_align: RvStateAlign,
+    reg_bytes: RvRegBytes,
     state_reset: RvStateReset,
     init_memory: RvInitMemory,
     free_memory: RvFreeMemory,
@@ -58,6 +66,9 @@ struct RvApi {
     get_instret: RvGetInstret,
     get_exit_code: RvGetExitCode,
     get_entry_point: RvGetEntryPoint,
+    tracer_kind: Option<RvTracerKind>,
+    tracer_preflight_setup: Option<RvTracerPreflightSetup>,
+    tracer_stats_setup: Option<RvTracerStatsSetup>,
 }
 
 impl RvApi {
@@ -65,6 +76,7 @@ impl RvApi {
         Ok(Self {
             state_size: load_symbol(lib, b"rv_state_size", "rv_state_size")?,
             state_align: load_symbol(lib, b"rv_state_align", "rv_state_align")?,
+            reg_bytes: load_symbol(lib, b"rv_reg_bytes", "rv_reg_bytes")?,
             state_reset: load_symbol(lib, b"rv_state_reset", "rv_state_reset")?,
             init_memory: load_symbol(lib, b"rv_init_memory", "rv_init_memory")?,
             free_memory: load_symbol(lib, b"rv_free_memory", "rv_free_memory")?,
@@ -72,6 +84,9 @@ impl RvApi {
             get_instret: load_symbol(lib, b"rv_get_instret", "rv_get_instret")?,
             get_exit_code: load_symbol(lib, b"rv_get_exit_code", "rv_get_exit_code")?,
             get_entry_point: load_symbol(lib, b"rv_get_entry_point", "rv_get_entry_point")?,
+            tracer_kind: load_optional_symbol(lib, b"rv_tracer_kind"),
+            tracer_preflight_setup: load_optional_symbol(lib, b"rv_tracer_preflight_setup"),
+            tracer_stats_setup: load_optional_symbol(lib, b"rv_tracer_stats_setup"),
         })
     }
 }
@@ -87,11 +102,176 @@ unsafe fn load_symbol<T: Copy>(
     Ok(*sym)
 }
 
+unsafe fn load_optional_symbol<T: Copy>(lib: &Library, symbol: &'static [u8]) -> Option<T> {
+    let sym: libloading::Symbol<T> = lib.get(symbol).ok()?;
+    Some(*sym)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TracerKind {
+    None,
+    Preflight,
+    Stats,
+    Ffi,
+    Dynamic,
+    Custom,
+}
+
+impl TracerKind {
+    fn from_raw(raw: u32) -> Self {
+        match raw {
+            1 => Self::Preflight,
+            2 => Self::Stats,
+            3 => Self::Ffi,
+            4 => Self::Dynamic,
+            255 => Self::Custom,
+            _ => Self::None,
+        }
+    }
+}
+
+const PREFLIGHT_DATA_BYTES: usize = 1 << 20;
+const PREFLIGHT_PC_ENTRIES: usize = 1 << 24;
+const STATS_ADDR_BITMAP_BYTES: usize = 1 << 29;
+
+enum PcBuffer {
+    U32(Vec<u32>),
+    U64(Vec<u64>),
+}
+
+impl PcBuffer {
+    fn len(&self) -> usize {
+        match self {
+            Self::U32(buf) => buf.len(),
+            Self::U64(buf) => buf.len(),
+        }
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut c_void {
+        match self {
+            Self::U32(buf) => buf.as_mut_ptr() as *mut c_void,
+            Self::U64(buf) => buf.as_mut_ptr() as *mut c_void,
+        }
+    }
+}
+
+struct PreflightBuffers {
+    data: Vec<u8>,
+    pc: PcBuffer,
+}
+
+struct StatsBuffers {
+    addr_bitmap: Option<Vec<u64>>,
+}
+
+struct TracerRuntime {
+    kind: TracerKind,
+    reg_bytes: u32,
+    preflight_setup: Option<RvTracerPreflightSetup>,
+    stats_setup: Option<RvTracerStatsSetup>,
+    preflight: Option<PreflightBuffers>,
+    stats: Option<StatsBuffers>,
+}
+
+impl TracerRuntime {
+    fn new(api: &RvApi) -> Result<Option<Self>, RunError> {
+        let kind_fn = match api.tracer_kind {
+            Some(func) => func,
+            None => return Ok(None),
+        };
+        let kind = TracerKind::from_raw(unsafe { kind_fn() });
+        if kind == TracerKind::None {
+            return Ok(None);
+        }
+
+        let reg_bytes = unsafe { (api.reg_bytes)() };
+        Ok(Some(Self {
+            kind,
+            reg_bytes,
+            preflight_setup: api.tracer_preflight_setup,
+            stats_setup: api.tracer_stats_setup,
+            preflight: None,
+            stats: None,
+        }))
+    }
+
+    fn setup(&mut self, state_ptr: *mut c_void) -> Result<(), RunError> {
+        match self.kind {
+            TracerKind::Preflight => self.setup_preflight(state_ptr),
+            TracerKind::Stats => self.setup_stats(state_ptr),
+            _ => Ok(()),
+        }
+    }
+
+    fn setup_preflight(&mut self, state_ptr: *mut c_void) -> Result<(), RunError> {
+        let setup = self.preflight_setup.ok_or_else(|| {
+            RunError::TracerSetupFailed("missing rv_tracer_preflight_setup".to_string())
+        })?;
+        if self.preflight.is_none() {
+            let pc = match self.reg_bytes {
+                4 => PcBuffer::U32(vec![0u32; PREFLIGHT_PC_ENTRIES]),
+                8 => PcBuffer::U64(vec![0u64; PREFLIGHT_PC_ENTRIES]),
+                other => {
+                    return Err(RunError::TracerSetupFailed(format!(
+                        "unsupported reg size {}",
+                        other
+                    )))
+                }
+            };
+            let data = vec![0u8; PREFLIGHT_DATA_BYTES];
+            self.preflight = Some(PreflightBuffers { data, pc });
+        }
+
+        let buffers = self.preflight.as_mut().unwrap();
+        unsafe {
+            setup(
+                state_ptr,
+                buffers.data.as_mut_ptr(),
+                buffers.data.len() as u32,
+                buffers.pc.as_mut_ptr(),
+                buffers.pc.len() as u32,
+            );
+        }
+        Ok(())
+    }
+
+    fn setup_stats(&mut self, state_ptr: *mut c_void) -> Result<(), RunError> {
+        let setup = self.stats_setup.ok_or_else(|| {
+            RunError::TracerSetupFailed("missing rv_tracer_stats_setup".to_string())
+        })?;
+        if self.stats.is_none() {
+            let words = STATS_ADDR_BITMAP_BYTES / 8;
+            let mut addr_bitmap = Vec::new();
+            if addr_bitmap.try_reserve_exact(words).is_ok() {
+                addr_bitmap.resize(words, 0);
+            }
+            let addr_bitmap = if addr_bitmap.is_empty() {
+                None
+            } else {
+                Some(addr_bitmap)
+            };
+            self.stats = Some(StatsBuffers { addr_bitmap });
+        }
+
+        let buffers = self.stats.as_mut().unwrap();
+        let addr_ptr = buffers
+            .addr_bitmap
+            .as_mut()
+            .map(|buf| buf.as_mut_ptr())
+            .unwrap_or(std::ptr::null_mut());
+        unsafe {
+            setup(state_ptr, addr_ptr);
+        }
+        Ok(())
+    }
+}
+
 struct RunState<'a> {
     ptr: NonNull<c_void>,
     layout: Layout,
     api: &'a RvApi,
     memory_initialized: bool,
+    tracer: Option<TracerRuntime>,
 }
 
 impl<'a> RunState<'a> {
@@ -102,16 +282,22 @@ impl<'a> RunState<'a> {
             .map_err(|_| RunError::InvalidStateLayout { size, align })?;
         let ptr = unsafe { alloc_zeroed(layout) } as *mut c_void;
         let ptr = NonNull::new(ptr).ok_or(RunError::StateAllocationFailed)?;
+        let tracer = TracerRuntime::new(api)?;
         Ok(Self {
             ptr,
             layout,
             api,
             memory_initialized: false,
+            tracer,
         })
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<(), RunError> {
         unsafe { (self.api.state_reset)(self.ptr.as_ptr()) };
+        if let Some(tracer) = &mut self.tracer {
+            tracer.setup(self.ptr.as_ptr())?;
+        }
+        Ok(())
     }
 
     fn init_memory(&mut self) -> Result<(), RunError> {
@@ -217,7 +403,7 @@ impl Runner {
     pub fn run(&self) -> Result<RunResult, RunError> {
         let mut state = RunState::new(&self.api)?;
         state.init_memory()?;
-        state.reset();
+        state.reset()?;
 
         let entry_point = unsafe { (self.api.get_entry_point)() };
 
@@ -246,7 +432,7 @@ impl Runner {
 
         for _ in 0..count {
             state.reinit_memory()?;
-            state.reset();
+            state.reset()?;
 
             let start = Instant::now();
             state.execute(entry_point);

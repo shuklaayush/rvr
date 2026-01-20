@@ -13,7 +13,7 @@ use rvr_ir::Xlen;
 use crate::config::{EmitConfig, InstretMode};
 use crate::inputs::EmitInputs;
 use crate::signature::{reg_type, FnSignature};
-use crate::tracer::TracerConfig;
+use crate::tracer::{TracerConfig, TracerKind};
 
 /// Number of CSRs.
 pub const NUM_CSRS: usize = 4096;
@@ -840,6 +840,16 @@ fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         (1u64 << (64 - entry.leading_zeros())) - 1
     };
 
+    let tracer_decls = match cfg.tracer_config.builtin_kind() {
+        Some(TracerKind::Preflight) => String::from(
+            "void rv_tracer_preflight_setup(RvState* state, uint8_t* data, uint32_t data_capacity, void* pc, uint32_t pc_capacity);\n",
+        ),
+        Some(TracerKind::Stats) => {
+            String::from("void rv_tracer_stats_setup(RvState* state, uint64_t* addr_bitmap);\n")
+        }
+        _ => String::new(),
+    };
+
     format!(
         r#"/* Dispatch: (pc & MASK) >> 1 */
 static inline size_t dispatch_index(uint32_t pc) {{
@@ -854,6 +864,8 @@ int rv_execute_from(RvState* state, uint32_t start_pc);
 /* C API helpers for external runners */
 size_t rv_state_size(void);
 size_t rv_state_align(void);
+uint32_t rv_reg_bytes(void);
+uint32_t rv_tracer_kind(void);
 void rv_state_reset(RvState* state);
 uint64_t rv_get_instret(const RvState* state);
 uint8_t rv_get_exit_code(const RvState* state);
@@ -863,13 +875,15 @@ void rv_set_pc(RvState* state, uint64_t pc);
 uint8_t* rv_get_memory(const RvState* state);
 uint64_t rv_get_memory_size(void);
 uint32_t rv_get_entry_point(void);
+{tracer_decls}
 
 /* Memory initialization (provided by memory.c) */
 int rv_init_memory(RvState* state);
 void rv_free_memory(RvState* state);
 
 "#,
-        mask = mask
+        mask = mask,
+        tracer_decls = tracer_decls
     )
 }
 
