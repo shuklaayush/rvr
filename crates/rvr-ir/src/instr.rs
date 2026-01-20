@@ -38,6 +38,8 @@ pub struct InstrIR<X: Xlen> {
     pub pc: X::Reg,
     /// Instruction size in bytes (2 or 4).
     pub size: u8,
+    /// Packed OpId (ext << 8 | idx) for tracing.
+    pub op: u16,
     /// Statements (writes, side effects).
     pub statements: Vec<Stmt<X>>,
     /// Control flow terminator.
@@ -51,12 +53,14 @@ impl<X: Xlen> InstrIR<X> {
     pub fn new(
         pc: X::Reg,
         size: u8,
+        op: u16,
         statements: Vec<Stmt<X>>,
         terminator: Terminator<X>,
     ) -> Self {
         Self {
             pc,
             size,
+            op,
             statements,
             terminator,
             source_loc: None,
@@ -67,6 +71,7 @@ impl<X: Xlen> InstrIR<X> {
     pub fn with_source_loc(
         pc: X::Reg,
         size: u8,
+        op: u16,
         statements: Vec<Stmt<X>>,
         terminator: Terminator<X>,
         source_loc: SourceLoc,
@@ -74,6 +79,7 @@ impl<X: Xlen> InstrIR<X> {
         Self {
             pc,
             size,
+            op,
             statements,
             terminator,
             source_loc: Some(source_loc),

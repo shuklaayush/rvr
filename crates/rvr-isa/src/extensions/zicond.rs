@@ -59,7 +59,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicondExtension {
         match instr.opid {
             OP_CZERO_EQZ => lift_czero_eqz::<X>(instr),
             OP_CZERO_NEZ => lift_czero_nez::<X>(instr),
-            _ => InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("unknown Zicond opid")),
+            _ => InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unknown Zicond opid")),
         }
     }
 
@@ -81,25 +81,25 @@ impl<X: Xlen> InstructionExtension<X> for ZicondExtension {
 fn lift_czero_eqz<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // czero.eqz: rd = (rs2 == 0) ? 0 : rs1
     let cond = Expr::eq(Expr::reg(rs2), Expr::imm(X::from_u64(0)));
     let result = Expr::select(cond, Expr::imm(X::from_u64(0)), Expr::reg(rs1));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_czero_nez<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // czero.nez: rd = (rs2 != 0) ? 0 : rs1
     let cond = Expr::ne(Expr::reg(rs2), Expr::imm(X::from_u64(0)));
     let result = Expr::select(cond, Expr::imm(X::from_u64(0)), Expr::reg(rs1));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 // === Disasm helpers ===

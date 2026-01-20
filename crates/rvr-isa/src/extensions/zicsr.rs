@@ -99,7 +99,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         let (stmts, term) = lift_zicsr(&instr.args, instr.opid);
-        InstrIR::new(instr.pc, instr.size, stmts, term)
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), stmts, term)
     }
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {

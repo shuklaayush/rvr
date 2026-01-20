@@ -66,6 +66,11 @@ impl OpId {
     pub const fn new(ext: u8, idx: u8) -> Self {
         Self { ext, idx }
     }
+
+    /// Pack OpId into uint16_t: (ext << 8) | idx.
+    pub const fn pack(self) -> u16 {
+        ((self.ext as u16) << 8) | (self.idx as u16)
+    }
 }
 
 impl Display for OpId {

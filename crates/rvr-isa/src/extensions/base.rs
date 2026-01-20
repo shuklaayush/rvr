@@ -64,6 +64,7 @@ pub const OP_SUBW: OpId = OpId::new(EXT_I, 48);
 pub const OP_SLLW: OpId = OpId::new(EXT_I, 49);
 pub const OP_SRLW: OpId = OpId::new(EXT_I, 50);
 pub const OP_SRAW: OpId = OpId::new(EXT_I, 51);
+pub const OP_MRET: OpId = OpId::new(EXT_I, 52);
 
 /// Get mnemonic for a base instruction.
 pub fn base_mnemonic(opid: OpId) -> &'static str {
@@ -80,6 +81,7 @@ pub fn base_mnemonic(opid: OpId) -> &'static str {
         40 => "lwu", 41 => "ld", 42 => "sd",
         43 => "addiw", 44 => "slliw", 45 => "srliw", 46 => "sraiw",
         47 => "addw", 48 => "subw", 49 => "sllw", 50 => "srlw", 51 => "sraw",
+        52 => "mret",
         _ => "???",
     }
 }
@@ -104,7 +106,7 @@ impl<X: Xlen> InstructionExtension<X> for BaseExtension {
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         let (stmts, term) = lift_base(&instr.args, instr.opid, instr.pc, instr.size);
-        InstrIR::new(instr.pc, instr.size, stmts, term)
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), stmts, term)
     }
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
@@ -171,6 +173,7 @@ const OP_INFO_I: &[OpInfo] = &[
     OpInfo { opid: OP_SLLW, name: "sllw", class: OpClass::Alu, size_hint: 4 },
     OpInfo { opid: OP_SRLW, name: "srlw", class: OpClass::Alu, size_hint: 4 },
     OpInfo { opid: OP_SRAW, name: "sraw", class: OpClass::Alu, size_hint: 4 },
+    OpInfo { opid: OP_MRET, name: "mret", class: OpClass::System, size_hint: 4 },
 ];
 
 // ===== Decode =====
@@ -266,6 +269,7 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         0x73 if funct3 == 0 => {
             if instr == 0x00000073 { (OP_ECALL, InstrArgs::None) }
             else if instr == 0x00100073 { (OP_EBREAK, InstrArgs::None) }
+            else if instr == 0x30200073 { (OP_MRET, InstrArgs::None) }
             else { return None; }
         }
         _ => return None,
@@ -340,6 +344,7 @@ fn lift_base<X: Xlen>(
         OP_ECALL => (Vec::new(), Terminator::trap("ecall")),
         OP_EBREAK => (Vec::new(), Terminator::trap("ebreak")),
         OP_FENCE => (Vec::new(), Terminator::Fall { target: None }),
+        OP_MRET => (Vec::new(), Terminator::Fall { target: None }),
 
         _ => (Vec::new(), Terminator::trap("unknown base instruction")),
     }

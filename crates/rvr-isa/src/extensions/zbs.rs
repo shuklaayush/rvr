@@ -111,7 +111,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
             OP_BINVI => lift_binvi::<X>(instr),
             OP_BSET => lift_bset::<X>(instr),
             OP_BSETI => lift_bseti::<X>(instr),
-            _ => InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("unknown Zbs opid")),
+            _ => InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unknown Zbs opid")),
         }
     }
 
@@ -139,7 +139,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
 fn lift_bclr<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 & ~(1 << (rs2 & (XLEN-1)))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -147,25 +147,25 @@ fn lift_bclr<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), index);
     let result = Expr::and(Expr::reg(rs1), Expr::not(bit));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_bclri<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 & ~(1 << shamt)
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), Expr::imm(X::from_u64(shamt as u64)));
     let result = Expr::and(Expr::reg(rs1), Expr::not(bit));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_bext<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = (rs1 >> (rs2 & (XLEN-1))) & 1
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -173,25 +173,25 @@ fn lift_bext<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let shifted = Expr::srl(Expr::reg(rs1), index);
     let result = Expr::and(shifted, Expr::imm(X::from_u64(1)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_bexti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = (rs1 >> shamt) & 1
     let shifted = Expr::srl(Expr::reg(rs1), Expr::imm(X::from_u64(shamt as u64)));
     let result = Expr::and(shifted, Expr::imm(X::from_u64(1)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_binv<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 ^ (1 << (rs2 & (XLEN-1)))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -199,25 +199,25 @@ fn lift_binv<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), index);
     let result = Expr::xor(Expr::reg(rs1), bit);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_binvi<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 ^ (1 << shamt)
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), Expr::imm(X::from_u64(shamt as u64)));
     let result = Expr::xor(Expr::reg(rs1), bit);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_bset<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 | (1 << (rs2 & (XLEN-1)))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -225,19 +225,19 @@ fn lift_bset<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), index);
     let result = Expr::or(Expr::reg(rs1), bit);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_bseti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 | (1 << shamt)
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), Expr::imm(X::from_u64(shamt as u64)));
     let result = Expr::or(Expr::reg(rs1), bit);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 // === Disasm helpers ===

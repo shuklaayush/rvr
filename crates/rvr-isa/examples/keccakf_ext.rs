@@ -82,6 +82,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
         InstrIR::new(
             instr.pc,
             instr.size,
+            instr.opid.pack(),
             vec![call],
             Terminator::Fall { target: None },
         )

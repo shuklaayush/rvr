@@ -114,7 +114,7 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         let (stmts, term) = lift_c(&instr.args, instr.opid, instr.pc, instr.size);
-        InstrIR::new(instr.pc, instr.size, stmts, term)
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), stmts, term)
     }
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {

@@ -223,7 +223,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
             OP_RORIW => lift_roriw::<X>(instr),
             OP_ORC_B => lift_unary::<X, _>(instr, |v| Expr::orc8(v)),
             OP_REV8 => lift_unary::<X, _>(instr, |v| Expr::rev8(v)),
-            _ => InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("unknown Zbb opid")),
+            _ => InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unknown Zbb opid")),
         }
     }
 
@@ -267,34 +267,34 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
 fn lift_andn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 & ~rs2
     let result = Expr::and(Expr::reg(rs1), Expr::not(Expr::reg(rs2)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_orn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = rs1 | ~rs2
     let result = Expr::or(Expr::reg(rs1), Expr::not(Expr::reg(rs2)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_xnor<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = ~(rs1 ^ rs2)
     let result = Expr::not(Expr::xor(Expr::reg(rs1), Expr::reg(rs2)));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_unary<X: Xlen, F>(instr: &DecodedInstr<X>, op: F) -> InstrIR<X>
@@ -303,11 +303,11 @@ where
 {
     let (rd, rs1) = match instr.args {
         InstrArgs::I { rd, rs1, .. } => (rd, rs1),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     let result = op(Expr::reg(rs1));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_binary<X: Xlen, F>(instr: &DecodedInstr<X>, op: F) -> InstrIR<X>
@@ -316,17 +316,17 @@ where
 {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     let result = op(Expr::reg(rs1), Expr::reg(rs2));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = (rs1 << (rs2 & mask)) | (rs1 >> ((XLEN - rs2) & mask))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -338,13 +338,13 @@ fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let right = Expr::srl(val, complement);
     let result = Expr::or(left, right);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = (rs1 >> (rs2 & mask)) | (rs1 << ((XLEN - rs2) & mask))
     let mask = X::from_u64((X::VALUE - 1) as u64);
@@ -356,13 +356,13 @@ fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, complement);
     let result = Expr::or(right, left);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // rd = (rs1 >> shamt) | (rs1 << (XLEN - shamt))
     let xlen = X::VALUE as u64;
@@ -372,13 +372,13 @@ fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, Expr::imm(X::from_u64(complement)));
     let result = Expr::or(right, left);
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // 32-bit rotate left, sign-extend result
     // rd = sext32((rs1[31:0] << (rs2 & 0x1F)) | (rs1[31:0] >> (32 - (rs2 & 0x1F))))
@@ -392,13 +392,13 @@ fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let right = Expr::srl(val, complement);
     let result = Expr::sext32(Expr::or(left, right));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // 32-bit rotate right, sign-extend result
     let val = Expr::zext32(Expr::reg(rs1));
@@ -411,13 +411,13 @@ fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, complement);
     let result = Expr::sext32(Expr::or(right, left));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
     // 32-bit rotate right immediate, sign-extend result
     let complement = (32 - shamt as u64) & 0x1F;
@@ -426,7 +426,7 @@ fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let left = Expr::sll(val, Expr::imm(X::from_u64(complement)));
     let result = Expr::sext32(Expr::or(right, left));
     let stmt = Stmt::write_reg(rd, result);
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 // === Disasm helpers ===

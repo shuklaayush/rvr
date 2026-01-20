@@ -101,7 +101,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
             OP_SH2ADD_UW => lift_shxadd_uw::<X>(instr, 2),
             OP_SH3ADD_UW => lift_shxadd_uw::<X>(instr, 3),
             OP_SLLI_UW => lift_slli_uw::<X>(instr),
-            _ => InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("unknown Zba opid")),
+            _ => InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unknown Zba opid")),
         }
     }
 
@@ -129,7 +129,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
 fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
 
     // rd = rs2 + (rs1 << shift)
@@ -137,13 +137,13 @@ fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
     let result = Expr::add(Expr::reg(rs2), shifted);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
 
     // rd = rs2 + zext32(rs1)
@@ -151,13 +151,13 @@ fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let result = Expr::add(Expr::reg(rs2), rs1_zext);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
     let (rd, rs1, rs2) = match instr.args {
         InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
 
     // rd = rs2 + (zext32(rs1) << shift)
@@ -166,13 +166,13 @@ fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
     let result = Expr::add(Expr::reg(rs2), shifted);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 fn lift_slli_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let (rd, rs1, shamt) = match instr.args {
         InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => return InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("bad args")),
+        _ => return InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("bad args")),
     };
 
     // rd = zext32(rs1) << shamt
@@ -180,7 +180,7 @@ fn lift_slli_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     let result = Expr::sll(rs1_zext, Expr::imm(X::from_u64(shamt as u64)));
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
-    InstrIR::new(instr.pc, instr.size, vec![stmt], Terminator::Fall { target: None })
+    InstrIR::new(instr.pc, instr.size, instr.opid.pack(), vec![stmt], Terminator::Fall { target: None })
 }
 
 // === Disasm helpers ===

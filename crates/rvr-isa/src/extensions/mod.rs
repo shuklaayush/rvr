@@ -42,7 +42,7 @@ pub use base::{
     OP_FENCE, OP_ECALL, OP_EBREAK,
     OP_LWU, OP_LD, OP_SD,
     OP_ADDIW, OP_SLLIW, OP_SRLIW, OP_SRAIW,
-    OP_ADDW, OP_SUBW, OP_SLLW, OP_SRLW, OP_SRAW,
+    OP_ADDW, OP_SUBW, OP_SLLW, OP_SRLW, OP_SRAW, OP_MRET,
     base_mnemonic,
 };
 pub use m::{
@@ -223,7 +223,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
             }
         }
         // No extension handles this - return trap
-        InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::trap("unhandled extension"))
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), Vec::new(), Terminator::trap("unhandled extension"))
     }
 
     /// Disassemble an instruction.
