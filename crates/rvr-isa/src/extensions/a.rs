@@ -183,7 +183,7 @@ fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
 
             if opid == OP_LR_W || opid == OP_LR_D {
                 let stmts = vec![Stmt::write_reg(rd, Expr::mem_u(Expr::read(rs1), width))];
-                return (stmts, Terminator::Fall);
+                return (stmts, Terminator::Fall { target: None });
             }
 
             if opid == OP_SC_W || opid == OP_SC_D {
@@ -191,7 +191,7 @@ fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
                     Stmt::write_mem(Expr::read(rs1), Expr::read(rs2), width),
                     Stmt::write_reg(rd, Expr::imm(X::from_u64(0))),
                 ];
-                return (stmts, Terminator::Fall);
+                return (stmts, Terminator::Fall { target: None });
             }
 
             match opid {
@@ -220,5 +220,5 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
         Stmt::write_reg(rd, old),
         Stmt::write_mem(addr, new, width),
     ];
-    (stmts, Terminator::Fall)
+    (stmts, Terminator::Fall { target: None })
 }

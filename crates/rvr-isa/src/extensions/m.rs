@@ -149,7 +149,7 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::read(*rs2)))]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }

@@ -339,7 +339,7 @@ fn lift_base<X: Xlen>(
 
         OP_ECALL => (Vec::new(), Terminator::trap("ecall")),
         OP_EBREAK => (Vec::new(), Terminator::trap("ebreak")),
-        OP_FENCE => (Vec::new(), Terminator::Fall),
+        OP_FENCE => (Vec::new(), Terminator::Fall { target: None }),
 
         _ => (Vec::new(), Terminator::trap("unknown base instruction")),
     }
@@ -352,7 +352,7 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::read(*rs2)))]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -365,7 +365,7 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))))]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -378,7 +378,7 @@ where F: FnOnce(Expr<X>, Expr<X>) -> Expr<X> {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))))]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -390,7 +390,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, Expr::imm(X::sign_extend_32(*imm as u32)))]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -402,7 +402,7 @@ fn lift_auipc<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminato
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, Expr::add(Expr::imm(pc), Expr::imm(X::sign_extend_32(*imm as u32))))]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -416,7 +416,7 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
                 let val = if signed { Expr::mem_s(addr, width) } else { Expr::mem_u(addr, width) };
                 vec![Stmt::write_reg(*rd, val)]
             } else { Vec::new() };
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -426,7 +426,7 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
             let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
-            (vec![Stmt::write_mem(addr, Expr::read(*rs2), width)], Terminator::Fall)
+            (vec![Stmt::write_mem(addr, Expr::read(*rs2), width)], Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }

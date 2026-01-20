@@ -72,7 +72,13 @@ impl<X: Xlen> IRBuilder<X> {
 
     /// Build with fall-through terminator.
     pub fn build_fall(self) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.statements, Terminator::Fall)
+        let next_pc = X::from_u64(X::to_u64(self.pc) + self.size as u64);
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::fall(next_pc))
+    }
+
+    /// Build with fall-through terminator (no explicit target).
+    pub fn build_fall_no_target(self) -> InstrIR<X> {
+        InstrIR::new(self.pc, self.size, self.statements, Terminator::Fall { target: None })
     }
 
     /// Build with static jump terminator.

@@ -34,7 +34,7 @@ impl<X: Xlen> InstructionExtension<X> for ZifenceiExtension {
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         // FENCE.I is a no-op in recompilation (instruction cache is always coherent)
-        InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::Fall)
+        InstrIR::new(instr.pc, instr.size, Vec::new(), Terminator::Fall { target: None })
     }
 
     fn disasm(&self, _instr: &DecodedInstr<X>) -> String {

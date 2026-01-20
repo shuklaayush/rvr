@@ -16,7 +16,10 @@ pub enum BranchHint {
 #[derive(Clone, Debug)]
 pub enum Terminator<X: Xlen> {
     /// Fall through to next instruction.
-    Fall,
+    Fall {
+        /// Target PC (next_pc). Optional for backward compatibility.
+        target: Option<X::Reg>,
+    },
     /// Unconditional jump to static target.
     Jump { target: X::Reg },
     /// Unconditional jump to computed address.
@@ -28,7 +31,10 @@ pub enum Terminator<X: Xlen> {
     /// Conditional branch.
     Branch {
         cond: Expr<X>,
+        /// Branch taken target.
         target: X::Reg,
+        /// Fall-through target (next_pc).
+        fall: Option<X::Reg>,
         hint: BranchHint,
     },
     /// Exit program with code.
@@ -39,7 +45,7 @@ pub enum Terminator<X: Xlen> {
 
 impl<X: Xlen> Default for Terminator<X> {
     fn default() -> Self {
-        Self::Fall
+        Self::Fall { target: None }
     }
 }
 
@@ -57,11 +63,27 @@ impl<X: Xlen> Terminator<X> {
         }
     }
 
+    /// Create a fall-through terminator with explicit target.
+    pub fn fall(target: X::Reg) -> Self {
+        Self::Fall { target: Some(target) }
+    }
+
     /// Create a conditional branch terminator.
     pub fn branch(cond: Expr<X>, target: X::Reg) -> Self {
         Self::Branch {
             cond,
             target,
+            fall: None,
+            hint: BranchHint::None,
+        }
+    }
+
+    /// Create a conditional branch terminator with fall-through target.
+    pub fn branch_with_fall(cond: Expr<X>, target: X::Reg, fall: X::Reg) -> Self {
+        Self::Branch {
+            cond,
+            target,
+            fall: Some(fall),
             hint: BranchHint::None,
         }
     }
@@ -80,7 +102,7 @@ impl<X: Xlen> Terminator<X> {
 
     /// Check if this terminator is a fall-through.
     pub fn is_fall(&self) -> bool {
-        matches!(self, Self::Fall)
+        matches!(self, Self::Fall { .. })
     }
 
     /// Check if this terminator is any kind of jump.
@@ -115,6 +137,15 @@ impl<X: Xlen> Terminator<X> {
 
     /// Check if this terminator is any kind of control flow (not fall-through).
     pub fn is_control_flow(&self) -> bool {
-        !matches!(self, Self::Fall)
+        !matches!(self, Self::Fall { .. })
+    }
+
+    /// Get the fall-through target PC, if any.
+    pub fn fall_target(&self) -> Option<X::Reg> {
+        match self {
+            Self::Fall { target } => *target,
+            Self::Branch { fall, .. } => *fall,
+            _ => None,
+        }
     }
 }

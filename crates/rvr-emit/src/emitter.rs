@@ -311,6 +311,119 @@ impl<X: Xlen> CEmitter<X> {
                 let args: Vec<String> = expr.extern_args.iter().map(|a| self.render_expr(a)).collect();
                 format!("{}({})", fn_name, args.join(", "))
             }
+            // M extension high bits
+            ExprKind::MulH => {
+                let l = self.render_expr(expr.left.as_ref().unwrap());
+                let r = self.render_expr(expr.right.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("rv_mulh64({}, {})", l, r)
+                } else {
+                    format!("rv_mulh({}, {})", l, r)
+                }
+            }
+            ExprKind::MulHSU => {
+                let l = self.render_expr(expr.left.as_ref().unwrap());
+                let r = self.render_expr(expr.right.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("rv_mulhsu64({}, {})", l, r)
+                } else {
+                    format!("rv_mulhsu({}, {})", l, r)
+                }
+            }
+            ExprKind::MulHU => {
+                let l = self.render_expr(expr.left.as_ref().unwrap());
+                let r = self.render_expr(expr.right.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("rv_mulhu64({}, {})", l, r)
+                } else {
+                    format!("rv_mulhu({}, {})", l, r)
+                }
+            }
+            ExprKind::Neg => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("(-{})", o)
+            }
+            // Zbb bit manipulation
+            ExprKind::Clz => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("__builtin_clzll({} | 1) - ({} == 0 ? 0 : 0)", o, o)
+                } else {
+                    format!("__builtin_clz({} | 1) - ({} == 0 ? 0 : 0)", o, o)
+                }
+            }
+            ExprKind::Ctz => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("({} ? __builtin_ctzll({}) : 64)", o, o)
+                } else {
+                    format!("({} ? __builtin_ctz({}) : 32)", o, o)
+                }
+            }
+            ExprKind::Cpop => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("__builtin_popcountll({})", o)
+                } else {
+                    format!("__builtin_popcount({})", o)
+                }
+            }
+            ExprKind::Clz32 => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("((uint64_t)__builtin_clz((uint32_t){} | 1))", o)
+            }
+            ExprKind::Ctz32 => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("((uint64_t)((uint32_t){} ? __builtin_ctz((uint32_t){}) : 32))", o, o)
+            }
+            ExprKind::Cpop32 => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("((uint64_t)__builtin_popcount((uint32_t){}))", o)
+            }
+            ExprKind::Orc8 => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("rv_orc_b({})", o)
+            }
+            ExprKind::Rev8 => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("__builtin_bswap64({})", o)
+                } else {
+                    format!("__builtin_bswap32({})", o)
+                }
+            }
+            // Zbkb bit manipulation
+            ExprKind::Pack => {
+                let l = self.render_expr(expr.left.as_ref().unwrap());
+                let r = self.render_expr(expr.right.as_ref().unwrap());
+                if X::VALUE == 64 {
+                    format!("(((uint64_t)(uint32_t){}) | ((uint64_t)(uint32_t){} << 32))", l, r)
+                } else {
+                    format!("(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16))", l, r)
+                }
+            }
+            ExprKind::Pack8 => {
+                let l = self.render_expr(expr.left.as_ref().unwrap());
+                let r = self.render_expr(expr.right.as_ref().unwrap());
+                format!("((({})(uint8_t){}) | (({})(uint8_t){} << 8))", self.reg_type, l, self.reg_type, r)
+            }
+            ExprKind::Pack16 => {
+                let l = self.render_expr(expr.left.as_ref().unwrap());
+                let r = self.render_expr(expr.right.as_ref().unwrap());
+                format!("((int64_t)(int32_t)(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16)))", l, r)
+            }
+            ExprKind::Brev8 => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("rv_brev8({})", o)
+            }
+            ExprKind::Zip => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("rv_zip({})", o)
+            }
+            ExprKind::Unzip => {
+                let o = self.render_expr(expr.left.as_ref().unwrap());
+                format!("rv_unzip({})", o)
+            }
         }
     }
 
@@ -351,6 +464,12 @@ impl<X: Xlen> CEmitter<X> {
                 let idx = X::to_u64(expr.imm);
                 format!("_t{}", idx)
             }
+            Space::TraceIdx => "state->trace_idx".to_string(),
+            Space::PcIdx => "state->pc_idx".to_string(),
+            Space::ResAddr => "state->res_addr".to_string(),
+            Space::ResValid => "state->res_valid".to_string(),
+            Space::Exited => "state->exited".to_string(),
+            Space::ExitCode => "state->exit_code".to_string(),
         }
     }
 
@@ -460,7 +579,7 @@ impl<X: Xlen> CEmitter<X> {
     /// Render terminator.
     fn render_terminator(&mut self, term: &Terminator<X>) {
         match term {
-            Terminator::Fall => {
+            Terminator::Fall { .. } => {
                 // Fall through to next instruction
             }
             Terminator::Jump { target } => {
@@ -473,9 +592,9 @@ impl<X: Xlen> CEmitter<X> {
                     self.render_jump_dynamic(addr);
                 }
             }
-            Terminator::Branch { cond, target, hint } => {
+            Terminator::Branch { cond, target, .. } => {
                 let cond_str = self.render_expr(cond);
-                self.render_branch(&cond_str, X::to_u64(*target), *hint);
+                self.render_branch(&cond_str, X::to_u64(*target), BranchHint::None);
             }
             Terminator::Exit { code } => {
                 let code_str = self.render_expr(code);

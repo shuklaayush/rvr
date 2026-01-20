@@ -16,6 +16,9 @@ pub enum ExprKind {
     Add,
     Sub,
     Mul,
+    MulH,     // Upper XLEN bits of signed*signed
+    MulHSU,   // Upper XLEN bits of signed*unsigned
+    MulHU,    // Upper XLEN bits of unsigned*unsigned
     Div,
     DivU,
     Rem,
@@ -29,6 +32,7 @@ pub enum ExprKind {
     Srl,
     Sra,
     Not,
+    Neg,      // Unary negation
 
     // Comparison
     Eq,
@@ -38,7 +42,7 @@ pub enum ExprKind {
     Ltu,
     Geu,
 
-    // RV64 32-bit operations
+    // RV64 32-bit operations (sign-extend result to XLEN)
     AddW,
     SubW,
     MulW,
@@ -58,6 +62,24 @@ pub enum ExprKind {
     Zext16,
     Zext32,
 
+    // Zbb bit manipulation
+    Clz,      // Count leading zeros
+    Ctz,      // Count trailing zeros
+    Cpop,     // Population count
+    Clz32,    // Count leading zeros (32-bit)
+    Ctz32,    // Count trailing zeros (32-bit)
+    Cpop32,   // Population count (32-bit)
+    Orc8,     // OR-combine bytes
+    Rev8,     // Byte-reverse register
+
+    // Zbkb bit manipulation
+    Pack,     // Pack lower halves
+    Pack8,    // Pack lowest bytes
+    Pack16,   // Pack lower 16-bits, sign-extend (RV64)
+    Brev8,    // Bit-reverse each byte
+    Zip,      // Bit interleave (RV32 only)
+    Unzip,    // Bit deinterleave (RV32 only)
+
     // Ternary
     Select,
 
@@ -76,6 +98,15 @@ pub enum Space {
     Cycle,
     Instret,
     Temp,
+    // Tracing
+    TraceIdx,
+    PcIdx,
+    // LR/SC reservation
+    ResAddr,
+    ResValid,
+    // Exit state
+    Exited,
+    ExitCode,
 }
 
 /// Expression tree node.
@@ -379,18 +410,212 @@ impl<X: Xlen> Expr<X> {
     // ===== M extension high bits =====
 
     pub fn mulh(left: Self, right: Self) -> Self {
-        // MULH returns upper XLEN bits of signed*signed multiplication
-        Self::binop(ExprKind::Mul, left, right) // Simplified - full impl would need high bits
+        Self::binop(ExprKind::MulH, left, right)
     }
 
     pub fn mulhsu(left: Self, right: Self) -> Self {
-        // MULHSU returns upper XLEN bits of signed*unsigned multiplication
-        Self::binop(ExprKind::Mul, left, right) // Simplified
+        Self::binop(ExprKind::MulHSU, left, right)
     }
 
     pub fn mulhu(left: Self, right: Self) -> Self {
-        // MULHU returns upper XLEN bits of unsigned*unsigned multiplication
-        Self::binop(ExprKind::Mul, left, right) // Simplified
+        Self::binop(ExprKind::MulHU, left, right)
+    }
+
+    // ===== Unary negation =====
+
+    pub fn neg(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Neg,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    // ===== Zbb bit manipulation =====
+
+    pub fn clz(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Clz,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn ctz(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Ctz,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn cpop(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Cpop,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn clz32(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Clz32,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn ctz32(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Ctz32,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn cpop32(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Cpop32,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn orc8(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Orc8,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn rev8(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Rev8,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn sext8(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Sext8,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn sext16(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Sext16,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn zext8(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Zext8,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn zext16(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Zext16,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn zext32(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Zext32,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    // ===== Zbkb bit manipulation =====
+
+    pub fn pack(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::Pack, left, right)
+    }
+
+    pub fn pack8(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::Pack8, left, right)
+    }
+
+    pub fn pack16(left: Self, right: Self) -> Self {
+        Self::binop(ExprKind::Pack16, left, right)
+    }
+
+    pub fn brev8(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Brev8,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn zip(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Zip,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    pub fn unzip(val: Self) -> Self {
+        Self {
+            kind: ExprKind::Unzip,
+            left: Some(Box::new(val)),
+            ..Default::default()
+        }
+    }
+
+    // ===== Space-specific reads =====
+
+    pub fn res_addr() -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::ResAddr,
+            ..Default::default()
+        }
+    }
+
+    pub fn res_valid() -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::ResValid,
+            ..Default::default()
+        }
+    }
+
+    pub fn instret() -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::Instret,
+            ..Default::default()
+        }
+    }
+
+    pub fn cycle() -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::Cycle,
+            ..Default::default()
+        }
+    }
+
+    pub fn temp(idx: u8) -> Self {
+        Self {
+            kind: ExprKind::Read,
+            space: Space::Temp,
+            imm: X::from_u64(idx as u64),
+            ..Default::default()
+        }
     }
 
     // ===== Comparison shortcuts =====

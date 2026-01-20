@@ -150,7 +150,7 @@ fn lift_csrrw<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
                 stmts.push(Stmt::write_reg(*rd, Expr::csr(*csr)));
             }
             stmts.push(Stmt::write_csr(*csr, Expr::read(*rs1)));
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -167,7 +167,7 @@ fn lift_csrrs<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *rs1 != 0 {
                 stmts.push(Stmt::write_csr(*csr, Expr::or(old_val, Expr::read(*rs1))));
             }
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -184,7 +184,7 @@ fn lift_csrrc<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *rs1 != 0 {
                 stmts.push(Stmt::write_csr(*csr, Expr::and(old_val, Expr::not(Expr::read(*rs1)))));
             }
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -198,7 +198,7 @@ fn lift_csrrwi<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
                 stmts.push(Stmt::write_reg(*rd, Expr::csr(*csr)));
             }
             stmts.push(Stmt::write_csr(*csr, Expr::imm(X::from_u64(*imm as u64))));
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -215,7 +215,7 @@ fn lift_csrrsi<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *imm != 0 {
                 stmts.push(Stmt::write_csr(*csr, Expr::or(old_val, Expr::imm(X::from_u64(*imm as u64)))));
             }
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -232,7 +232,7 @@ fn lift_csrrci<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *imm != 0 {
                 stmts.push(Stmt::write_csr(*csr, Expr::and(old_val, Expr::not(Expr::imm(X::from_u64(*imm as u64))))));
             }
-            (stmts, Terminator::Fall)
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
