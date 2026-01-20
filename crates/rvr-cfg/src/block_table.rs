@@ -104,7 +104,7 @@ impl<X: Xlen> BlockTable<X> {
 
     /// Build linear blocks (one instruction per block).
     fn build_linear_blocks(&mut self) {
-        let base = self.instruction_table.base_address();
+        let _base = self.instruction_table.base_address();
         let end = self.instruction_table.end_address();
         let mut pc = base;
 
@@ -135,7 +135,7 @@ impl<X: Xlen> BlockTable<X> {
     /// Find basic block leaders.
     fn find_leaders(&mut self, registry: &ExtensionRegistry<X>) -> HashSet<u64> {
         let mut leaders = HashSet::new();
-        let base = self.instruction_table.base_address();
+        let _base = self.instruction_table.base_address();
         let end = self.instruction_table.end_address();
 
         // Entry point is always a leader
