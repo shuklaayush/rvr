@@ -31,7 +31,8 @@ pub fn gen_syscalls_source<X: Xlen>(cfg: &SyscallsConfig) -> String {
 
     writeln!(
         s,
-        r#"#include \"{}.h\"
+        r#"#include "{}.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

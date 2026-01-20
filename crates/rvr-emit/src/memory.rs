@@ -162,37 +162,38 @@ fn gen_memory_functions(cfg: &MemoryConfig) -> String {
         r#"/* Guard size (>= page size and max load/store offset +/-2048) */
 constexpr size_t GUARD_SIZE = 1 << 14;
 
-void rv_init_memory(RvState* state) {
+int rv_init_memory(RvState* state) {{
     size_t total_size = RV_MEMORY_SIZE + 2 * GUARD_SIZE;
 
     /* Allocate with guard pages on each side */
     uint8_t* region = (uint8_t*)mmap(NULL, total_size,
         PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (region == MAP_FAILED) {
+    if (region == MAP_FAILED) {{
         perror("mmap");
-        exit(1);
-    }
+        return 1;
+    }}
     state->memory = region + GUARD_SIZE;
     mprotect(state->memory, RV_MEMORY_SIZE, PROT_READ | PROT_WRITE);
 
     /* Copy segment data */
-    for (size_t i = 0; i < sizeof(segments)/sizeof(segments[0]); i++) {
-        if (segments[i].data != NULL && segments[i].filesz > 0) {
+    for (size_t i = 0; i < sizeof(segments)/sizeof(segments[0]); i++) {{
+        if (segments[i].data != NULL && segments[i].filesz > 0) {{
             memcpy(state->memory + segments[i].vaddr,
                    segments[i].data, segments[i].filesz);
-        }
-    }
+        }}
+    }}
 
     state->start_brk = {initial_brk};
     state->brk = state->start_brk;
-}
+    return 0;
+}}
 
-void rv_free_memory(RvState* state) {
-    if (state->memory != NULL) {
+void rv_free_memory(RvState* state) {{
+    if (state->memory != NULL) {{
         munmap(state->memory - GUARD_SIZE, RV_MEMORY_SIZE + 2 * GUARD_SIZE);
         state->memory = NULL;
-    }
-}
+    }}
+}}
 "#,
         initial_brk = cfg.initial_brk,
     )

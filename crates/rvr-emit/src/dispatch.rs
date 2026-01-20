@@ -67,14 +67,15 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     s.push_str("/* Dispatch table: PC -> block function */\n");
     s.push_str("const rv_fn dispatch_table[] = {\n");
 
+    let width = if X::VALUE == 64 { 16 } else { 8 };
     let mut addr = cfg.inputs.entry_point;
     while addr < cfg.inputs.pc_end {
         if cfg.inputs.valid_addresses.contains(&addr) {
             // Block start - point to its own function
-            writeln!(s, "    B_{:016x},", addr).unwrap();
+            writeln!(s, "    B_{addr:0width$x},", addr = addr, width = width).unwrap();
         } else if let Some(&merged) = cfg.inputs.absorbed_to_merged.get(&addr) {
             // Absorbed block - point to merged block's function
-            writeln!(s, "    B_{:016x},", merged).unwrap();
+            writeln!(s, "    B_{addr:0width$x},", addr = merged, width = width).unwrap();
         } else {
             s.push_str("    rv_trap,\n");
         }

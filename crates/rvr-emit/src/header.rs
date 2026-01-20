@@ -519,6 +519,34 @@ static inline uint64_t rv_remu64(uint64_t a, uint64_t b) {{
     return a % b;
 }}
 
+/* Multiply-high helpers */
+static inline uint32_t rv_mulh(int32_t a, int32_t b) {{
+    return (uint32_t)(((int64_t)a * (int64_t)b) >> 32);
+}}
+
+static inline uint32_t rv_mulhsu(int32_t a, uint32_t b) {{
+    return (uint32_t)(((int64_t)a * (int64_t)(uint64_t)b) >> 32);
+}}
+
+static inline uint32_t rv_mulhu(uint32_t a, uint32_t b) {{
+    return (uint32_t)(((uint64_t)a * (uint64_t)b) >> 32);
+}}
+
+static inline uint64_t rv_mulh64(int64_t a, int64_t b) {{
+    __int128 prod = (__int128)a * (__int128)b;
+    return (uint64_t)(prod >> 64);
+}}
+
+static inline uint64_t rv_mulhsu64(int64_t a, uint64_t b) {{
+    __int128 prod = (__int128)a * (__int128)b;
+    return (uint64_t)(prod >> 64);
+}}
+
+static inline uint64_t rv_mulhu64(uint64_t a, uint64_t b) {{
+    unsigned __int128 prod = (unsigned __int128)a * (unsigned __int128)b;
+    return (uint64_t)(prod >> 64);
+}}
+
 /* RV64 word-width division helpers */
 static inline uint64_t rv_divw(int32_t a, int32_t b) {{
     if (b == 0) return UINT64_MAX;
@@ -770,11 +798,14 @@ typedef __attribute__((preserve_none)) void (*rv_fn)({});
 
 fn gen_block_declarations<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let mut decls = String::from("/* Block forward declarations */\n");
+    let width = if X::VALUE == 64 { 16 } else { 8 };
     for &addr in &cfg.block_addresses {
         writeln!(
             decls,
-            "__attribute__((preserve_none)) void B_{:016x}({});",
-            addr, cfg.sig.params
+            "__attribute__((preserve_none)) void B_{addr:0width$x}({});",
+            cfg.sig.params,
+            addr = addr,
+            width = width
         )
         .unwrap();
     }
