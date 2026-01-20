@@ -76,7 +76,7 @@ pub use zifencei::OP_FENCE_I;
 
 use std::collections::HashMap;
 
-use crate::syscalls::{RiscvTestsHandler, SyscallHandler};
+use crate::syscalls::{BareMetalHandler, SyscallHandler};
 use crate::{DecodedInstr, OpId, OpInfo};
 use rvr_ir::{InstrIR, Terminator, Xlen};
 
@@ -200,7 +200,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
         Self {
             extensions,
             overrides: HashMap::new(),
-            syscall_handler: Box::new(RiscvTestsHandler),
+            syscall_handler: Box::new(BareMetalHandler),
         }
     }
 
@@ -218,7 +218,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
         Self {
             extensions: vec![Box::new(BaseExtension)],
             overrides: HashMap::new(),
-            syscall_handler: Box::new(RiscvTestsHandler),
+            syscall_handler: Box::new(BareMetalHandler),
         }
     }
 
@@ -248,7 +248,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
         Self {
             extensions: Vec::new(),
             overrides: HashMap::new(),
-            syscall_handler: Box::new(RiscvTestsHandler),
+            syscall_handler: Box::new(BareMetalHandler),
         }
     }
 
@@ -382,7 +382,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// use rvr_ir::Rv64;
     ///
     /// let registry = ExtensionRegistry::<Rv64>::standard()
-    ///     .with_syscall_handler(LinuxHandler);
+    ///     .with_syscall_handler(LinuxHandler::default());
     /// ```
     pub fn with_syscall_handler(mut self, handler: impl SyscallHandler<X> + 'static) -> Self {
         self.syscall_handler = Box::new(handler);
@@ -891,7 +891,7 @@ mod tests {
         use rvr_ir::Terminator;
 
         // Use LinuxHandler instead of default
-        let registry = ExtensionRegistry::<Rv64>::standard().with_syscall_handler(LinuxHandler);
+        let registry = ExtensionRegistry::<Rv64>::standard().with_syscall_handler(LinuxHandler::default());
 
         // ECALL encoding: 0x00000073
         let bytes = [0x73, 0x00, 0x00, 0x00];
@@ -899,8 +899,10 @@ mod tests {
         assert_eq!(instr.opid, OP_ECALL);
 
         let ir = registry.lift(&instr);
-        // LinuxHandler also exits with a0 (currently same behavior)
-        assert!(matches!(ir.terminator, Terminator::Exit { .. }));
+        // LinuxHandler uses Fall terminator (runtime checks exited flag)
+        assert!(matches!(ir.terminator, Terminator::Fall { .. }));
+        // LinuxHandler generates syscall dispatch statements
+        assert!(!ir.statements.is_empty());
     }
 
     #[test]
@@ -929,7 +931,7 @@ mod tests {
 
         // Override takes precedence over syscall handler
         let registry = ExtensionRegistry::<Rv64>::standard()
-            .with_syscall_handler(LinuxHandler)
+            .with_syscall_handler(LinuxHandler::default())
             .with_override(OP_ECALL, FixedExitOverride);
 
         // ECALL encoding: 0x00000073

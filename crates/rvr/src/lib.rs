@@ -206,6 +206,9 @@ pub use rvr_isa::{Rv32, Rv64, Xlen};
 mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
 
+mod runner;
+pub use runner::{RunError, RunResult, Runner};
+
 use std::marker::PhantomData;
 use std::path::Path;
 

@@ -79,6 +79,18 @@ struct TracerArgs {
     tracer_pass: Vec<String>,
 }
 
+/// Output format for run command.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+enum OutputFormat {
+    /// Human-readable output (default)
+    #[default]
+    Text,
+    /// Mojo-compatible output format
+    Mojo,
+    /// JSON output
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Compile an ELF file to a shared library
@@ -135,6 +147,20 @@ enum Commands {
         #[command(flatten)]
         tracer: TracerArgs,
     },
+    /// Run a compiled shared library
+    Run {
+        /// Directory containing the compiled shared library
+        #[arg(value_name = "LIB_DIR")]
+        lib_dir: PathBuf,
+
+        /// Output format
+        #[arg(long, value_enum, default_value = "text")]
+        format: OutputFormat,
+
+        /// Number of runs (for averaging)
+        #[arg(long, default_value = "1")]
+        runs: usize,
+    },
 }
 
 fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
@@ -186,6 +212,58 @@ fn build_tracer_config(args: &TracerArgs) -> Result<TracerConfig, String> {
         config = config.with_passed_vars(passed_vars);
     }
     Ok(config)
+}
+
+fn print_single_result(format: OutputFormat, result: &rvr::RunResult) {
+    match format {
+        OutputFormat::Text => {
+            println!("Exit code: {}", result.exit_code);
+            println!("Instructions: {}", result.instret);
+            println!("Time: {:.6}s", result.time_secs);
+            println!("Speed: {:.2} MIPS", result.mips);
+        }
+        OutputFormat::Mojo => {
+            result.print_mojo_format();
+        }
+        OutputFormat::Json => {
+            result.print_json();
+        }
+    }
+}
+
+fn print_multi_result(
+    format: OutputFormat,
+    runs: usize,
+    first: &rvr::RunResult,
+    avg_time: f64,
+    avg_mips: f64,
+) {
+    match format {
+        OutputFormat::Text => {
+            println!("Runs: {}", runs);
+            println!("Exit code: {}", first.exit_code);
+            println!("Instructions: {}", first.instret);
+            println!("Avg time: {:.6}s", avg_time);
+            println!("Avg speed: {:.2} MIPS", avg_mips);
+        }
+        OutputFormat::Mojo => {
+            println!("instret: {}", first.instret);
+            println!("time: {:.6}", avg_time);
+            println!("speed: {:.2} MIPS", avg_mips);
+        }
+        OutputFormat::Json => {
+            println!(
+                r#"{{"runs":{},"instret":{},"avg_time":{:.6},"avg_mips":{:.2},"exit_code":{}}}"#,
+                runs, first.instret, avg_time, avg_mips, first.exit_code
+            );
+        }
+    }
+}
+
+fn exit_if_failed(code: u8) {
+    if code != 0 {
+        std::process::exit(code as i32);
+    }
 }
 
 fn main() {
@@ -249,6 +327,49 @@ fn main() {
                 Err(e) => {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
+                }
+            }
+        }
+        Commands::Run {
+            lib_dir,
+            format,
+            runs,
+        } => {
+            let runner = match rvr::Runner::load(&lib_dir) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Error loading library: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            if runs <= 1 {
+                match runner.run() {
+                    Ok(result) => {
+                        print_single_result(format, &result);
+                        exit_if_failed(result.exit_code);
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                match runner.run_multiple(runs) {
+                    Ok(results) => {
+                        let avg_time: f64 =
+                            results.iter().map(|r| r.time_secs).sum::<f64>() / runs as f64;
+                        let avg_mips: f64 =
+                            results.iter().map(|r| r.mips).sum::<f64>() / runs as f64;
+                        let first = &results[0];
+
+                        print_multi_result(format, runs, first, avg_time, avg_mips);
+                        exit_if_failed(first.exit_code);
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
                 }
             }
         }

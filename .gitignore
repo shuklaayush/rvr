@@ -4,3 +4,11 @@ Cargo.lock
 *.o
 *.a
 /output/
+
+# Built RISC-V binaries
+/bin/reth/
+/bin/riscv/tests/
+
+# Perf data
+perf.data
+perf.data.old
