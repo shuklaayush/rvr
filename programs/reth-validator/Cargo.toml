@@ -1,0 +1,54 @@
+[package]
+name = "reth-validator"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+sparsestate = { git = "https://github.com/eth-act/zkvm-ethereum-mpt.git", default-features = false }
+
+ere-io-serde = { git = "https://github.com/eth-applied-research-group/ere", default-features = false }
+
+# reth
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false, features = [
+    "serde",
+    "serde-bincode-compat",
+] }
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false, features = ["k256"] }
+reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false }
+
+# alloy
+alloy-primitives = { version = "1.4.1", default-features = false }
+
+# external
+bincode_v2 = { package = "bincode", version = "2.0.1", default-features = false, features = ["alloc", "serde"] }
+serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0.145", default-features = false, features = ["alloc"] }
+
+[target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]
+critical-section = { version = "1.2", features = ["restore-state-bool"] }
+
+[target.'cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))'.dependencies]
+critical-section = { version = "1.2", features = ["std"] }
+
+[profile.release]
+panic = "abort"
+lto = "thin"
+codegen-units = 1
+debug = 2           # Full DWARF debug info (no runtime cost)
+strip = false       # Keep symbols for addr2line
+rpath = false
+
+[profile.release.build-override]
+opt-level = 3
+
+[profile.dev]
+panic = "abort"
+
+[[bin]]
+name = "reth-validator"
+path = "src/main.rs"

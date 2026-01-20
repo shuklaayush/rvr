@@ -1,0 +1,10 @@
+# Build artifacts
+/target/
+
+# Perf data
+perf.data
+perf.data.old
+
+# Editor files
+*.swp
+*~

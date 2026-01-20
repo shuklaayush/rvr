@@ -1,0 +1,22 @@
+[target.'cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))']
+# Enable for arch-specific optimizations (NEON, AVX, etc.)
+# rustflags = ["-C", "target-cpu=native"]
+rustflags = ["-C", "target-cpu=generic"]
+
+[target.riscv32imac-unknown-none-elf]
+runner = "echo"
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=--gc-sections",
+    "-C", "target-cpu=generic-rv32",
+    "-C", "code-model=medium",
+]
+
+[target.riscv64imac-unknown-none-elf]
+runner = "echo"
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=--gc-sections",
+    "-C", "target-cpu=generic-rv64",
+    "-C", "code-model=medium",
+]
