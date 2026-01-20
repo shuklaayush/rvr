@@ -43,7 +43,6 @@ pub enum RunError {
 /// C API function types.
 type RvStateSize = unsafe extern "C" fn() -> usize;
 type RvStateAlign = unsafe extern "C" fn() -> usize;
-type RvRegBytes = unsafe extern "C" fn() -> u32;
 type RvStateReset = unsafe extern "C" fn(*mut c_void);
 type RvInitMemory = unsafe extern "C" fn(*mut c_void) -> i32;
 type RvFreeMemory = unsafe extern "C" fn(*mut c_void);
@@ -51,7 +50,6 @@ type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type RvGetInstret = unsafe extern "C" fn(*const c_void) -> u64;
 type RvGetExitCode = unsafe extern "C" fn(*const c_void) -> u8;
 type RvGetEntryPoint = unsafe extern "C" fn() -> u32;
-type RvTracerKind = unsafe extern "C" fn() -> u32;
 type RvTracerPreflightSetup = unsafe extern "C" fn(*mut c_void, *mut u8, u32, *mut c_void, u32);
 type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
 
@@ -59,7 +57,6 @@ type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
 struct RvApi {
     state_size: RvStateSize,
     state_align: RvStateAlign,
-    reg_bytes: RvRegBytes,
     state_reset: RvStateReset,
     init_memory: RvInitMemory,
     free_memory: RvFreeMemory,
@@ -67,7 +64,8 @@ struct RvApi {
     get_instret: RvGetInstret,
     get_exit_code: RvGetExitCode,
     get_entry_point: RvGetEntryPoint,
-    tracer_kind: Option<RvTracerKind>,
+    reg_bytes: u32,
+    tracer_kind: u32,
     tracer_preflight_setup: Option<RvTracerPreflightSetup>,
     tracer_stats_setup: Option<RvTracerStatsSetup>,
 }
@@ -77,7 +75,7 @@ impl RvApi {
         Ok(Self {
             state_size: load_symbol(lib, b"rv_state_size", "rv_state_size")?,
             state_align: load_symbol(lib, b"rv_state_align", "rv_state_align")?,
-            reg_bytes: load_symbol(lib, b"rv_reg_bytes", "rv_reg_bytes")?,
+            reg_bytes: load_data_symbol(lib, b"RV_REG_BYTES").unwrap_or(0),
             state_reset: load_symbol(lib, b"rv_state_reset", "rv_state_reset")?,
             init_memory: load_symbol(lib, b"rv_init_memory", "rv_init_memory")?,
             free_memory: load_symbol(lib, b"rv_free_memory", "rv_free_memory")?,
@@ -85,7 +83,7 @@ impl RvApi {
             get_instret: load_symbol(lib, b"rv_get_instret", "rv_get_instret")?,
             get_exit_code: load_symbol(lib, b"rv_get_exit_code", "rv_get_exit_code")?,
             get_entry_point: load_symbol(lib, b"rv_get_entry_point", "rv_get_entry_point")?,
-            tracer_kind: load_optional_symbol(lib, b"rv_tracer_kind"),
+            tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
             tracer_preflight_setup: load_optional_symbol(lib, b"rv_tracer_preflight_setup"),
             tracer_stats_setup: load_optional_symbol(lib, b"rv_tracer_stats_setup"),
         })
@@ -101,6 +99,11 @@ unsafe fn load_symbol<T: Copy>(
         .get(symbol)
         .map_err(|e| RunError::SymbolNotFound(label.to_string(), e))?;
     Ok(*sym)
+}
+
+unsafe fn load_data_symbol(lib: &Library, symbol: &'static [u8]) -> Option<u32> {
+    let sym: libloading::Symbol<u32> = lib.get(symbol).ok()?;
+    Some(*sym)
 }
 
 unsafe fn load_optional_symbol<T: Copy>(lib: &Library, symbol: &'static [u8]) -> Option<T> {
@@ -176,16 +179,12 @@ struct TracerRuntime {
 
 impl TracerRuntime {
     fn new(api: &RvApi) -> Result<Option<Self>, RunError> {
-        let kind_fn = match api.tracer_kind {
-            Some(func) => func,
-            None => return Ok(None),
-        };
-        let kind = TracerKind::from_raw(unsafe { kind_fn() });
+        let kind = TracerKind::from_raw(api.tracer_kind);
         if kind == TracerKind::None {
             return Ok(None);
         }
 
-        let reg_bytes = unsafe { (api.reg_bytes)() };
+        let reg_bytes = api.reg_bytes;
         if reg_bytes == 0 {
             return Err(RunError::TracerSetupFailed(format!(
                 "unsupported reg size {}",
