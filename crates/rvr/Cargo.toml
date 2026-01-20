@@ -36,6 +36,14 @@ name = "custom_config"
 path = "../../examples/custom_config.rs"
 
 [[example]]
+name = "custom_tracer"
+path = "../../examples/custom_tracer.rs"
+
+[[example]]
+name = "custom_extension"
+path = "../../examples/custom_extension.rs"
+
+[[example]]
 name = "instruction_override"
 path = "../../examples/instruction_override.rs"
 
