@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to create a custom RISC-V extension
 //! without modifying core ISA code. The extension adds a hypothetical
-//! `keccakf.round` instruction that calls an external Keccak-F round function.
+//! `keccakf.permute` instruction that calls an external Keccak-F permutation.
 //!
 //! Run with: `cargo run --example keccakf_ext -p rvr-isa`
 
@@ -11,29 +11,27 @@ use rvr_isa::{
     DecodedInstr, ExtensionRegistry, InstrArgs, InstructionExtension, OpClass, OpId, OpInfo,
 };
 
-// Custom opcode for keccakf.round
+// Custom opcode for keccakf.permute
 // Custom extensions should define their own extension IDs.
 const EXT_KECCAKF: u8 = 128;
-const OP_KECCAKF_ROUND: OpId = OpId::new(EXT_KECCAKF, 0);
+const OP_KECCAKF_PERMUTE: OpId = OpId::new(EXT_KECCAKF, 0);
 
-/// Custom R4-type encoding for keccakf.round:
-///   31-27: funct5 = 0b00001 (identifies keccakf.round)
-///   26-25: fmt = 0b00
-///   24-20: rs3 (round constant index)
-///   19-15: rs2 (unused, typically zero)
+/// Custom R-type encoding for keccakf.permute:
+///   31-25: funct7 = 0b0000001 (identifies keccakf.permute)
+///   24-20: rs2 (unused, should be zero)
+///   19-15: rs1 (state pointer register)
 ///   14-12: funct3 = 0b000
-///   11-7:  rs1 (state pointer register)
+///   11-7:  rd (unused, should be zero)
 ///   6-0:   opcode = 0b0001011 (custom-0)
 const CUSTOM_0_OPCODE: u32 = 0b0001011;
-const KECCAKF_FUNCT5: u32 = 0b00001;
 const KECCAKF_FUNCT3: u32 = 0b000;
+const KECCAKF_FUNCT7: u32 = 0b0000001;
 
 /// Keccak-F extension for RISC-V.
 ///
-/// Adds the `keccakf.round` instruction which performs one round of
-/// the Keccak-F permutation. The instruction reads a state pointer
-/// from rs1 and a round constant index from rs3, and calls the
-/// external `keccakf_round(state_ptr, round_idx)` function.
+/// Adds the `keccakf.permute` instruction which performs the full
+/// 24-round Keccak-F permutation. The instruction reads a state pointer
+/// from rs1 and calls the external `keccakf_permute(state_ptr)` function.
 pub struct KeccakFExtension;
 
 impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
@@ -48,36 +46,33 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
     fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         let opcode = raw & 0x7F;
         let funct3 = (raw >> 12) & 0x7;
-        let funct5 = (raw >> 27) & 0x1F;
+        let funct7 = (raw >> 25) & 0x7F;
+        let rd = ((raw >> 7) & 0x1F) as u8;
+        let rs1 = ((raw >> 15) & 0x1F) as u8;
+        let rs2 = ((raw >> 20) & 0x1F) as u8;
 
-        // Check for custom-0 opcode with our funct5/funct3
-        if opcode != CUSTOM_0_OPCODE || funct3 != KECCAKF_FUNCT3 || funct5 != KECCAKF_FUNCT5 {
+        // Check for custom-0 opcode with our funct7/funct3
+        if opcode != CUSTOM_0_OPCODE || funct3 != KECCAKF_FUNCT3 || funct7 != KECCAKF_FUNCT7 {
             return None;
         }
 
-        // Extract register fields (R4-type format)
-        let rs1 = ((raw >> 15) & 0x1F) as u8; // state pointer
-        let rs3 = ((raw >> 20) & 0x1F) as u8; // round constant index
-
         Some(DecodedInstr::new(
-            OP_KECCAKF_ROUND,
+            OP_KECCAKF_PERMUTE,
             pc,
             4,
-            InstrArgs::Custom(Box::new([rs1 as u32, rs3 as u32])),
+            InstrArgs::R { rd, rs1, rs2 },
         ))
     }
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
-        // Extract rs1 (state pointer) and rs3 (round index) from custom args
-        let (rs1, rs3) = match &instr.args {
-            InstrArgs::Custom(args) if args.len() >= 2 => (args[0] as u8, args[1] as u8),
-            _ => panic!("keccakf.round requires Custom args with rs1 and rs3"),
+        // Extract rs1 (state pointer) from custom args
+        let rs1 = match &instr.args {
+            InstrArgs::R { rs1, .. } => *rs1,
+            _ => panic!("keccakf.permute requires R args with rs1"),
         };
 
-        // Build extern call: keccakf_round(state_ptr, round_idx)
         let state_ptr = Expr::reg(rs1);
-        let round_idx = Expr::reg(rs3);
-        let call = Stmt::extern_call("keccakf_round", vec![state_ptr, round_idx]);
+        let call = Stmt::extern_call("keccakf_permute", vec![state_ptr]);
 
         InstrIR::new(
             instr.pc,
@@ -90,20 +85,16 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
         match &instr.args {
-            InstrArgs::Custom(args) if args.len() >= 2 => {
-                let rs1 = args[0];
-                let rs3 = args[1];
-                format!("keccakf.round x{}, x{}", rs1, rs3)
-            }
-            _ => "keccakf.round ???".to_string(),
+            InstrArgs::R { rs1, .. } => format!("keccakf.permute x{}", rs1),
+            _ => "keccakf.permute ???".to_string(),
         }
     }
 
     fn op_info(&self, opid: OpId) -> Option<OpInfo> {
-        if opid == OP_KECCAKF_ROUND {
+        if opid == OP_KECCAKF_PERMUTE {
             Some(OpInfo {
-                opid: OP_KECCAKF_ROUND,
-                name: "keccakf.round",
+                opid: OP_KECCAKF_PERMUTE,
+                name: "keccakf.permute",
                 class: OpClass::Other,
                 size_hint: 4,
             })
@@ -113,13 +104,12 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
     }
 }
 
-/// Encode a keccakf.round instruction.
-fn encode_keccakf_round(rs1: u8, rs3: u8) -> [u8; 4] {
+/// Encode a keccakf.permute instruction.
+fn encode_keccakf_permute(rs1: u8) -> [u8; 4] {
     let raw: u32 = CUSTOM_0_OPCODE
         | (KECCAKF_FUNCT3 << 12)
         | ((rs1 as u32 & 0x1F) << 15)
-        | ((rs3 as u32 & 0x1F) << 20)
-        | (KECCAKF_FUNCT5 << 27);
+        | (KECCAKF_FUNCT7 << 25);
     raw.to_le_bytes()
 }
 
@@ -129,10 +119,10 @@ fn main() {
     // Create a registry with standard extensions plus our custom extension
     let registry = ExtensionRegistry::<Rv64>::standard().with_extension(KeccakFExtension);
 
-    // Encode keccakf.round x10, x5 (state ptr in a0, round idx in t0)
-    let instr_bytes = encode_keccakf_round(10, 5);
+    // Encode keccakf.permute x10 (state ptr in a0)
+    let instr_bytes = encode_keccakf_permute(10);
     println!(
-        "Encoded keccakf.round x10, x5: {:02x} {:02x} {:02x} {:02x}",
+        "Encoded keccakf.permute x10: {:02x} {:02x} {:02x} {:02x}",
         instr_bytes[0], instr_bytes[1], instr_bytes[2], instr_bytes[3]
     );
 
@@ -140,21 +130,20 @@ fn main() {
     let pc = 0x1000u64;
     let instr = registry
         .decode(&instr_bytes, pc)
-        .expect("Failed to decode keccakf.round");
+        .expect("Failed to decode keccakf.permute");
 
     println!(
         "Decoded: opid={}, pc=0x{:x}, size={}",
         instr.opid, pc, instr.size
     );
-    assert_eq!(instr.opid, OP_KECCAKF_ROUND);
+    assert_eq!(instr.opid, OP_KECCAKF_PERMUTE);
     assert_eq!(instr.size, 4);
 
     // Disassemble
     let disasm = registry.disasm(&instr);
     println!("Disassembly: {}", disasm);
-    assert!(disasm.contains("keccakf.round"));
+    assert!(disasm.contains("keccakf.permute"));
     assert!(disasm.contains("x10"));
-    assert!(disasm.contains("x5"));
 
     // Lift to IR
     let ir = registry.lift(&instr);
@@ -172,15 +161,15 @@ fn main() {
     match &ir.statements[0] {
         Stmt::ExternCall { fn_name, args } => {
             println!("\n  ExternCall: {}({} args)", fn_name, args.len());
-            assert_eq!(fn_name, "keccakf_round");
-            assert_eq!(args.len(), 2);
+            assert_eq!(fn_name, "keccakf_permute");
+            assert_eq!(args.len(), 1);
         }
         _ => panic!("Expected ExternCall statement"),
     }
 
     // Get op_info
     let info = registry
-        .op_info(OP_KECCAKF_ROUND)
+        .op_info(OP_KECCAKF_PERMUTE)
         .expect("OpInfo not found");
     println!("\nOpInfo:");
     println!("  Name: {}", info.name);
@@ -202,33 +191,33 @@ mod tests {
         let registry = ExtensionRegistry::<Rv64>::standard().with_extension(KeccakFExtension);
 
         // Encode and decode
-        let bytes = encode_keccakf_round(10, 5);
+        let bytes = encode_keccakf_permute(10);
         let instr = registry.decode(&bytes, 0x1000u64).unwrap();
-        assert_eq!(instr.opid, OP_KECCAKF_ROUND);
+        assert_eq!(instr.opid, OP_KECCAKF_PERMUTE);
 
         // Lift
         let ir = registry.lift(&instr);
         assert_eq!(ir.statements.len(), 1);
         match &ir.statements[0] {
             Stmt::ExternCall { fn_name, args } => {
-                assert_eq!(fn_name, "keccakf_round");
-                assert_eq!(args.len(), 2);
+                assert_eq!(fn_name, "keccakf_permute");
+                assert_eq!(args.len(), 1);
             }
             _ => panic!("Expected ExternCall"),
         }
 
         // Disasm
         let disasm = registry.disasm(&instr);
-        assert_eq!(disasm, "keccakf.round x10, x5");
+        assert_eq!(disasm, "keccakf.permute x10");
     }
 
     #[test]
     fn test_keccakf_op_info() {
         let ext = KeccakFExtension;
-        let info: Option<OpInfo> = InstructionExtension::<Rv64>::op_info(&ext, OP_KECCAKF_ROUND);
+        let info: Option<OpInfo> = InstructionExtension::<Rv64>::op_info(&ext, OP_KECCAKF_PERMUTE);
         assert!(info.is_some());
         let info = info.unwrap();
-        assert_eq!(info.name, "keccakf.round");
+        assert_eq!(info.name, "keccakf.permute");
         assert_eq!(info.class, OpClass::Other);
     }
 
