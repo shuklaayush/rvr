@@ -98,13 +98,14 @@ fn main() {
             addr_check,
             tohost,
             instret,
-            jobs: _,
+            jobs,
         } => {
             println!("Compiling {} to {}", input.display(), output.display());
             let options = CompileOptions::new()
                 .with_addr_check(addr_check)
                 .with_tohost(tohost)
-                .with_instret_mode(instret.into());
+                .with_instret_mode(instret.into())
+                .with_jobs(jobs);
             match rvr::compile_with_options(&input, &output, options) {
                 Ok(path) => println!("Output: {}", path.display()),
                 Err(e) => {

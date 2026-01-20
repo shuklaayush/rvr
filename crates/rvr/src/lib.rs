@@ -84,12 +84,14 @@ impl<X: Xlen> Recompiler<X> {
     }
 
     /// Compile an ELF file to a shared library.
-    pub fn compile(&self, elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+    ///
+    /// If `jobs` is 0, auto-detects based on CPU count.
+    pub fn compile(&self, elf_path: &Path, output_dir: &Path, jobs: usize) -> Result<std::path::PathBuf> {
         // First lift to C source
         let _c_path = self.lift(elf_path, output_dir)?;
 
         // Then compile C to .so
-        compile_c_to_shared(output_dir)?;
+        compile_c_to_shared(output_dir, jobs)?;
 
         // Return the path to the shared library
         let lib_name = output_dir.file_name()
@@ -138,6 +140,8 @@ pub struct CompileOptions {
     pub tohost: bool,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
+    /// Number of parallel compile jobs (0 = auto-detect based on CPU count).
+    pub jobs: usize,
 }
 
 impl CompileOptions {
@@ -161,6 +165,12 @@ impl CompileOptions {
     /// Set instret mode.
     pub fn with_instret_mode(mut self, mode: InstretMode) -> Self {
         self.instret_mode = mode;
+        self
+    }
+
+    /// Set number of parallel compile jobs (0 = auto-detect).
+    pub fn with_jobs(mut self, jobs: usize) -> Self {
+        self.jobs = jobs;
         self
     }
 
@@ -191,13 +201,13 @@ pub fn compile_with_options(
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
             let recompiler = Recompiler::<Rv32>::new(config);
-            recompiler.compile(elf_path, output_dir)
+            recompiler.compile(elf_path, output_dir, options.jobs)
         }
         64 => {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
             let recompiler = Recompiler::<Rv64>::new(config);
-            recompiler.compile(elf_path, output_dir)
+            recompiler.compile(elf_path, output_dir, options.jobs)
         }
         _ => Err(Error::XlenMismatch {
             expected: 32,
@@ -241,7 +251,9 @@ pub fn lift_to_c_with_options(
 }
 
 /// Compile C source to shared library.
-fn compile_c_to_shared(output_dir: &Path) -> Result<()> {
+///
+/// If `jobs` is 0, auto-detects based on CPU count.
+fn compile_c_to_shared(output_dir: &Path, jobs: usize) -> Result<()> {
     use std::process::Command;
 
     let makefile_path = output_dir.join("Makefile");
@@ -249,11 +261,17 @@ fn compile_c_to_shared(output_dir: &Path) -> Result<()> {
         return Err(Error::CompilationFailed("Makefile not found".to_string()));
     }
 
+    let job_count = if jobs == 0 {
+        num_cpus::get().saturating_sub(2).max(1)
+    } else {
+        jobs
+    };
+
     let status = Command::new("make")
         .arg("-C")
         .arg(output_dir)
         .arg("-j")
-        .arg(num_cpus::get().saturating_sub(2).max(1).to_string())
+        .arg(job_count.to_string())
         .arg("shared")
         .status()
         .map_err(|e| Error::CompilationFailed(format!("Failed to run make: {}", e)))?;
