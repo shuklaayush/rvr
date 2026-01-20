@@ -6,6 +6,7 @@
 
 mod encode;
 pub mod extensions;
+pub mod syscalls;
 mod types;
 
 pub use encode::*;

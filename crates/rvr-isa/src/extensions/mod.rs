@@ -74,8 +74,27 @@ pub use zicsr::{
 };
 pub use zifencei::OP_FENCE_I;
 
+use std::collections::HashMap;
+
 use crate::{DecodedInstr, OpId, OpInfo};
 use rvr_ir::{InstrIR, Terminator, Xlen};
+
+/// Override trait for intercepting instruction lifting.
+///
+/// Allows custom handling of specific instructions by OpId.
+/// The override receives the original instruction and a default lift function.
+pub trait InstructionOverride<X: Xlen>: Send + Sync {
+    /// Lift instruction, with access to the default lift implementation.
+    ///
+    /// # Arguments
+    /// * `instr` - The decoded instruction
+    /// * `default_lift` - Closure to call the standard lift for this instruction
+    fn lift(
+        &self,
+        instr: &DecodedInstr<X>,
+        default_lift: &dyn Fn(&DecodedInstr<X>) -> InstrIR<X>,
+    ) -> InstrIR<X>;
+}
 
 /// Extension point for instruction decoding and lifting.
 ///
@@ -134,14 +153,20 @@ pub trait InstructionExtension<X: Xlen>: Send + Sync {
 ///
 /// Chains multiple extensions and dispatches decode/lift/disasm to the appropriate one.
 /// Extensions are tried in order; C extension should be first to handle compressed instructions.
+///
+/// Supports per-OpId overrides for custom instruction handling.
 pub struct ExtensionRegistry<X: Xlen> {
     extensions: Vec<Box<dyn InstructionExtension<X>>>,
+    overrides: HashMap<OpId, Box<dyn InstructionOverride<X>>>,
 }
 
 impl<X: Xlen> ExtensionRegistry<X> {
     /// Create a new registry with the given extensions.
     pub fn new(extensions: Vec<Box<dyn InstructionExtension<X>>>) -> Self {
-        Self { extensions }
+        Self {
+            extensions,
+            overrides: HashMap::new(),
+        }
     }
 
     /// Create a registry with all standard RISC-V extensions.
@@ -166,7 +191,36 @@ impl<X: Xlen> ExtensionRegistry<X> {
     pub fn empty() -> Self {
         Self {
             extensions: Vec::new(),
+            overrides: HashMap::new(),
         }
+    }
+
+    /// Register an override for a specific OpId.
+    ///
+    /// When the given OpId is lifted, the override's `lift()` method is called
+    /// instead of the standard extension lift.
+    pub fn with_override(
+        mut self,
+        opid: OpId,
+        handler: impl InstructionOverride<X> + 'static,
+    ) -> Self {
+        self.overrides.insert(opid, Box::new(handler));
+        self
+    }
+
+    /// Register multiple overrides at once.
+    pub fn with_overrides(
+        mut self,
+        overrides: HashMap<OpId, Box<dyn InstructionOverride<X>>>,
+    ) -> Self {
+        self.overrides.extend(overrides);
+        self
+    }
+
+    /// Check if there are any overrides registered.
+    #[inline]
+    pub fn has_overrides(&self) -> bool {
+        !self.overrides.is_empty()
     }
 
     /// Add an extension to the registry chain.
@@ -191,7 +245,27 @@ impl<X: Xlen> ExtensionRegistry<X> {
     }
 
     /// Lift an instruction using the appropriate extension.
+    ///
+    /// If an override is registered for this OpId, it is called instead.
+    /// The override receives a closure to call the default lift if needed.
     pub fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
+        // Fast path: no overrides registered
+        if self.overrides.is_empty() {
+            return self.lift_default(instr);
+        }
+
+        // Check for override
+        if let Some(handler) = self.overrides.get(&instr.opid) {
+            // Capture self for the default lift closure
+            let default_lift = |i: &DecodedInstr<X>| self.lift_default(i);
+            return handler.lift(instr, &default_lift);
+        }
+
+        self.lift_default(instr)
+    }
+
+    /// Default lift implementation (no override).
+    fn lift_default(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         for ext in &self.extensions {
             if ext.ext_id() == instr.opid.ext {
                 return ext.lift(instr);
@@ -389,5 +463,141 @@ mod tests {
         // Test disasm works
         let disasm = registry.disasm(&instr);
         assert_eq!(disasm, "fence.i");
+    }
+
+    #[test]
+    fn test_override_ecall_fixed_exit() {
+        use crate::OP_ECALL;
+        use rvr_ir::{Expr, Terminator};
+
+        // Override that replaces ECALL with fixed exit code 42
+        struct ExitOverride;
+        impl InstructionOverride<Rv64> for ExitOverride {
+            fn lift(
+                &self,
+                instr: &DecodedInstr<Rv64>,
+                _default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+            ) -> InstrIR<Rv64> {
+                InstrIR::new(
+                    instr.pc,
+                    instr.size,
+                    instr.opid.pack(),
+                    Vec::new(),
+                    Terminator::exit(Expr::Imm(42)),
+                )
+            }
+        }
+
+        let registry = ExtensionRegistry::<Rv64>::standard().with_override(OP_ECALL, ExitOverride);
+
+        // Encode ECALL: 0x00000073
+        let bytes = [0x73, 0x00, 0x00, 0x00];
+        let instr = registry.decode(&bytes, 0x1000u64).unwrap();
+        assert_eq!(instr.opid, OP_ECALL);
+
+        let ir = registry.lift(&instr);
+        assert!(matches!(ir.terminator, Terminator::Exit { .. }));
+    }
+
+    #[test]
+    fn test_override_calls_default() {
+        use crate::OP_ADDI;
+
+        // Override that calls default and verifies it returns something
+        struct PassthroughOverride {
+            called: std::sync::atomic::AtomicBool,
+        }
+        impl InstructionOverride<Rv64> for PassthroughOverride {
+            fn lift(
+                &self,
+                instr: &DecodedInstr<Rv64>,
+                default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+            ) -> InstrIR<Rv64> {
+                self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+                default(instr)
+            }
+        }
+
+        let override_impl = std::sync::Arc::new(PassthroughOverride {
+            called: std::sync::atomic::AtomicBool::new(false),
+        });
+
+        // Need to create a wrapper that implements InstructionOverride
+        struct ArcWrapper(std::sync::Arc<PassthroughOverride>);
+        impl InstructionOverride<Rv64> for ArcWrapper {
+            fn lift(
+                &self,
+                instr: &DecodedInstr<Rv64>,
+                default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+            ) -> InstrIR<Rv64> {
+                self.0.lift(instr, default)
+            }
+        }
+
+        let registry = ExtensionRegistry::<Rv64>::standard()
+            .with_override(OP_ADDI, ArcWrapper(override_impl.clone()));
+
+        // ADDI x1, x0, 42
+        let bytes = [0x93, 0x00, 0xa0, 0x02];
+        let instr = registry.decode(&bytes, 0u64).unwrap();
+        assert_eq!(instr.opid, OP_ADDI);
+
+        let ir = registry.lift(&instr);
+        // Verify override was called
+        assert!(override_impl
+            .called
+            .load(std::sync::atomic::Ordering::SeqCst));
+        // Default lift should have produced statements
+        assert!(!ir.statements.is_empty());
+    }
+
+    #[test]
+    fn test_override_no_regression_fast_path() {
+        // Ensure standard registry without overrides works fast
+        let registry = ExtensionRegistry::<Rv64>::standard();
+        assert!(!registry.has_overrides());
+
+        // ADDI x1, x0, 42
+        let bytes = [0x93, 0x00, 0xa0, 0x02];
+        let instr = registry.decode(&bytes, 0u64).unwrap();
+        let ir = registry.lift(&instr);
+        assert!(!ir.statements.is_empty()); // Should have register write
+    }
+
+    #[test]
+    fn test_override_with_multiple() {
+        use crate::{OP_ADD, OP_SUB};
+        use rvr_ir::Terminator;
+
+        struct TrapOverride;
+        impl InstructionOverride<Rv64> for TrapOverride {
+            fn lift(
+                &self,
+                instr: &DecodedInstr<Rv64>,
+                _default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+            ) -> InstrIR<Rv64> {
+                InstrIR::new(
+                    instr.pc,
+                    instr.size,
+                    instr.opid.pack(),
+                    Vec::new(),
+                    Terminator::trap("overridden"),
+                )
+            }
+        }
+
+        let mut overrides: HashMap<OpId, Box<dyn InstructionOverride<Rv64>>> = HashMap::new();
+        overrides.insert(OP_ADD, Box::new(TrapOverride));
+        overrides.insert(OP_SUB, Box::new(TrapOverride));
+
+        let registry = ExtensionRegistry::<Rv64>::standard().with_overrides(overrides);
+        assert!(registry.has_overrides());
+
+        // ADD x1, x2, x3: 0x003100b3
+        let add_bytes = [0xb3, 0x00, 0x31, 0x00];
+        let add_instr = registry.decode(&add_bytes, 0u64).unwrap();
+        assert_eq!(add_instr.opid, OP_ADD);
+        let ir = registry.lift(&add_instr);
+        assert!(matches!(ir.terminator, Terminator::Trap { .. }));
     }
 }
