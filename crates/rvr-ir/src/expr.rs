@@ -2,28 +2,6 @@
 
 use crate::xlen::Xlen;
 
-/// Address spaces for reads/writes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub enum Space {
-    Reg,
-    Mem,
-    Csr,
-    Pc,
-    Cycle,
-    Instret,
-    Temp,
-    // Tracing
-    TraceIdx,
-    PcIdx,
-    // LR/SC reservation
-    ResAddr,
-    ResValid,
-    // Exit state
-    Exited,
-    ExitCode,
-}
-
 /// Unary operations.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnaryOp {
@@ -479,7 +457,7 @@ impl<X: Xlen> Expr<X> {
         Self::unary(UnaryOp::Unzip, val)
     }
 
-    // ===== Space-specific reads =====
+    // ===== Special reads =====
 
     pub fn res_addr() -> Self {
         Self::Read(ReadExpr::ResAddr)

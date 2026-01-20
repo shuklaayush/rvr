@@ -8,8 +8,8 @@
 //! - Optional tohost handling for riscv-tests
 
 use rvr_ir::{
-    BinaryOp, BlockIR, BranchHint, Expr, InstrIR, ReadExpr, Space, Stmt, Terminator, TernaryOp,
-    UnaryOp, Xlen,
+    BinaryOp, BlockIR, BranchHint, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp,
+    UnaryOp, WriteTarget, Xlen,
 };
 
 /// HTIF tohost address (matches riscv-tests expectation).
@@ -352,20 +352,16 @@ impl<X: Xlen> CEmitter<X> {
     /// Render statement.
     pub fn render_stmt(&mut self, stmt: &Stmt<X>, indent: usize) {
         match stmt {
-            Stmt::Write { space, addr, value, width } => {
+            Stmt::Write { target, value } => {
                 let value_str = self.render_expr(value);
-                match space {
-                    Space::Reg => {
-                        let reg = match addr {
-                            Expr::Imm(val) => X::to_u64(*val) as u8,
-                            _ => 0,
-                        };
-                        let code = self.sig.reg_write(reg, &value_str);
+                match target {
+                    WriteTarget::Reg(reg) => {
+                        let code = self.sig.reg_write(*reg, &value_str);
                         if !code.is_empty() {
                             self.writeln(indent, &code);
                         }
                     }
-                    Space::Mem => {
+                    WriteTarget::Mem { addr, width } => {
                         // Extract base and offset from address expression.
                         // Store addresses come from ISA as Expr::add(rs1, imm).
                         let (base, offset) = match addr {
@@ -395,25 +391,28 @@ impl<X: Xlen> CEmitter<X> {
                             self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
                         }
                     }
-                    Space::Csr => {
-                        let csr = match addr {
-                            Expr::Imm(val) => X::to_u64(*val) as u16,
-                            _ => 0,
-                        };
+                    WriteTarget::Csr(csr) => {
                         // Use traced helper (twr_csr)
                         self.writeln(indent, &format!("twr_csr(state, 0x{:x}, {});", csr, value_str));
                     }
-                    Space::Pc => {
+                    WriteTarget::Pc => {
                         self.writeln(indent, &format!("state->pc = {};", value_str));
                     }
-                    Space::Temp => {
-                        let idx = match addr {
-                            Expr::Imm(val) => X::to_u64(*val),
-                            _ => 0,
-                        };
+                    WriteTarget::Temp(idx) => {
                         self.writeln(indent, &format!("{} _t{} = {};", self.reg_type, idx, value_str));
                     }
-                    _ => {}
+                    WriteTarget::ResAddr => {
+                        self.writeln(indent, &format!("state->reservation_addr = {};", value_str));
+                    }
+                    WriteTarget::ResValid => {
+                        self.writeln(indent, &format!("state->reservation_valid = {};", value_str));
+                    }
+                    WriteTarget::Exited => {
+                        self.writeln(indent, &format!("state->has_exited = {};", value_str));
+                    }
+                    WriteTarget::ExitCode => {
+                        self.writeln(indent, &format!("state->exit_code = {};", value_str));
+                    }
                 }
             }
             Stmt::If { cond, then_stmts, else_stmts } => {
