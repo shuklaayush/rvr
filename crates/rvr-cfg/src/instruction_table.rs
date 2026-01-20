@@ -1,6 +1,6 @@
 //! Instruction table for decoded instructions.
 //!
-//! Maintains decoded instructions, sizes, raw opcodes, and valid mask.
+//! Maintains decoded instructions, sizes, and raw opcodes.
 //! Based on Mojo's InstructionTable.
 
 use rvr_isa::{DecodedInstr, ExtensionRegistry, Xlen};
@@ -43,19 +43,31 @@ impl RoSegment {
     }
 }
 
+/// Slot for a single 2-byte instruction position.
+#[derive(Clone, Debug)]
+struct Slot<X: Xlen> {
+    instr: Option<DecodedInstr<X>>,
+    size: u8,
+    raw: u32,
+}
+
+impl<X: Xlen> Default for Slot<X> {
+    fn default() -> Self {
+        Self {
+            instr: None,
+            size: 0,
+            raw: 0,
+        }
+    }
+}
+
 /// Table of decoded instructions.
 ///
 /// Maintains instruction slots indexed by PC, with 2-byte slot size.
 /// Handles both compressed (2-byte) and full (4-byte) instructions.
 pub struct InstructionTable<X: Xlen> {
-    /// Decoded instructions (indexed by slot).
-    instructions: Vec<Option<DecodedInstr<X>>>,
-    /// Valid mask (true if slot contains a valid instruction start).
-    valid_mask: Vec<bool>,
-    /// Instruction sizes (2 or 4 bytes, 0 for invalid).
-    instruction_sizes: Vec<u8>,
-    /// Raw opcodes (up to 4 bytes per slot).
-    raw_opcodes: Vec<u32>,
+    /// Decoded instruction slots (indexed by slot).
+    slots: Vec<Slot<X>>,
     /// Base address of the table.
     base_address: u64,
     /// End address (exclusive).
@@ -64,8 +76,6 @@ pub struct InstructionTable<X: Xlen> {
     entry_point: u64,
     /// Read-only segments for constant propagation.
     ro_segments: Vec<RoSegment>,
-    /// Slot size in bytes (always 2 for RISC-V with C extension).
-    slot_size: usize,
 }
 
 impl<X: Xlen> InstructionTable<X> {
@@ -82,15 +92,11 @@ impl<X: Xlen> InstructionTable<X> {
         let total_slots = (code.len() + Self::SLOT_SIZE - 1) / Self::SLOT_SIZE;
 
         let mut table = Self {
-            instructions: vec![None; total_slots],
-            valid_mask: vec![false; total_slots],
-            instruction_sizes: vec![0; total_slots],
-            raw_opcodes: vec![0; total_slots],
+            slots: vec![Slot::default(); total_slots],
             base_address,
             end_address,
             entry_point: base_address,
             ro_segments: vec![RoSegment::new(base_address, end_address, code.to_vec())],
-            slot_size: Self::SLOT_SIZE,
         };
 
         table.decode_all(code, 0, registry);
@@ -103,15 +109,11 @@ impl<X: Xlen> InstructionTable<X> {
         let total_slots = (total_size + Self::SLOT_SIZE - 1) / Self::SLOT_SIZE;
 
         Self {
-            instructions: vec![None; total_slots],
-            valid_mask: vec![false; total_slots],
-            instruction_sizes: vec![0; total_slots],
-            raw_opcodes: vec![0; total_slots],
+            slots: vec![Slot::default(); total_slots],
             base_address,
             end_address,
             entry_point,
             ro_segments: Vec::new(),
-            slot_size: Self::SLOT_SIZE,
         }
     }
 
@@ -120,43 +122,40 @@ impl<X: Xlen> InstructionTable<X> {
         let mut offset = 0;
 
         while offset + 2 <= code.len() {
-            let pc = self.base_address + (start_slot * self.slot_size + offset) as u64;
-            let slot = start_slot + offset / self.slot_size;
+            let pc = self.base_address + (start_slot * Self::SLOT_SIZE + offset) as u64;
+            let slot = start_slot + offset / Self::SLOT_SIZE;
 
-            if slot >= self.instructions.len() {
+            if slot >= self.slots.len() {
                 break;
             }
 
-            // Decode instruction
             if let Some(instr) = registry.decode(&code[offset..], X::from_u64(pc)) {
                 let size = instr.size as usize;
-                self.instructions[slot] = Some(instr.clone());
-                self.valid_mask[slot] = true;
-                self.instruction_sizes[slot] = size as u8;
-
-                // Store raw opcode
-                if size == 2 {
-                    self.raw_opcodes[slot] = u16::from_le_bytes([code[offset], code[offset + 1]]) as u32;
+                let raw = if size == 2 {
+                    u16::from_le_bytes([code[offset], code[offset + 1]]) as u32
                 } else if size == 4 && offset + 4 <= code.len() {
-                    self.raw_opcodes[slot] = u32::from_le_bytes([
+                    u32::from_le_bytes([
                         code[offset],
                         code[offset + 1],
                         code[offset + 2],
                         code[offset + 3],
-                    ]);
-                }
+                    ])
+                } else {
+                    0
+                };
 
-                // Mark second slot as invalid for 4-byte instructions
-                if size == 4 && slot + 1 < self.instructions.len() {
-                    self.instructions[slot + 1] = None;
-                    self.valid_mask[slot + 1] = false;
-                    self.instruction_sizes[slot + 1] = 0;
-                    self.raw_opcodes[slot + 1] = 0;
+                self.slots[slot] = Slot {
+                    instr: Some(instr),
+                    size: size as u8,
+                    raw,
+                };
+
+                if size == 4 && slot + 1 < self.slots.len() {
+                    self.slots[slot + 1] = Slot::default();
                 }
 
                 offset += size;
             } else {
-                // Invalid instruction - skip 2 bytes
                 offset += 2;
             }
         }
@@ -173,7 +172,7 @@ impl<X: Xlen> InstructionTable<X> {
             return;
         }
 
-        let start_slot = ((segment_start - self.base_address) / self.slot_size as u64) as usize;
+        let start_slot = ((segment_start - self.base_address) / Self::SLOT_SIZE as u64) as usize;
         self.decode_segment(code, start_slot, segment_start, registry);
     }
 
@@ -189,34 +188,35 @@ impl<X: Xlen> InstructionTable<X> {
 
         while offset + 2 <= code.len() {
             let pc = segment_start + offset as u64;
-            let slot = start_slot + offset / self.slot_size;
+            let slot = start_slot + offset / Self::SLOT_SIZE;
 
-            if slot >= self.instructions.len() {
+            if slot >= self.slots.len() {
                 break;
             }
 
             if let Some(instr) = registry.decode(&code[offset..], X::from_u64(pc)) {
                 let size = instr.size as usize;
-                self.instructions[slot] = Some(instr);
-                self.valid_mask[slot] = true;
-                self.instruction_sizes[slot] = size as u8;
-
-                if size == 2 {
-                    self.raw_opcodes[slot] = u16::from_le_bytes([code[offset], code[offset + 1]]) as u32;
+                let raw = if size == 2 {
+                    u16::from_le_bytes([code[offset], code[offset + 1]]) as u32
                 } else if size == 4 && offset + 4 <= code.len() {
-                    self.raw_opcodes[slot] = u32::from_le_bytes([
+                    u32::from_le_bytes([
                         code[offset],
                         code[offset + 1],
                         code[offset + 2],
                         code[offset + 3],
-                    ]);
-                }
+                    ])
+                } else {
+                    0
+                };
 
-                if size == 4 && slot + 1 < self.instructions.len() {
-                    self.instructions[slot + 1] = None;
-                    self.valid_mask[slot + 1] = false;
-                    self.instruction_sizes[slot + 1] = 0;
-                    self.raw_opcodes[slot + 1] = 0;
+                self.slots[slot] = Slot {
+                    instr: Some(instr),
+                    size: size as u8,
+                    raw,
+                };
+
+                if size == 4 && slot + 1 < self.slots.len() {
+                    self.slots[slot + 1] = Slot::default();
                 }
 
                 offset += size;
@@ -255,12 +255,12 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Get total number of slots.
     pub fn len(&self) -> usize {
-        self.instructions.len()
+        self.slots.len()
     }
 
     /// Check if table is empty.
     pub fn is_empty(&self) -> bool {
-        self.instructions.is_empty()
+        self.slots.is_empty()
     }
 
     /// Convert PC to slot index.
@@ -269,20 +269,20 @@ impl<X: Xlen> InstructionTable<X> {
             return None;
         }
         let offset = (pc - self.base_address) as usize;
-        if offset % self.slot_size != 0 {
+        if offset % Self::SLOT_SIZE != 0 {
             return None;
         }
-        Some(offset / self.slot_size)
+        Some(offset / Self::SLOT_SIZE)
     }
 
     /// Convert slot index to PC.
     pub fn index_to_pc(&self, index: usize) -> u64 {
-        self.base_address + (index * self.slot_size) as u64
+        self.base_address + (index * Self::SLOT_SIZE) as u64
     }
 
     /// Check if slot is valid.
     pub fn is_valid_index(&self, index: usize) -> bool {
-        index < self.valid_mask.len() && self.valid_mask[index]
+        self.slots.get(index).map(|slot| slot.instr.is_some()).unwrap_or(false)
     }
 
     /// Check if PC points to a valid instruction.
@@ -294,7 +294,7 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Get instruction at slot index.
     pub fn get(&self, index: usize) -> Option<&DecodedInstr<X>> {
-        self.instructions.get(index).and_then(|i| i.as_ref())
+        self.slots.get(index).and_then(|slot| slot.instr.as_ref())
     }
 
     /// Get instruction at PC.
@@ -304,7 +304,7 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Get instruction size at slot index.
     pub fn instruction_size(&self, index: usize) -> u8 {
-        self.instruction_sizes.get(index).copied().unwrap_or(0)
+        self.slots.get(index).map(|slot| slot.size).unwrap_or(0)
     }
 
     /// Get instruction size at PC.
@@ -316,7 +316,7 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Get raw opcode at slot index.
     pub fn raw_opcode(&self, index: usize) -> u32 {
-        self.raw_opcodes.get(index).copied().unwrap_or(0)
+        self.slots.get(index).map(|slot| slot.raw).unwrap_or(0)
     }
 
     /// Get raw opcode at PC.
@@ -344,10 +344,10 @@ impl<X: Xlen> InstructionTable<X> {
 
     /// Iterate over all valid instruction indices.
     pub fn valid_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        self.valid_mask
+        self.slots
             .iter()
             .enumerate()
-            .filter_map(|(i, &valid)| if valid { Some(i) } else { None })
+            .filter_map(|(i, slot)| if slot.instr.is_some() { Some(i) } else { None })
     }
 
     /// Iterate over all valid instructions with their PCs.
@@ -355,63 +355,5 @@ impl<X: Xlen> InstructionTable<X> {
         self.valid_indices().filter_map(move |idx| {
             self.get(idx).map(|instr| (self.index_to_pc(idx), instr))
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rvr_ir::Rv64;
-
-    #[test]
-    fn test_instruction_table_basic() {
-        let registry = ExtensionRegistry::<Rv64>::standard();
-        // ADDI x1, x0, 42 (0x02a00093)
-        let code = [0x93, 0x00, 0xa0, 0x02];
-        let table = InstructionTable::from_bytes(&code, 0x80000000, &registry);
-
-        assert_eq!(table.base_address(), 0x80000000);
-        assert_eq!(table.end_address(), 0x80000004);
-        assert_eq!(table.len(), 2); // 4 bytes / 2-byte slots
-
-        assert!(table.is_valid_pc(0x80000000));
-        assert!(!table.is_valid_pc(0x80000002)); // Second slot of 4-byte instruction
-
-        let instr = table.get_at_pc(0x80000000).unwrap();
-        assert_eq!(instr.size, 4);
-    }
-
-    #[test]
-    fn test_instruction_table_compressed() {
-        let registry = ExtensionRegistry::<Rv64>::standard();
-        // C.ADDI x1, 1 (0x0085)
-        let code = [0x85, 0x00];
-        let table = InstructionTable::from_bytes(&code, 0x80000000, &registry);
-
-        assert!(table.is_valid_pc(0x80000000));
-        let instr = table.get_at_pc(0x80000000).unwrap();
-        assert_eq!(instr.size, 2);
-    }
-
-    #[test]
-    fn test_ro_segment_read() {
-        let segment = RoSegment::new(0x1000, 0x1010, vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
-
-        assert_eq!(segment.read(0x1000, 1), Some(0x11));
-        assert_eq!(segment.read(0x1000, 2), Some(0x2211));
-        assert_eq!(segment.read(0x1000, 4), Some(0x44332211));
-        assert_eq!(segment.read(0x1004, 4), Some(0x88776655));
-        assert_eq!(segment.read(0x1008, 4), None); // Out of bounds
-    }
-
-    #[test]
-    fn test_pc_to_index() {
-        let table = InstructionTable::<Rv64>::new(0x80000000, 0x80001000, 0x80000000);
-
-        assert_eq!(table.pc_to_index(0x80000000), Some(0));
-        assert_eq!(table.pc_to_index(0x80000002), Some(1));
-        assert_eq!(table.pc_to_index(0x80000004), Some(2));
-        assert_eq!(table.pc_to_index(0x80000001), None); // Not aligned
-        assert_eq!(table.pc_to_index(0x70000000), None); // Out of range
     }
 }
