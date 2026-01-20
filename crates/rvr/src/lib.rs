@@ -1,28 +1,160 @@
-//! RVR - RISC-V Recompiler
+//! RVR - RISC-V Static Recompiler
 //!
 //! Compiles RISC-V ELF binaries to optimized C code, then to native shared libraries.
+//! Designed for integration with Mojo-based execution environments.
 //!
-//! # Example
+//! # Quick Start
 //!
 //! ```ignore
-//! use rvr::{Recompiler, Rv64};
-//!
-//! let recompiler = Recompiler::<Rv64>::with_defaults();
-//! let compiled = recompiler.compile("program.elf", "output/")?;
+//! // Compile an ELF to a shared library (auto-detects RV32/RV64)
+//! let lib_path = rvr::compile("program.elf".as_ref(), "output/".as_ref())?;
 //! ```
 //!
-//! # API Overview
+//! # Architecture
 //!
-//! The main entry point is [`Recompiler`], which provides high-level methods:
-//! - [`lift`](Recompiler::lift): ELF → C code
-//! - [`compile`](Recompiler::compile): ELF → C code → native shared library
+//! RVR generates `.so` shared libraries that can be loaded by a host runtime
+//! (typically Mojo). The generated code:
 //!
-//! For lower-level control, use [`Pipeline`] directly with custom [`EmitConfig`].
+//! - Uses `preserve_none` calling convention for minimal overhead
+//! - Passes hot registers as function arguments (configurable)
+//! - Uses `[[clang::musttail]]` for guaranteed tail call optimization
+//! - Generates C23 code with `constexpr`, typed constants, no macros
 //!
-//! # Re-exports
+//! ## Generated Interface
 //!
-//! This crate re-exports commonly needed types. For advanced usage, access the
-//! underlying crates directly: `rvr_elf`, `rvr_isa`, `rvr_ir`, `rvr_cfg`, `rvr_emit`.
+//! The shared library exports:
+//!
+//! ```c
+//! // Execute from a specific PC (returns exit code)
+//! int rv_execute_from(RvState* state, uint32_t start_pc);
+//!
+//! // Initialize memory with embedded ELF segments
+//! void rv_init_memory(RvState* state);
+//!
+//! // Free memory
+//! void rv_free_memory(RvState* state);
+//!
+//! // Dispatch table for dynamic jumps
+//! extern const rv_fn dispatch_table[];
+//! ```
+//!
+//! ## State Structure
+//!
+//! The `RvState` struct is defined in the generated header and must match
+//! the Mojo `RvState` layout. Key fields:
+//!
+//! - `memory`: Pointer to guest memory (allocated by host)
+//! - `regs[32]`: General-purpose registers
+//! - `pc`: Program counter
+//! - `instret`: Retired instruction count (if enabled)
+//! - `has_exited`, `exit_code`: Execution status
+//!
+//! # Examples
+//!
+//! ## Basic Compilation
+//!
+//! ```ignore
+//! use rvr::{compile, CompileOptions, InstretMode};
+//!
+//! // Simple compilation
+//! let lib = rvr::compile("prog.elf".as_ref(), "out/".as_ref())?;
+//!
+//! // With options
+//! let options = CompileOptions::new()
+//!     .with_instret_mode(InstretMode::Count)
+//!     .with_addr_check(true);
+//! let lib = rvr::compile_with_options("prog.elf".as_ref(), "out/".as_ref(), options)?;
+//! ```
+//!
+//! ## Custom Configuration
+//!
+//! ```ignore
+//! use rvr::{EmitConfig, Recompiler, Rv64};
+//!
+//! let mut config = EmitConfig::<Rv64>::default();
+//! config.hot_regs = vec![1, 2, 10, 11, 12]; // ra, sp, a0, a1, a2
+//! config.memory_bits = 32; // 4GB address space
+//! config.enable_lto = true;
+//!
+//! let recompiler = Recompiler::new(config);
+//! let lib = recompiler.compile("prog.elf".as_ref(), "out/".as_ref(), 0)?;
+//! ```
+//!
+//! ## Instruction Overrides
+//!
+//! Customize instruction behavior (e.g., ECALL handling):
+//!
+//! ```ignore
+//! use rvr::{ElfImage, EmitConfig, Pipeline, Rv64};
+//! use rvr_isa::{ExtensionRegistry, InstructionOverride, OP_ECALL, DecodedInstr};
+//! use rvr_ir::{InstrIR, Terminator, Expr};
+//!
+//! struct MyEcallHandler;
+//!
+//! impl InstructionOverride<Rv64> for MyEcallHandler {
+//!     fn lift(
+//!         &self,
+//!         instr: &DecodedInstr<Rv64>,
+//!         _default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
+//!     ) -> InstrIR<Rv64> {
+//!         // Custom ECALL: exit with a0 as code
+//!         InstrIR::new(
+//!             instr.pc, instr.size, instr.opid.pack(),
+//!             Vec::new(),
+//!             Terminator::exit(Expr::read(10)), // a0
+//!         )
+//!     }
+//! }
+//!
+//! let registry = ExtensionRegistry::<Rv64>::standard()
+//!     .with_override(OP_ECALL, MyEcallHandler);
+//!
+//! let data = std::fs::read("prog.elf")?;
+//! let image = ElfImage::<Rv64>::parse(&data)?;
+//! let mut pipeline = Pipeline::with_registry(image, EmitConfig::default(), registry);
+//! ```
+//!
+//! ## Pipeline API (Low-Level)
+//!
+//! For fine-grained control over the compilation process:
+//!
+//! ```ignore
+//! use rvr::{ElfImage, EmitConfig, Pipeline, Rv64};
+//!
+//! let data = std::fs::read("prog.elf")?;
+//! let image = ElfImage::<Rv64>::parse(&data)?;
+//!
+//! let mut pipeline = Pipeline::new(image, EmitConfig::default());
+//!
+//! // Build CFG (decode, analyze, optimize)
+//! pipeline.build_cfg()?;
+//! println!("Blocks: {:?}", pipeline.stats());
+//!
+//! // Lift to IR
+//! pipeline.lift_to_ir()?;
+//!
+//! // Inspect IR blocks
+//! for (pc, block) in pipeline.ir_blocks() {
+//!     println!("Block at {:#x}: {} instructions", pc, block.instructions.len());
+//! }
+//!
+//! // Emit C code
+//! pipeline.emit_c("out/".as_ref(), "prog")?;
+//! ```
+//!
+//! # Crate Structure
+//!
+//! - `rvr` - High-level API (this crate)
+//! - `rvr_elf` - ELF parsing
+//! - `rvr_isa` - RISC-V instruction definitions, decoder, extension registry
+//! - `rvr_ir` - Intermediate representation
+//! - `rvr_cfg` - Control flow graph analysis
+//! - `rvr_emit` - C code generation
+//!
+//! # Feature Flags
+//!
+//! Currently no optional features. All standard RISC-V extensions (I, M, A, C,
+//! Zicsr, Zifencei, Zba, Zbb, Zbc, Zbs) are always enabled.
 
 // Core types - always available
 pub use rvr_elf::{get_elf_xlen, ElfImage};
