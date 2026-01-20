@@ -127,6 +127,11 @@ pub const EXT_A: u8 = 2;
 pub const EXT_C: u8 = 3;
 pub const EXT_ZICSR: u8 = 4;
 pub const EXT_ZIFENCEI: u8 = 5;
+pub const EXT_ZBA: u8 = 6;
+pub const EXT_ZBB: u8 = 7;
+pub const EXT_ZBS: u8 = 8;
+pub const EXT_ZBKB: u8 = 9;
+pub const EXT_ZICOND: u8 = 10;
 pub const EXT_CUSTOM: u8 = 128;
 
 // Number of registers
