@@ -53,12 +53,12 @@ pub fn gen_htif_header<X: Xlen>(cfg: &HtifConfig) -> String {
 /* Forward declaration to avoid circular includes */
 typedef struct RvState RvState;
 
-/* HTIF constants */
-#define HTIF_TOHOST_ADDR   {tohost:#x}
-#define HTIF_FROMHOST_ADDR {fromhost:#x}
-#define HTIF_FIELD_SIZE    8  /* 64-bit fields */
-#define HTIF_SYS_WRITE     {sys_write}ULL
-#define HTIF_STDOUT_FD     {stdout_fd}ULL
+/* HTIF constants (C23 constexpr) */
+constexpr uint64_t HTIF_TOHOST_ADDR   = {tohost:#x};
+constexpr uint64_t HTIF_FROMHOST_ADDR = {fromhost:#x};
+constexpr size_t   HTIF_FIELD_SIZE    = 8;  /* 64-bit fields */
+constexpr uint64_t HTIF_SYS_WRITE     = {sys_write};
+constexpr uint64_t HTIF_STDOUT_FD     = {stdout_fd};
 
 /* HTIF handler - called when writing to TOHOST address */
 __attribute__((preserve_most)) void handle_tohost_write(RvState* restrict state, {addr_type} value);

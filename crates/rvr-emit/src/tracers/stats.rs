@@ -29,12 +29,12 @@ static const char* const REG_NAMES[32] = {{
 }};
 
 /* Page bitmap: 4GB / 4KB pages / 64 bits = 16384 words = 128KB */
-#define PAGE_BITMAP_WORDS 16384
-#define PAGE_SHIFT 12
+constexpr size_t PAGE_BITMAP_WORDS = 16384;
+constexpr int PAGE_SHIFT = 12;
 
 /* Address bitmap: 4GB addresses / 8 bits = 512MB (allocated externally) */
-#define ADDR_BITMAP_BYTES (1ULL << 29)
-#define ADDR_BITMAP_WORDS (ADDR_BITMAP_BYTES / 8)
+constexpr uint64_t ADDR_BITMAP_BYTES = 1ULL << 29;
+constexpr size_t ADDR_BITMAP_WORDS = ADDR_BITMAP_BYTES / 8;
 
 typedef struct Tracer {{
     uint64_t blocks;
