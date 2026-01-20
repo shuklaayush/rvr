@@ -79,28 +79,62 @@ impl<X: Xlen> Pipeline<X> {
 
     /// Build CFG: creates InstructionTable → BlockTable with optimizations.
     ///
+    /// Builds InstructionTable from ALL executable segments, not just the entry segment.
+    /// This matches Mojo behavior for multi-segment binaries.
+    ///
     /// # Errors
     ///
-    /// Returns `Error::NoCodeSegment` if the entry point is not within any memory segment.
+    /// Returns `Error::NoCodeSegment` if there are no executable segments or
+    /// the entry point is not within any executable segment.
     pub fn build_cfg(&mut self) -> Result<()> {
-        // Find the code segment containing entry point
         let entry_pc = X::to_u64(self.image.entry_point);
-        let (code_start, _code_end, code_data) = self.find_code_segment(entry_pc)
-            .ok_or(Error::NoCodeSegment(entry_pc))?;
 
-        // Create InstructionTable from code segment
-        let mut instr_table = InstructionTable::from_bytes(
-            &code_data,
-            code_start,
-            &self.registry,
-        );
-        instr_table.set_entry_point(entry_pc);
+        // Collect all executable segments
+        let exec_segments: Vec<_> = self.image.memory_segments
+            .iter()
+            .filter(|seg| seg.is_executable())
+            .collect();
 
-        // Add read-only segments for constant propagation
-        for seg in &self.image.memory_segments {
+        if exec_segments.is_empty() {
+            return Err(Error::NoCodeSegment(entry_pc));
+        }
+
+        // Verify entry point is in an executable segment
+        let entry_in_exec = exec_segments.iter().any(|seg| {
+            let start = X::to_u64(seg.virtual_start);
+            let end = X::to_u64(seg.virtual_end);
+            entry_pc >= start && entry_pc < end
+        });
+        if !entry_in_exec {
+            return Err(Error::NoCodeSegment(entry_pc));
+        }
+
+        // Calculate address range spanning all executable segments
+        let base_address = exec_segments
+            .iter()
+            .map(|seg| X::to_u64(seg.virtual_start))
+            .min()
+            .unwrap();
+        let end_address = exec_segments
+            .iter()
+            .map(|seg| X::to_u64(seg.virtual_end))
+            .max()
+            .unwrap();
+
+        // Create InstructionTable spanning all executable segments
+        let mut instr_table = InstructionTable::new(base_address, end_address, entry_pc);
+
+        // Populate each executable segment
+        for seg in &exec_segments {
             let seg_start = X::to_u64(seg.virtual_start);
-            let seg_end = X::to_u64(seg.virtual_end);
-            if seg_start != code_start {
+            instr_table.populate_segment(&seg.data, seg_start, &self.registry);
+        }
+
+        // Add read-only (non-writable) segments for constant propagation
+        for seg in &self.image.memory_segments {
+            if seg.is_readonly() && !seg.is_executable() {
+                let seg_start = X::to_u64(seg.virtual_start);
+                let seg_end = X::to_u64(seg.virtual_end);
                 instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
             }
         }
@@ -113,18 +147,6 @@ impl<X: Xlen> Pipeline<X> {
 
         self.block_table = Some(block_table);
         Ok(())
-    }
-
-    /// Find code segment containing the given PC.
-    fn find_code_segment(&self, pc: u64) -> Option<(u64, u64, Vec<u8>)> {
-        for seg in &self.image.memory_segments {
-            let start = X::to_u64(seg.virtual_start);
-            let end = X::to_u64(seg.virtual_end);
-            if pc >= start && pc < end {
-                return Some((start, end, seg.data.clone()));
-            }
-        }
-        None
     }
 
     /// Lift all blocks to IR using BlockTable.
