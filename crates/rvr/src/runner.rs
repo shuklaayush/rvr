@@ -4,7 +4,7 @@
 
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::c_void;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::ptr::NonNull;
 use std::time::Instant;
 
@@ -38,13 +38,12 @@ pub enum RunError {
     #[error("tracer setup failed: {0}")]
     TracerSetupFailed(String),
 
-    #[error("failed to read metadata: {0}")]
-    MetadataReadFailed(String),
 }
 
 /// C API function types.
 type RvStateSize = unsafe extern "C" fn() -> usize;
 type RvStateAlign = unsafe extern "C" fn() -> usize;
+type RvRegBytes = unsafe extern "C" fn() -> u32;
 type RvStateReset = unsafe extern "C" fn(*mut c_void);
 type RvInitMemory = unsafe extern "C" fn(*mut c_void) -> i32;
 type RvFreeMemory = unsafe extern "C" fn(*mut c_void);
@@ -52,6 +51,7 @@ type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u32) -> i32;
 type RvGetInstret = unsafe extern "C" fn(*const c_void) -> u64;
 type RvGetExitCode = unsafe extern "C" fn(*const c_void) -> u8;
 type RvGetEntryPoint = unsafe extern "C" fn() -> u32;
+type RvTracerKind = unsafe extern "C" fn() -> u32;
 type RvTracerPreflightSetup = unsafe extern "C" fn(*mut c_void, *mut u8, u32, *mut c_void, u32);
 type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
 
@@ -59,6 +59,7 @@ type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
 struct RvApi {
     state_size: RvStateSize,
     state_align: RvStateAlign,
+    reg_bytes: RvRegBytes,
     state_reset: RvStateReset,
     init_memory: RvInitMemory,
     free_memory: RvFreeMemory,
@@ -66,6 +67,7 @@ struct RvApi {
     get_instret: RvGetInstret,
     get_exit_code: RvGetExitCode,
     get_entry_point: RvGetEntryPoint,
+    tracer_kind: Option<RvTracerKind>,
     tracer_preflight_setup: Option<RvTracerPreflightSetup>,
     tracer_stats_setup: Option<RvTracerStatsSetup>,
 }
@@ -75,6 +77,7 @@ impl RvApi {
         Ok(Self {
             state_size: load_symbol(lib, b"rv_state_size", "rv_state_size")?,
             state_align: load_symbol(lib, b"rv_state_align", "rv_state_align")?,
+            reg_bytes: load_symbol(lib, b"rv_reg_bytes", "rv_reg_bytes")?,
             state_reset: load_symbol(lib, b"rv_state_reset", "rv_state_reset")?,
             init_memory: load_symbol(lib, b"rv_init_memory", "rv_init_memory")?,
             free_memory: load_symbol(lib, b"rv_free_memory", "rv_free_memory")?,
@@ -82,6 +85,7 @@ impl RvApi {
             get_instret: load_symbol(lib, b"rv_get_instret", "rv_get_instret")?,
             get_exit_code: load_symbol(lib, b"rv_get_exit_code", "rv_get_exit_code")?,
             get_entry_point: load_symbol(lib, b"rv_get_entry_point", "rv_get_entry_point")?,
+            tracer_kind: load_optional_symbol(lib, b"rv_tracer_kind"),
             tracer_preflight_setup: load_optional_symbol(lib, b"rv_tracer_preflight_setup"),
             tracer_stats_setup: load_optional_symbol(lib, b"rv_tracer_stats_setup"),
         })
@@ -115,13 +119,13 @@ enum TracerKind {
 }
 
 impl TracerKind {
-    fn from_str(value: &str) -> Self {
-        match value {
-            "preflight" => Self::Preflight,
-            "stats" => Self::Stats,
-            "ffi" => Self::Ffi,
-            "dynamic" => Self::Dynamic,
-            "custom" => Self::Custom,
+    fn from_raw(raw: u32) -> Self {
+        match raw {
+            1 => Self::Preflight,
+            2 => Self::Stats,
+            3 => Self::Ffi,
+            4 => Self::Dynamic,
+            255 => Self::Custom,
             _ => Self::None,
         }
     }
@@ -170,66 +174,22 @@ struct TracerRuntime {
     stats: Option<StatsBuffers>,
 }
 
-#[derive(Debug, Clone)]
-struct RunMetadata {
-    xlen: u32,
-    tracer_kind: TracerKind,
-}
-
-impl RunMetadata {
-    fn path(lib_dir: &Path) -> PathBuf {
-        lib_dir.join("rvr_meta.json")
-    }
-
-    fn read(lib_dir: &Path) -> Result<Option<Self>, RunError> {
-        let path = Self::path(lib_dir);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|e| RunError::MetadataReadFailed(e.to_string()))?;
-
-        let xlen = extract_u32(&contents, "xlen").unwrap_or(0);
-        let tracer_kind = extract_string(&contents, "tracer_kind")
-            .map(TracerKind::from_str)
-            .unwrap_or(TracerKind::None);
-
-        Ok(Some(Self { xlen, tracer_kind }))
-    }
-}
-
-fn extract_u32(contents: &str, key: &str) -> Option<u32> {
-    let needle = format!("\"{}\":", key);
-    let start = contents.find(&needle)? + needle.len();
-    let value = contents[start..].trim_start();
-    let end = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
-    value[..end].parse().ok()
-}
-
-fn extract_string(contents: &str, key: &str) -> Option<&str> {
-    let needle = format!("\"{}\":\"", key);
-    let start = contents.find(&needle)? + needle.len();
-    let rest = &contents[start..];
-    let end = rest.find('"')?;
-    Some(&rest[..end])
-}
-
 impl TracerRuntime {
-    fn new(api: &RvApi, meta: &RunMetadata) -> Result<Option<Self>, RunError> {
-        let kind = meta.tracer_kind;
+    fn new(api: &RvApi) -> Result<Option<Self>, RunError> {
+        let kind_fn = match api.tracer_kind {
+            Some(func) => func,
+            None => return Ok(None),
+        };
+        let kind = TracerKind::from_raw(unsafe { kind_fn() });
         if kind == TracerKind::None {
             return Ok(None);
         }
 
-        let reg_bytes = match meta.xlen {
-            32 => 4,
-            64 => 8,
-            _ => 0,
-        };
+        let reg_bytes = unsafe { (api.reg_bytes)() };
         if reg_bytes == 0 {
             return Err(RunError::TracerSetupFailed(format!(
-                "unsupported xlen {}",
-                meta.xlen
+                "unsupported reg size {}",
+                reg_bytes
             )));
         }
         Ok(Some(Self {
@@ -333,17 +293,14 @@ struct RunState<'a> {
 }
 
 impl<'a> RunState<'a> {
-    fn new(api: &'a RvApi, meta: Option<&RunMetadata>) -> Result<Self, RunError> {
+    fn new(api: &'a RvApi) -> Result<Self, RunError> {
         let size = unsafe { (api.state_size)() };
         let align = unsafe { (api.state_align)() };
         let layout = Layout::from_size_align(size, align)
             .map_err(|_| RunError::InvalidStateLayout { size, align })?;
         let ptr = unsafe { alloc_zeroed(layout) } as *mut c_void;
         let ptr = NonNull::new(ptr).ok_or(RunError::StateAllocationFailed)?;
-        let tracer = match meta {
-            Some(meta) => TracerRuntime::new(api, meta)?,
-            None => None,
-        };
+        let tracer = TracerRuntime::new(api)?;
         Ok(Self {
             ptr,
             layout,
@@ -436,7 +393,6 @@ impl RunResult {
 pub struct Runner {
     _lib: Library,
     api: RvApi,
-    meta: Option<RunMetadata>,
 }
 
 impl Runner {
@@ -456,19 +412,14 @@ impl Runner {
             return Err(RunError::LibraryNotFound(lib_path.display().to_string()));
         }
 
-        let meta = RunMetadata::read(lib_dir)?;
         let lib = unsafe { Library::new(&lib_path)? };
         let api = unsafe { RvApi::load(&lib)? };
-        Ok(Self {
-            _lib: lib,
-            api,
-            meta,
-        })
+        Ok(Self { _lib: lib, api })
     }
 
     /// Run the program and return the result.
     pub fn run(&self) -> Result<RunResult, RunError> {
-        let mut state = RunState::new(&self.api, self.meta.as_ref())?;
+        let mut state = RunState::new(&self.api)?;
         state.init_memory()?;
         state.reset()?;
 
@@ -493,7 +444,7 @@ impl Runner {
 
     /// Run with reset capability for multiple runs.
     pub fn run_multiple(&self, count: usize) -> Result<Vec<RunResult>, RunError> {
-        let mut state = RunState::new(&self.api, self.meta.as_ref())?;
+        let mut state = RunState::new(&self.api)?;
         let entry_point = unsafe { (self.api.get_entry_point)() };
         let mut results = Vec::with_capacity(count);
 

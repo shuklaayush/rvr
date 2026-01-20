@@ -23,7 +23,6 @@ use crate::inputs::EmitInputs;
 use crate::memory::{gen_memory_file_with_embed, gen_segment_bins, MemoryConfig, MemorySegment};
 use crate::syscalls::{gen_syscalls_source, SyscallsConfig};
 use crate::tracer::gen_tracer_header;
-use crate::tracer::{PassedVarKind, TracerConfig};
 
 /// Default instructions per partition.
 pub const DEFAULT_PARTITION_SIZE: usize = 8192;
@@ -147,11 +146,6 @@ impl<X: Xlen> CProject<X> {
     /// Path to tracer header file.
     pub fn tracer_header_path(&self) -> PathBuf {
         self.output_dir.join("rv_tracer.h")
-    }
-
-    /// Path to metadata file.
-    pub fn meta_path(&self) -> PathBuf {
-        self.output_dir.join("rvr_meta.json")
     }
 
     /// Path to Makefile.
@@ -403,35 +397,6 @@ impl<X: Xlen> CProject<X> {
         fs::write(self.tracer_header_path(), tracer_header)
     }
 
-    /// Write emission metadata for runtime tools.
-    pub fn write_meta(&self) -> std::io::Result<()> {
-        let cfg: &TracerConfig = &self.config.tracer_config;
-        let mut passed = String::new();
-        for (idx, var) in cfg.passed_vars.iter().enumerate() {
-            let kind = match var.kind {
-                PassedVarKind::Ptr => "ptr",
-                PassedVarKind::Index => "index",
-                PassedVarKind::Value => "value",
-            };
-            if idx > 0 {
-                passed.push_str(", ");
-            }
-            passed.push_str(&format!(
-                r#"{{"name":"{}","kind":"{}"}}"#,
-                var.name, kind
-            ));
-        }
-
-        let content = format!(
-            r#"{{"xlen":{},"tracer_kind":"{}","tracer_passed":[{}]}}"#,
-            X::VALUE,
-            cfg.meta_kind(),
-            passed
-        );
-
-        fs::write(self.meta_path(), content)
-    }
-
     /// Write Makefile.
     ///
     /// Generated Makefile includes compiler detection for clang vs gcc compatibility:
@@ -603,9 +568,6 @@ impl<X: Xlen> CProject<X> {
 
         // Write tracer header if tracing enabled
         self.write_tracer_header()?;
-
-        // Write metadata for runtime tools
-        self.write_meta()?;
 
         // Write Makefile
         self.write_makefile(num_partitions)?;

@@ -864,6 +864,8 @@ int rv_execute_from(RvState* state, uint32_t start_pc);
 /* C API helpers for external runners */
 size_t rv_state_size(void);
 size_t rv_state_align(void);
+uint32_t rv_reg_bytes(void);
+uint32_t rv_tracer_kind(void);
 void rv_state_reset(RvState* state);
 uint64_t rv_get_instret(const RvState* state);
 uint8_t rv_get_exit_code(const RvState* state);
