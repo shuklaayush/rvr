@@ -108,16 +108,6 @@ void rv_trap({}) {{
 }
 
 fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
-    let tracer_kind_val = match cfg.tracer_kind {
-        Some(kind) => kind.as_c_kind(),
-        None => {
-            if cfg.has_tracing {
-                255
-            } else {
-                0
-            }
-        }
-    };
     let tracer_helpers = match cfg.tracer_kind {
         Some(TracerKind::Preflight) => format!(
             r#"
@@ -156,16 +146,6 @@ size_t rv_state_size(void) {{
 /* Return alignment of RvState struct */
 size_t rv_state_align(void) {{
     return _Alignof(RvState);
-}}
-
-/* Return register size in bytes */
-uint32_t rv_reg_bytes(void) {{
-    return XLEN / 8;
-}}
-
-/* Return tracer kind (0=none,1=preflight,2=stats,3=ffi,4=dynamic,255=custom) */
-uint32_t rv_tracer_kind(void) {{
-    return {tracer_kind};
 }}
 
 /* Reset RvState to initial values (zero regs/csrs, set pc, clear exit) */
@@ -223,7 +203,6 @@ uint32_t rv_get_entry_point(void) {{
 
 {tracer_helpers}
 "#,
-        tracer_kind = tracer_kind_val,
         tracer_helpers = tracer_helpers,
         rtype = crate::signature::reg_type::<X>(),
     )

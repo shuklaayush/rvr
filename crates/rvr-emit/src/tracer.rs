@@ -32,14 +32,14 @@ impl TracerKind {
         *self == Self::None
     }
 
-    /// Numeric kind id for C API (matches runtime expectations).
-    pub fn as_c_kind(self) -> u32 {
+    /// String label for metadata.
+    pub fn as_str(self) -> &'static str {
         match self {
-            Self::None => 0,
-            Self::Preflight => 1,
-            Self::Stats => 2,
-            Self::Ffi => 3,
-            Self::Dynamic => 4,
+            Self::None => "none",
+            Self::Preflight => "preflight",
+            Self::Stats => "stats",
+            Self::Ffi => "ffi",
+            Self::Dynamic => "dynamic",
         }
     }
 }
@@ -226,6 +226,14 @@ impl TracerConfig {
         match &self.source {
             TracerSource::Builtin(kind) => Some(*kind),
             _ => None,
+        }
+    }
+
+    /// Return the metadata tracer kind label.
+    pub fn meta_kind(&self) -> &'static str {
+        match &self.source {
+            TracerSource::Builtin(kind) => kind.as_str(),
+            TracerSource::Inline { .. } | TracerSource::File { .. } => "custom",
         }
     }
 
