@@ -102,6 +102,7 @@ pub fn gen_header<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         s.push_str(&gen_trace_helpers::<X>(cfg));
     }
 
+    s.push_str(&gen_syscall_declarations::<X>());
     s.push_str(&gen_fn_type(cfg));
     s.push_str(&gen_dispatch::<X>(cfg));
 
@@ -778,6 +779,24 @@ fn gen_block_declarations<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         .unwrap();
     }
     decls
+}
+
+/// Generate syscall runtime function declarations.
+fn gen_syscall_declarations<X: Xlen>() -> String {
+    let rtype = reg_type::<X>();
+    format!(
+        r#"/* Syscall runtime helpers (provided by runtime) */
+{rtype} rv_sys_write(RvState* state, {rtype} fd, {rtype} buf, {rtype} count);
+{rtype} rv_sys_read(RvState* state, {rtype} fd, {rtype} buf, {rtype} count);
+{rtype} rv_sys_brk(RvState* state, {rtype} addr);
+{rtype} rv_sys_mmap(RvState* state, {rtype} addr, {rtype} len, {rtype} prot, {rtype} flags, {rtype} fd, {rtype} off);
+{rtype} rv_sys_fstat(RvState* state, {rtype} fd, {rtype} statbuf);
+{rtype} rv_sys_getrandom(RvState* state, {rtype} buf, {rtype} len, {rtype} flags);
+{rtype} rv_sys_clock_gettime(RvState* state, {rtype} clk_id, {rtype} tp);
+
+"#,
+        rtype = rtype,
+    )
 }
 
 fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {

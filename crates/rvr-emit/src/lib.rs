@@ -11,6 +11,7 @@ mod project;
 mod signature;
 mod tracer;
 mod tracers;
+mod syscalls;
 
 pub use config::*;
 pub use dispatch::*;
@@ -22,3 +23,4 @@ pub use memory::*;
 pub use project::*;
 pub use signature::*;
 pub use tracer::*;
+pub use syscalls::*;

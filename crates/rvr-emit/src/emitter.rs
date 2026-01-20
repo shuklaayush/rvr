@@ -587,6 +587,10 @@ impl<X: Xlen> CEmitter<X> {
             self.render_stmt(stmt, indent);
         }
 
+        if self.statements_write_exit(&ir.statements) {
+            self.render_exit_check(indent);
+        }
+
         self.instr_idx += 1;
 
         // Render terminator
@@ -909,6 +913,42 @@ impl<X: Xlen> CEmitter<X> {
             self.writeln(indent, &save_to_state);
         }
         self.writeln(indent, "return;");
+    }
+
+    fn statements_write_exit(&self, stmts: &[Stmt<X>]) -> bool {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Write { target, .. } => match target {
+                    WriteTarget::Exited | WriteTarget::ExitCode => return true,
+                    _ => {}
+                },
+                Stmt::If {
+                    then_stmts,
+                    else_stmts,
+                    ..
+                } => {
+                    if self.statements_write_exit(then_stmts)
+                        || self.statements_write_exit(else_stmts)
+                    {
+                        return true;
+                    }
+                }
+                Stmt::ExternCall { .. } => {}
+            }
+        }
+        false
+    }
+
+    fn render_exit_check(&mut self, indent: usize) {
+        let save_to_state = self.sig.save_to_state.clone();
+        let pc_lit = self.fmt_addr(self.current_pc);
+        self.writeln(indent, "if (unlikely(state->has_exited)) {");
+        self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
+        if !save_to_state.is_empty() {
+            self.writeln(indent + 1, &save_to_state);
+        }
+        self.writeln(indent + 1, "return;");
+        self.writeln(indent, "}");
     }
 
     /// Render instret update.
