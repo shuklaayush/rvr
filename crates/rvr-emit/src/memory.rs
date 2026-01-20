@@ -45,6 +45,8 @@ pub struct MemoryConfig {
     pub segments: Vec<MemorySegment>,
     /// Memory address bits.
     pub memory_bits: u8,
+    /// Initial program break.
+    pub initial_brk: u64,
 }
 
 impl MemoryConfig {
@@ -53,11 +55,13 @@ impl MemoryConfig {
         base_name: impl Into<String>,
         segments: Vec<MemorySegment>,
         memory_bits: u8,
+        initial_brk: u64,
     ) -> Self {
         Self {
             base_name: base_name.into(),
             segments,
             memory_bits,
+            initial_brk,
         }
     }
 }
@@ -153,8 +157,9 @@ fn gen_segment_data(index: usize, seg: &MemorySegment) -> String {
     s
 }
 
-fn gen_memory_functions(_cfg: &MemoryConfig) -> String {
-    r#"/* Guard size (>= page size and max load/store offset +/-2048) */
+fn gen_memory_functions(cfg: &MemoryConfig) -> String {
+    format!(
+        r#"/* Guard size (>= page size and max load/store offset +/-2048) */
 constexpr size_t GUARD_SIZE = 1 << 14;
 
 void rv_init_memory(RvState* state) {
@@ -177,6 +182,9 @@ void rv_init_memory(RvState* state) {
                    segments[i].data, segments[i].filesz);
         }
     }
+
+    state->start_brk = {initial_brk};
+    state->brk = state->start_brk;
 }
 
 void rv_free_memory(RvState* state) {
@@ -185,8 +193,9 @@ void rv_free_memory(RvState* state) {
         state->memory = NULL;
     }
 }
-"#
-    .to_string()
+"#,
+        initial_brk = cfg.initial_brk,
+    )
 }
 
 /// Write binary segment files for C23 #embed directive.
@@ -283,7 +292,7 @@ mod tests {
             32,
             vec![0x01, 0x02, 0x03, 0x04],
         )];
-        let cfg = MemoryConfig::new("test", segments, 32);
+        let cfg = MemoryConfig::new("test", segments, 32, 0x80010000);
         let memory = gen_memory_file(&cfg);
 
         assert!(memory.contains("segment_0_data"));
@@ -298,7 +307,7 @@ mod tests {
             MemorySegment::new(0x80000000, 4, 8, vec![0x01, 0x02, 0x03, 0x04]),
             MemorySegment::new(0x90000000, 0, 4096, vec![]), // BSS, no data
         ];
-        let cfg = MemoryConfig::new("test", segments, 32);
+        let cfg = MemoryConfig::new("test", segments, 32, 0x80010000);
         let bins = gen_segment_bins(&cfg);
 
         assert_eq!(bins.len(), 1);

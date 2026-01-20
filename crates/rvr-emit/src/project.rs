@@ -355,6 +355,7 @@ impl<X: Xlen> CProject<X> {
             &self.base_name,
             self.segments.clone(),
             self.config.memory_bits,
+            self.inputs.initial_brk,
         );
 
         let memory = gen_memory_file(&mem_cfg);

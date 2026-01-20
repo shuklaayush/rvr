@@ -59,6 +59,10 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     s.push_str(&gen_trap_handler(cfg));
     s.push('\n');
 
+    // C API helper functions
+    s.push_str(&gen_api_helpers(cfg));
+    s.push('\n');
+
     // Dispatch table
     s.push_str("/* Dispatch table: PC -> block function */\n");
     s.push_str("const rv_fn dispatch_table[] = {\n");
@@ -95,6 +99,77 @@ void rv_trap({}) {{
 }}
 "#,
         cfg.sig.params
+    )
+}
+
+fn gen_api_helpers<X: Xlen>(_cfg: &DispatchConfig<X>) -> String {
+    format!(
+        r#"/* C API helpers for external runners */
+
+/* Return size of RvState struct */
+size_t rv_state_size(void) {{
+    return sizeof(RvState);
+}}
+
+/* Return alignment of RvState struct */
+size_t rv_state_align(void) {{
+    return _Alignof(RvState);
+}}
+
+/* Reset RvState to initial values (zero regs/csrs, set pc, clear exit) */
+void rv_state_reset(RvState* state) {{
+    if (!state) return;
+    memset(state->regs, 0, sizeof(state->regs));
+    memset(state->csrs, 0, sizeof(state->csrs));
+    state->pc = RV_ENTRY_POINT;
+    state->instret = 0;
+    state->reservation_valid = 0;
+    state->has_exited = 0;
+    state->exit_code = 0;
+    state->brk = state->start_brk;
+}}
+
+/* Get instruction count */
+uint64_t rv_get_instret(const RvState* state) {{
+    return state ? state->instret : 0;
+}}
+
+/* Get exit code */
+uint8_t rv_get_exit_code(const RvState* state) {{
+    return state ? state->exit_code : 0;
+}}
+
+/* Check if execution has exited */
+bool rv_has_exited(const RvState* state) {{
+    return state ? state->has_exited : true;
+}}
+
+/* Get current PC */
+uint64_t rv_get_pc(const RvState* state) {{
+    return state ? (uint64_t)state->pc : 0;
+}}
+
+/* Set PC */
+void rv_set_pc(RvState* state, uint64_t pc) {{
+    if (state) state->pc = ({rtype})pc;
+}}
+
+/* Get memory pointer */
+uint8_t* rv_get_memory(const RvState* state) {{
+    return state ? state->memory : NULL;
+}}
+
+/* Get memory size */
+uint64_t rv_get_memory_size(void) {{
+    return RV_MEMORY_SIZE;
+}}
+
+/* Get entry point */
+uint32_t rv_get_entry_point(void) {{
+    return RV_ENTRY_POINT;
+}}
+"#,
+        rtype = crate::signature::reg_type::<X>(),
     )
 }
 

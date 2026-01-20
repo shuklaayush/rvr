@@ -816,7 +816,26 @@ static inline size_t dispatch_index(uint32_t pc) {{
 }}
 
 extern const rv_fn dispatch_table[];
+
+/* Runtime functions */
 int rv_execute_from(RvState* state, uint32_t start_pc);
+
+/* C API helpers for external runners */
+size_t rv_state_size(void);
+size_t rv_state_align(void);
+void rv_state_reset(RvState* state);
+uint64_t rv_get_instret(const RvState* state);
+uint8_t rv_get_exit_code(const RvState* state);
+bool rv_has_exited(const RvState* state);
+uint64_t rv_get_pc(const RvState* state);
+void rv_set_pc(RvState* state, uint64_t pc);
+uint8_t* rv_get_memory(const RvState* state);
+uint64_t rv_get_memory_size(void);
+uint32_t rv_get_entry_point(void);
+
+/* Memory initialization (provided by memory.c) */
+int rv_init_memory(RvState* state);
+void rv_free_memory(RvState* state);
 
 "#,
         mask = mask
