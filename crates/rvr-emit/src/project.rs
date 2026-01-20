@@ -7,7 +7,7 @@
 //! - Memory initialization
 //! - Makefile
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,9 @@ use crate::dispatch::{DispatchConfig, gen_dispatch_file};
 use crate::emitter::CEmitter;
 use crate::header::{HeaderConfig, gen_header, gen_blocks_header};
 use crate::htif::{HtifConfig, gen_htif_header, gen_htif_source};
+use crate::inputs::EmitInputs;
 use crate::memory::{MemoryConfig, MemorySegment, gen_memory_file};
+use crate::tracer::gen_tracer_header;
 
 /// Default instructions per partition.
 pub const DEFAULT_PARTITION_SIZE: usize = 8192;
@@ -32,16 +34,10 @@ pub struct CProject<X: Xlen> {
     pub base_name: String,
     /// Emit configuration.
     pub config: EmitConfig<X>,
-    /// Valid block start addresses.
-    pub valid_addresses: HashSet<u64>,
-    /// Absorbed block mapping: absorbed_pc -> merged_block_start.
-    pub absorbed_to_merged: HashMap<u64, u64>,
+    /// Derived inputs for emission (entry point, block map).
+    pub inputs: EmitInputs,
     /// Taken-inline mapping: branch_pc -> (inline_start, inline_end).
     pub taken_inlines: HashMap<u64, (u64, u64)>,
-    /// Program entry point.
-    pub entry_point: u64,
-    /// End address (exclusive).
-    pub pc_end: u64,
     /// Initial brk value.
     pub initial_brk: u64,
     /// Memory segments.
@@ -52,8 +48,6 @@ pub struct CProject<X: Xlen> {
     pub compiler: String,
     /// Enable LTO.
     pub enable_lto: bool,
-    /// Enable tohost check.
-    pub enable_tohost: bool,
 }
 
 impl<X: Xlen> CProject<X> {
@@ -67,30 +61,14 @@ impl<X: Xlen> CProject<X> {
             output_dir: output_dir.as_ref().to_path_buf(),
             base_name: base_name.into(),
             config,
-            valid_addresses: HashSet::new(),
-            absorbed_to_merged: HashMap::new(),
+            inputs: EmitInputs::default(),
             taken_inlines: HashMap::new(),
-            entry_point: 0,
-            pc_end: 0,
             initial_brk: 0,
             segments: Vec::new(),
             partition_size: DEFAULT_PARTITION_SIZE,
             compiler: "clang".to_string(),
             enable_lto: true,
-            enable_tohost: false,
         }
-    }
-
-    /// Set entry point.
-    pub fn with_entry_point(mut self, entry: u64) -> Self {
-        self.entry_point = entry;
-        self
-    }
-
-    /// Set PC end.
-    pub fn with_pc_end(mut self, pc_end: u64) -> Self {
-        self.pc_end = pc_end;
-        self
     }
 
     /// Set initial brk.
@@ -99,15 +77,9 @@ impl<X: Xlen> CProject<X> {
         self
     }
 
-    /// Set valid addresses.
-    pub fn with_valid_addresses(mut self, addrs: HashSet<u64>) -> Self {
-        self.valid_addresses = addrs;
-        self
-    }
-
-    /// Set absorbed to merged mapping.
-    pub fn with_absorbed_mapping(mut self, mapping: HashMap<u64, u64>) -> Self {
-        self.absorbed_to_merged = mapping;
+    /// Set derived emission inputs.
+    pub fn with_inputs(mut self, inputs: EmitInputs) -> Self {
+        self.inputs = inputs;
         self
     }
 
@@ -132,12 +104,6 @@ impl<X: Xlen> CProject<X> {
     /// Set compiler.
     pub fn with_compiler(mut self, compiler: impl Into<String>) -> Self {
         self.compiler = compiler.into();
-        self
-    }
-
-    /// Set tohost enabled.
-    pub fn with_tohost(mut self, enabled: bool) -> Self {
-        self.enable_tohost = enabled;
         self
     }
 
@@ -178,6 +144,11 @@ impl<X: Xlen> CProject<X> {
         self.output_dir.join(format!("{}_htif.c", self.base_name))
     }
 
+    /// Path to tracer header file.
+    pub fn tracer_header_path(&self) -> PathBuf {
+        self.output_dir.join("rv_tracer.h")
+    }
+
     /// Path to Makefile.
     pub fn makefile_path(&self) -> PathBuf {
         self.output_dir.join("Makefile")
@@ -192,16 +163,10 @@ impl<X: Xlen> CProject<X> {
 
     /// Write main header file.
     pub fn write_header(&self, block_addresses: &[u64]) -> std::io::Result<()> {
-        let mut config = self.config.clone();
-        config.entry_point = X::from_u64(self.entry_point);
-        config.pc_end = X::from_u64(self.pc_end);
-        for &addr in &self.valid_addresses {
-            config.valid_addresses.insert(addr);
-        }
-
         let header_cfg = HeaderConfig::new(
             &self.base_name,
-            &config,
+            &self.config,
+            &self.inputs,
             block_addresses.to_vec(),
         );
 
@@ -261,12 +226,7 @@ impl<X: Xlen> CProject<X> {
     ) -> std::io::Result<()> {
         use rvr_ir::Terminator;
 
-        let mut config = self.config.clone();
-        for &addr in &self.valid_addresses {
-            config.valid_addresses.insert(addr);
-        }
-
-        let mut emitter = CEmitter::new(config);
+        let mut emitter = CEmitter::new(self.config.clone(), self.inputs.clone());
         let mut content = String::new();
 
         content.push_str(&format!("#include \"{}_blocks.h\"\n\n", self.base_name));
@@ -385,19 +345,11 @@ impl<X: Xlen> CProject<X> {
 
     /// Write dispatch file.
     pub fn write_dispatch(&self) -> std::io::Result<()> {
-        let mut config = self.config.clone();
-        for &addr in &self.valid_addresses {
-            config.valid_addresses.insert(addr);
-        }
-
         let dispatch_cfg = DispatchConfig::new(
-            &config,
+            &self.config,
             &self.base_name,
-            self.entry_point,
-            self.pc_end,
             self.initial_brk,
-            self.valid_addresses.clone(),
-            self.absorbed_to_merged.clone(),
+            self.inputs.clone(),
         );
 
         let dispatch = gen_dispatch_file::<X>(&dispatch_cfg);
@@ -418,7 +370,7 @@ impl<X: Xlen> CProject<X> {
 
     /// Write HTIF files.
     pub fn write_htif(&self) -> std::io::Result<()> {
-        let htif_cfg = HtifConfig::new(&self.base_name, self.enable_tohost);
+        let htif_cfg = HtifConfig::new(&self.base_name, self.config.tohost_enabled);
 
         let htif_header = gen_htif_header::<X>(&htif_cfg);
         fs::write(self.htif_header_path(), htif_header)?;
@@ -427,6 +379,15 @@ impl<X: Xlen> CProject<X> {
         fs::write(self.htif_source_path(), htif_source)?;
 
         Ok(())
+    }
+
+    /// Write tracer header if tracing is enabled.
+    pub fn write_tracer_header(&self) -> std::io::Result<()> {
+        if self.config.tracer_config.is_none() {
+            return Ok(());
+        }
+        let tracer_header = gen_tracer_header::<X>(&self.config.tracer_config);
+        fs::write(self.tracer_header_path(), tracer_header)
     }
 
     /// Write Makefile.
@@ -453,7 +414,7 @@ impl<X: Xlen> CProject<X> {
         if !self.segments.is_empty() {
             srcs.push(format!("{}_memory.c", self.base_name));
         }
-        if self.enable_tohost {
+        if self.config.tohost_enabled {
             srcs.push(format!("{}_htif.c", self.base_name));
         }
 
@@ -510,9 +471,12 @@ impl<X: Xlen> CProject<X> {
         }
 
         // Write HTIF if tohost enabled
-        if self.enable_tohost {
+        if self.config.tohost_enabled {
             self.write_htif()?;
         }
+
+        // Write tracer header if tracing enabled
+        self.write_tracer_header()?;
 
         // Write Makefile
         self.write_makefile(num_partitions)?;
@@ -570,7 +534,7 @@ mod tests {
         let mut block = BlockIR::new(start_pc);
         for i in 0..num_instrs {
             let pc = start_pc + (i as u64 * 4);
-            let ir = InstrIR::new(pc, 4, Vec::new(), Terminator::default());
+            let ir = InstrIR::new(pc, 4, 0, Vec::new(), Terminator::default());
             block.push(ir);
         }
         block

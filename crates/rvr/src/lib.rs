@@ -196,24 +196,17 @@ pub fn compile_with_options(
     let data = std::fs::read(elf_path)?;
     let xlen = get_elf_xlen(&data)?;
 
-    match xlen {
-        32 => {
-            let mut config = EmitConfig::<Rv32>::default();
-            options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config);
-            recompiler.compile(elf_path, output_dir, options.jobs)
-        }
-        64 => {
-            let mut config = EmitConfig::<Rv64>::default();
-            options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config);
-            recompiler.compile(elf_path, output_dir, options.jobs)
-        }
-        _ => Err(Error::XlenMismatch {
-            expected: 32,
-            actual: xlen,
-        }),
-    }
+    dispatch_by_xlen(xlen, || {
+        let mut config = EmitConfig::<Rv32>::default();
+        options.apply(&mut config);
+        let recompiler = Recompiler::<Rv32>::new(config);
+        recompiler.compile(elf_path, output_dir, options.jobs)
+    }, || {
+        let mut config = EmitConfig::<Rv64>::default();
+        options.apply(&mut config);
+        let recompiler = Recompiler::<Rv64>::new(config);
+        recompiler.compile(elf_path, output_dir, options.jobs)
+    })
 }
 
 /// Lift an ELF file to C source code, auto-detecting XLEN.
@@ -230,19 +223,27 @@ pub fn lift_to_c_with_options(
     let data = std::fs::read(elf_path)?;
     let xlen = get_elf_xlen(&data)?;
 
+    dispatch_by_xlen(xlen, || {
+        let mut config = EmitConfig::<Rv32>::default();
+        options.apply(&mut config);
+        let recompiler = Recompiler::<Rv32>::new(config);
+        recompiler.lift(elf_path, output_dir)
+    }, || {
+        let mut config = EmitConfig::<Rv64>::default();
+        options.apply(&mut config);
+        let recompiler = Recompiler::<Rv64>::new(config);
+        recompiler.lift(elf_path, output_dir)
+    })
+}
+
+fn dispatch_by_xlen<R>(
+    xlen: u8,
+    rv32: impl FnOnce() -> Result<R>,
+    rv64: impl FnOnce() -> Result<R>,
+) -> Result<R> {
     match xlen {
-        32 => {
-            let mut config = EmitConfig::<Rv32>::default();
-            options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config);
-            recompiler.lift(elf_path, output_dir)
-        }
-        64 => {
-            let mut config = EmitConfig::<Rv64>::default();
-            options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config);
-            recompiler.lift(elf_path, output_dir)
-        }
+        32 => rv32(),
+        64 => rv64(),
         _ => Err(Error::XlenMismatch {
             expected: 32,
             actual: xlen,

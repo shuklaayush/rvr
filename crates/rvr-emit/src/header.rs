@@ -11,6 +11,7 @@ use std::fmt::Write;
 use rvr_ir::Xlen;
 
 use crate::config::{EmitConfig, InstretMode};
+use crate::inputs::EmitInputs;
 use crate::signature::{reg_type, FnSignature};
 use crate::tracer::TracerConfig;
 
@@ -58,6 +59,7 @@ impl<X: Xlen> HeaderConfig<X> {
     pub fn new(
         base_name: impl Into<String>,
         config: &EmitConfig<X>,
+        inputs: &EmitInputs,
         block_addresses: Vec<u64>,
     ) -> Self {
         Self {
@@ -67,7 +69,7 @@ impl<X: Xlen> HeaderConfig<X> {
             instret_mode: config.instret_mode,
             tohost_enabled: config.tohost_enabled,
             addr_check: config.addr_check,
-            entry_point: X::to_u64(config.entry_point),
+            entry_point: inputs.entry_point,
             block_addresses,
             sig: FnSignature::new(config),
             tracer_config: config.tracer_config.clone(),
@@ -236,16 +238,10 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     if has_tracer {
         writeln!(
             extra_fields,
-            "    /* Tracer - embedded struct */\n    void* tracer;                       /* offset {} */",
+            "    /* Tracer - embedded struct */\n    Tracer tracer;                     /* offset {} */",
             base_machine_size
         ).unwrap();
     }
-
-    let _expected_size = if has_tracer {
-        base_machine_size + 8 // Tracer pointer
-    } else {
-        base_machine_size
-    };
 
     let mut s = format!(
         r#"/* VM State - layout must match Mojo RvState */
@@ -634,8 +630,8 @@ __attribute__((always_inline)) static inline void twr_mem_u8(uint8_t* m, {addr_t
 __attribute__((always_inline)) static inline void twr_mem_u16(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u16(m, b, o, v); }}
 __attribute__((always_inline)) static inline void twr_mem_u32(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u32(m, b, o, v); }}
 __attribute__((always_inline)) static inline void twr_mem_u64(uint8_t* m, {addr_type} b, int16_t o, uint64_t v) {{ wr_mem_u64(m, b, o, v); }}
-__attribute__((always_inline)) static inline {rtype} trd_regval({rtype} v) {{ return v; }}
-__attribute__((always_inline)) static inline {rtype} twr_regval({rtype} v) {{ return v; }}
+__attribute__((always_inline)) static inline {rtype} trd_regval(uint32_t r, {rtype} v) {{ (void)r; return v; }}
+__attribute__((always_inline)) static inline {rtype} twr_regval(uint32_t r, {rtype} v) {{ (void)r; return v; }}
 __attribute__((always_inline)) static inline {rtype} trd_reg(RvState* s, uint32_t r) {{ return s->regs[r]; }}
 __attribute__((always_inline)) static inline void twr_reg(RvState* s, uint32_t r, {rtype} v) {{ s->regs[r] = v; }}
 __attribute__((always_inline)) static inline uint32_t trd_csr(RvState* s{instret_param}, uint32_t c) {{ return rd_csr(s{instret_arg}, c); }}
@@ -723,12 +719,12 @@ __attribute__((always_inline)) static inline void twr_mem_u64(uint8_t* m, {addr_
 }}
 
 /* Register access with tracing */
-__attribute__((always_inline)) static inline {rtype} trd_regval({rtype} v) {{
-    /* Hot register read - value already in local var, trace if needed */
+__attribute__((always_inline)) static inline {rtype} trd_regval(uint32_t r, {rtype} v) {{
+    trace_reg_read(r, v);
     return v;
 }}
-__attribute__((always_inline)) static inline {rtype} twr_regval({rtype} v) {{
-    /* Hot register write - value going to local var, trace if needed */
+__attribute__((always_inline)) static inline {rtype} twr_regval(uint32_t r, {rtype} v) {{
+    trace_reg_write(r, v);
     return v;
 }}
 __attribute__((always_inline)) static inline {rtype} trd_reg(RvState* s, uint32_t r) {{
@@ -814,7 +810,8 @@ mod tests {
     #[test]
     fn test_gen_header() {
         let config = EmitConfig::<Rv64>::standard();
-        let header_cfg = HeaderConfig::new("test", &config, vec![0x80000000]);
+        let inputs = EmitInputs::new(0x80000000, 0x80000008);
+        let header_cfg = HeaderConfig::new("test", &config, &inputs, vec![0x80000000]);
         let header = gen_header::<Rv64>(&header_cfg);
 
         assert!(header.contains("#pragma once"));
@@ -826,7 +823,8 @@ mod tests {
     #[test]
     fn test_gen_blocks_header() {
         let config = EmitConfig::<Rv64>::standard();
-        let header_cfg = HeaderConfig::new("test", &config, vec![0x80000000, 0x80000004]);
+        let inputs = EmitInputs::new(0x80000000, 0x80000008);
+        let header_cfg = HeaderConfig::new("test", &config, &inputs, vec![0x80000000, 0x80000004]);
         let blocks = gen_blocks_header::<Rv64>(&header_cfg);
 
         assert!(blocks.contains("B_0000000080000000"));

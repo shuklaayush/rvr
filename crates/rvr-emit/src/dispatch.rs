@@ -5,12 +5,12 @@
 //! - Dispatch table mapping PC -> block function
 //! - Runtime execution function
 
-use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
 use crate::config::{EmitConfig, InstretMode};
+use crate::inputs::EmitInputs;
 use crate::signature::FnSignature;
 
 /// Instruction slot size (2 bytes for compressed instruction support).
@@ -20,18 +20,12 @@ pub const INSTRUCTION_SIZE: u64 = 2;
 pub struct DispatchConfig<X: Xlen> {
     /// Base name for output files.
     pub base_name: String,
-    /// Entry point address.
-    pub entry_point: u64,
-    /// End address (exclusive).
-    pub pc_end: u64,
+    /// Derived inputs.
+    pub inputs: EmitInputs,
     /// Initial brk value.
     pub initial_brk: u64,
     /// Instret counting mode.
     pub instret_mode: InstretMode,
-    /// Valid block start addresses.
-    pub valid_addresses: HashSet<u64>,
-    /// Absorbed block mapping: absorbed_pc -> merged_block_start.
-    pub absorbed_to_merged: HashMap<u64, u64>,
     /// Function signature.
     pub sig: FnSignature,
     /// Memory address bits.
@@ -46,20 +40,14 @@ impl<X: Xlen> DispatchConfig<X> {
     pub fn new(
         config: &EmitConfig<X>,
         base_name: impl Into<String>,
-        entry_point: u64,
-        pc_end: u64,
         initial_brk: u64,
-        valid_addresses: HashSet<u64>,
-        absorbed_to_merged: HashMap<u64, u64>,
+        inputs: EmitInputs,
     ) -> Self {
         Self {
             base_name: base_name.into(),
-            entry_point,
-            pc_end,
+            inputs,
             initial_brk,
             instret_mode: config.instret_mode,
-            valid_addresses,
-            absorbed_to_merged,
             sig: FnSignature::new(config),
             memory_bits: config.memory_bits,
             has_tracing: !config.tracer_config.is_none(),
@@ -83,12 +71,12 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     s.push_str("/* Dispatch table: PC -> block function */\n");
     s.push_str("const rv_fn dispatch_table[] = {\n");
 
-    let mut addr = cfg.entry_point;
-    while addr < cfg.pc_end {
-        if cfg.valid_addresses.contains(&addr) {
+    let mut addr = cfg.inputs.entry_point;
+    while addr < cfg.inputs.pc_end {
+        if cfg.inputs.valid_addresses.contains(&addr) {
             // Block start - point to its own function
             writeln!(s, "    B_{:016x},", addr).unwrap();
-        } else if let Some(&merged) = cfg.absorbed_to_merged.get(&addr) {
+        } else if let Some(&merged) = cfg.inputs.absorbed_to_merged.get(&addr) {
             // Absorbed block - point to merged block's function
             writeln!(s, "    B_{:016x},", merged).unwrap();
         } else {
@@ -164,19 +152,11 @@ mod tests {
     #[test]
     fn test_gen_dispatch() {
         let config = EmitConfig::<Rv64>::standard();
-        let mut valid = HashSet::new();
-        valid.insert(0x80000000u64);
-        valid.insert(0x80000004u64);
+        let mut inputs = EmitInputs::new(0x80000000, 0x80000010);
+        inputs.valid_addresses.insert(0x80000000u64);
+        inputs.valid_addresses.insert(0x80000004u64);
 
-        let dispatch_cfg = DispatchConfig::new(
-            &config,
-            "test",
-            0x80000000,
-            0x80000010,
-            0x80010000,
-            valid,
-            HashMap::new(),
-        );
+        let dispatch_cfg = DispatchConfig::new(&config, "test", 0x80010000, inputs);
 
         let dispatch = gen_dispatch_file::<Rv64>(&dispatch_cfg);
 
@@ -190,21 +170,11 @@ mod tests {
     #[test]
     fn test_absorbed_mapping() {
         let config = EmitConfig::<Rv64>::standard();
-        let mut valid = HashSet::new();
-        valid.insert(0x80000000u64);
+        let mut inputs = EmitInputs::new(0x80000000, 0x80000008);
+        inputs.valid_addresses.insert(0x80000000u64);
+        inputs.absorbed_to_merged.insert(0x80000002u64, 0x80000000u64);
 
-        let mut absorbed = HashMap::new();
-        absorbed.insert(0x80000002u64, 0x80000000u64);
-
-        let dispatch_cfg = DispatchConfig::new(
-            &config,
-            "test",
-            0x80000000,
-            0x80000008,
-            0x80010000,
-            valid,
-            absorbed,
-        );
+        let dispatch_cfg = DispatchConfig::new(&config, "test", 0x80010000, inputs);
 
         let dispatch = gen_dispatch_file::<Rv64>(&dispatch_cfg);
 

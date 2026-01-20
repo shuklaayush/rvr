@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rvr_cfg::{BlockTable, InstructionTable};
 use rvr_elf::ElfImage;
-use rvr_emit::{CProject, EmitConfig, MemorySegment};
+use rvr_emit::{CProject, EmitConfig, EmitInputs, MemorySegment, NUM_REGS_E, NUM_REGS_I};
 use rvr_ir::BlockIR;
 use rvr_isa::{ExtensionRegistry, Xlen};
 
@@ -26,8 +26,19 @@ pub struct Pipeline<X: Xlen> {
 }
 
 impl<X: Xlen> Pipeline<X> {
+    fn adjust_config_for_image(image: &ElfImage<X>, config: &mut EmitConfig<X>) {
+        if image.is_rve() {
+            config.num_regs = NUM_REGS_E;
+            config.hot_regs.retain(|&r| (r as usize) < NUM_REGS_E);
+        } else {
+            config.num_regs = NUM_REGS_I;
+        }
+    }
+
     /// Create a new pipeline with standard extensions.
     pub fn new(image: ElfImage<X>, config: EmitConfig<X>) -> Self {
+        let mut config = config;
+        Self::adjust_config_for_image(&image, &mut config);
         Self {
             image,
             config,
@@ -43,6 +54,8 @@ impl<X: Xlen> Pipeline<X> {
         config: EmitConfig<X>,
         registry: ExtensionRegistry<X>,
     ) -> Self {
+        let mut config = config;
+        Self::adjust_config_for_image(&image, &mut config);
         Self {
             image,
             config,
@@ -130,9 +143,9 @@ impl<X: Xlen> Pipeline<X> {
             instr_table.populate_segment(&seg.data, seg_start, &self.registry);
         }
 
-        // Add read-only (non-writable) segments for constant propagation
+        // Add read-only segments for constant propagation
         for seg in &self.image.memory_segments {
-            if seg.is_readonly() && !seg.is_executable() {
+            if seg.is_readonly() {
                 let seg_start = X::to_u64(seg.virtual_start);
                 let seg_end = X::to_u64(seg.virtual_end);
                 instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
@@ -170,13 +183,6 @@ impl<X: Xlen> Pipeline<X> {
             if let Some(block_ir) = self.lift_block_with_continuations(start, end, conts) {
                 self.ir_blocks.insert(start, block_ir);
             }
-        }
-
-        // Update config with valid addresses from blocks
-        // NOTE: Only add actual block addresses, NOT absorbed addresses.
-        // Absorbed addresses are handled separately via absorbed_to_merged mapping.
-        for &addr in self.ir_blocks.keys() {
-            self.config.valid_addresses.insert(addr);
         }
 
         Ok(())
@@ -252,12 +258,6 @@ impl<X: Xlen> Pipeline<X> {
         }
     }
 
-    /// Lift a single block from start to end (legacy, without continuations).
-    #[allow(dead_code)]
-    fn lift_block(&self, start: u64, end: u64) -> Option<BlockIR<X>> {
-        self.lift_block_with_continuations(start, end, None)
-    }
-
     /// Emit C code to output directory using CProject.
     ///
     /// # Errors
@@ -268,13 +268,7 @@ impl<X: Xlen> Pipeline<X> {
         let block_table = self.block_table.as_ref()
             .ok_or(Error::CfgNotBuilt("emit_c"))?;
 
-        // Set entry point in config
-        self.config.entry_point = self.image.entry_point;
-
-        // Collect valid addresses
-        for &addr in self.ir_blocks.keys() {
-            self.config.valid_addresses.insert(addr);
-        }
+        let entry_point = X::to_u64(self.image.entry_point);
 
         // Convert memory segments
         let segments: Vec<MemorySegment> = self.image.memory_segments
@@ -301,18 +295,16 @@ impl<X: Xlen> Pipeline<X> {
         // Get taken_inlines mapping from BlockTable
         let taken_inlines = block_table.taken_inlines.clone();
 
-        // Add absorbed mapping to config for emitter use
-        self.config.absorbed_to_merged = absorbed_to_merged.clone();
+        // Build derived emission inputs
+        let mut inputs = EmitInputs::new(entry_point, pc_end);
+        inputs.valid_addresses.extend(self.ir_blocks.keys().copied());
+        inputs.absorbed_to_merged = absorbed_to_merged.clone();
 
         // Create CProject with block transform mappings
         let project = CProject::new(output_dir, base_name, self.config.clone())
-            .with_entry_point(X::to_u64(self.image.entry_point))
-            .with_pc_end(pc_end)
-            .with_valid_addresses(self.config.valid_addresses.clone())
-            .with_absorbed_mapping(absorbed_to_merged)
+            .with_inputs(inputs)
             .with_taken_inlines(taken_inlines)
-            .with_segments(segments)
-            .with_tohost(self.config.tohost_enabled);
+            .with_segments(segments);
 
         // Collect blocks sorted by start PC
         let mut blocks: Vec<&BlockIR<X>> = self.ir_blocks.values().collect();

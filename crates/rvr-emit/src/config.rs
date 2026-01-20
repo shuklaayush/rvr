@@ -3,7 +3,6 @@
 //! Code generation configuration including hot register selection,
 //! instret handling, and platform-specific defaults.
 
-use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 use rvr_ir::Xlen;
@@ -110,34 +109,16 @@ pub struct EmitConfig<X: Xlen> {
     pub num_regs: usize,
     /// Registers passed as arguments (hot registers).
     pub hot_regs: Vec<u8>,
-    /// Whether to pass cycle counter as hot variable.
-    pub hot_cycle: bool,
-    /// Whether to pass trace_idx as hot variable.
-    pub hot_trace_idx: bool,
-    /// Whether to pass pc_idx as hot variable.
-    pub hot_pc_idx: bool,
     /// Enable address bounds checking.
     pub addr_check: bool,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
-    /// Maximum instructions to retire before suspend (if Some).
-    pub max_instret: Option<u64>,
     /// Emit comments in generated C code.
     pub emit_comments: bool,
-    /// Emit line information (#line directives).
-    pub emit_line_info: bool,
     /// Enable tohost check (for riscv-tests).
     pub tohost_enabled: bool,
     /// Memory address bits (default 32).
     pub memory_bits: u8,
-    /// Valid instruction addresses.
-    pub valid_addresses: HashSet<u64>,
-    /// Absorbed block mapping: absorbed_pc -> merged_block_start.
-    pub absorbed_to_merged: HashMap<u64, u64>,
-    /// Program entry point.
-    pub entry_point: X::Reg,
-    /// Program end address.
-    pub pc_end: X::Reg,
     /// Tracer configuration.
     pub tracer_config: TracerConfig,
     _marker: PhantomData<X>,
@@ -148,20 +129,11 @@ impl<X: Xlen> Default for EmitConfig<X> {
         Self {
             num_regs: NUM_REGS_I,
             hot_regs: Vec::new(),
-            hot_cycle: true,
-            hot_trace_idx: true,
-            hot_pc_idx: true,
             addr_check: false,
             instret_mode: InstretMode::Count,
-            max_instret: None,
             emit_comments: true,
-            emit_line_info: false,
             tohost_enabled: false,
             memory_bits: 32,
-            valid_addresses: HashSet::new(),
-            absorbed_to_merged: HashMap::new(),
-            entry_point: X::from_u64(0),
-            pc_end: X::from_u64(0),
             tracer_config: TracerConfig::none(),
             _marker: PhantomData,
         }
@@ -235,19 +207,6 @@ impl<X: Xlen> EmitConfig<X> {
     /// Number of hot registers.
     pub fn num_hot_regs(&self) -> usize {
         self.hot_regs.len()
-    }
-
-    /// Check if address is valid (either directly or via absorbed mapping).
-    pub fn is_valid_address(&self, pc: u64) -> bool {
-        self.valid_addresses.contains(&pc) || self.absorbed_to_merged.contains_key(&pc)
-    }
-
-    /// Resolve an address to its actual target (handles absorbed blocks).
-    ///
-    /// If the address was absorbed into another block, returns the merged block's address.
-    /// Otherwise returns the address unchanged.
-    pub fn resolve_address(&self, pc: u64) -> u64 {
-        self.absorbed_to_merged.get(&pc).copied().unwrap_or(pc)
     }
 
     /// Check if tracing is enabled.

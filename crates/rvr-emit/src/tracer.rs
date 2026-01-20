@@ -1,4 +1,4 @@
-//! Tracer configuration for C-first tracer design.
+//! Tracer configuration and header generation for C-first tracer design.
 //!
 //! Tracers are implemented as C headers. This module provides configuration
 //! for selecting which tracer to use and which variables to pass directly
@@ -163,6 +163,61 @@ impl Default for TracerConfig {
     fn default() -> Self {
         Self::none()
     }
+}
+
+/// Generate a minimal tracer header.
+///
+/// This provides a `Tracer` struct plus `trace_*` hooks used by the emitter.
+/// The default implementation is no-op (keeps overhead near zero), but it
+/// allows tracing-enabled builds to compile cleanly.
+pub fn gen_tracer_header<X: rvr_ir::Xlen>(cfg: &TracerConfig) -> String {
+    if cfg.is_none() {
+        return "#pragma once\n/* Tracing disabled */\n".to_string();
+    }
+
+    let rtype = crate::signature::reg_type::<X>();
+    let mut fields = String::new();
+    for var in &cfg.passed_vars {
+        let ty = match var.kind {
+            PassedVarKind::Ptr => format!("{}*", rtype),
+            PassedVarKind::Index => "uint32_t".to_string(),
+            PassedVarKind::Value => rtype.to_string(),
+        };
+        fields.push_str(&format!("    {} {};\n", ty, var.name));
+    }
+
+    format!(
+        r#"#pragma once
+#include <stdint.h>
+
+typedef struct Tracer {{
+{fields}}} Tracer;
+
+static inline void trace_init(Tracer* t) {{ (void)t; }}
+static inline void trace_fini(Tracer* t) {{ (void)t; }}
+
+static inline void trace_block(Tracer* t, uint64_t pc) {{ (void)t; (void)pc; }}
+static inline void trace_pc(Tracer* t, uint64_t pc) {{ (void)t; (void)pc; }}
+static inline void trace_branch_taken(Tracer* t, uint64_t pc, uint64_t target) {{ (void)t; (void)pc; (void)target; }}
+static inline void trace_branch_not_taken(Tracer* t, uint64_t pc, uint64_t target) {{ (void)t; (void)pc; (void)target; }}
+
+static inline void trace_mem_read_byte(uint64_t addr, uint8_t v) {{ (void)addr; (void)v; }}
+static inline void trace_mem_read_halfword(uint64_t addr, uint16_t v) {{ (void)addr; (void)v; }}
+static inline void trace_mem_read_word(uint64_t addr, uint32_t v) {{ (void)addr; (void)v; }}
+static inline void trace_mem_read_dword(uint64_t addr, uint64_t v) {{ (void)addr; (void)v; }}
+
+static inline void trace_mem_write_byte(uint64_t addr, uint8_t v) {{ (void)addr; (void)v; }}
+static inline void trace_mem_write_halfword(uint64_t addr, uint16_t v) {{ (void)addr; (void)v; }}
+static inline void trace_mem_write_word(uint64_t addr, uint32_t v) {{ (void)addr; (void)v; }}
+static inline void trace_mem_write_dword(uint64_t addr, uint64_t v) {{ (void)addr; (void)v; }}
+
+static inline void trace_reg_read(uint32_t r, uint64_t v) {{ (void)r; (void)v; }}
+static inline void trace_reg_write(uint32_t r, uint64_t v) {{ (void)r; (void)v; }}
+static inline void trace_csr_read(uint32_t c, uint32_t v) {{ (void)c; (void)v; }}
+static inline void trace_csr_write(uint32_t c, uint32_t v) {{ (void)c; (void)v; }}
+"#,
+        fields = fields
+    )
 }
 
 #[cfg(test)]

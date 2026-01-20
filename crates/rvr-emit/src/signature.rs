@@ -57,6 +57,8 @@ pub struct FnSignature {
     pub hot_reg_set: HashSet<u8>,
     /// Whether instret counting is enabled.
     pub counts_instret: bool,
+    /// Whether tracing is enabled for reg access.
+    pub trace_regs: bool,
 }
 
 impl FnSignature {
@@ -64,6 +66,7 @@ impl FnSignature {
     pub fn new<X: Xlen>(config: &EmitConfig<X>) -> Self {
         let rtype = reg_type::<X>();
         let counts_instret = config.instret_mode.counts();
+        let trace_regs = !config.tracer_config.is_none();
 
         // Base signature: state pointer and memory base
         let mut params = String::from("RvState* state, uint8_t* memory");
@@ -100,6 +103,7 @@ impl FnSignature {
             save_to_state,
             hot_reg_set,
             counts_instret,
+            trace_regs,
         }
     }
 
@@ -143,9 +147,17 @@ impl FnSignature {
         if reg == 0 {
             "0".to_string()
         } else if self.is_hot_reg(reg) {
-            abi_name(reg).to_string()
+            if self.trace_regs {
+                format!("trd_regval({}, {})", reg, abi_name(reg))
+            } else {
+                abi_name(reg).to_string()
+            }
         } else {
-            format!("state->regs[{}]", reg)
+            if self.trace_regs {
+                format!("trd_reg(state, {})", reg)
+            } else {
+                format!("state->regs[{}]", reg)
+            }
         }
     }
 
@@ -154,9 +166,17 @@ impl FnSignature {
         if reg == 0 {
             String::new()
         } else if self.is_hot_reg(reg) {
-            format!("{} = {};", abi_name(reg), value)
+            if self.trace_regs {
+                format!("{} = twr_regval({}, {});", abi_name(reg), reg, value)
+            } else {
+                format!("{} = {};", abi_name(reg), value)
+            }
         } else {
-            format!("state->regs[{}] = {};", reg, value)
+            if self.trace_regs {
+                format!("twr_reg(state, {}, {});", reg, value)
+            } else {
+                format!("state->regs[{}] = {};", reg, value)
+            }
         }
     }
 
