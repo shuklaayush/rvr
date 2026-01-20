@@ -462,24 +462,26 @@ impl<X: Xlen> CEmitter<X> {
             Space::Mem => {
                 let base = self.render_expr(expr.left.as_ref().unwrap());
                 let offset = expr.mem_offset;
+                // Use traced helpers (trd_*) - these are passthroughs when tracing is disabled
                 let load_fn = match (expr.width, expr.signed) {
-                    (1, true) => "rd_mem_i8",
-                    (1, false) => "rd_mem_u8",
-                    (2, true) => "rd_mem_i16",
-                    (2, false) => "rd_mem_u16",
-                    (4, true) if X::VALUE == 64 => "rd_mem_i32",
-                    (4, _) => "rd_mem_u32",
-                    (8, _) => "rd_mem_u64",
-                    _ => "rd_mem_u32",
+                    (1, true) => "trd_mem_i8",
+                    (1, false) => "trd_mem_u8",
+                    (2, true) => "trd_mem_i16",
+                    (2, false) => "trd_mem_u16",
+                    (4, true) if X::VALUE == 64 => "trd_mem_i32",
+                    (4, _) => "trd_mem_u32",
+                    (8, _) => "trd_mem_u64",
+                    _ => "trd_mem_u32",
                 };
                 format!("{}(memory, {}, {})", load_fn, base, offset)
             }
             Space::Csr => {
                 let csr = X::to_u64(expr.imm) as u16;
+                // Use traced helper (trd_csr)
                 if self.config.instret_mode.counts() {
-                    format!("rd_csr(state, instret, 0x{:x})", csr)
+                    format!("trd_csr(state, instret, 0x{:x})", csr)
                 } else {
-                    format!("rd_csr(state, 0x{:x})", csr)
+                    format!("trd_csr(state, 0x{:x})", csr)
                 }
             }
             Space::Pc => "state->pc".to_string(),
@@ -549,19 +551,21 @@ impl<X: Xlen> CEmitter<X> {
                         if self.config.tohost_enabled && *width == 4 {
                             self.render_mem_write_tohost(&base, offset, &value_str, indent);
                         } else {
+                            // Use traced helpers (twr_*) - passthroughs when tracing is disabled
                             let store_fn = match width {
-                                1 => "wr_mem_u8",
-                                2 => "wr_mem_u16",
-                                4 => "wr_mem_u32",
-                                8 => "wr_mem_u64",
-                                _ => "wr_mem_u32",
+                                1 => "twr_mem_u8",
+                                2 => "twr_mem_u16",
+                                4 => "twr_mem_u32",
+                                8 => "twr_mem_u64",
+                                _ => "twr_mem_u32",
                             };
                             self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
                         }
                     }
                     Space::Csr => {
                         let csr = X::to_u64(addr.imm) as u16;
-                        self.writeln(indent, &format!("wr_csr(state, 0x{:x}, {});", csr, value_str));
+                        // Use traced helper (twr_csr)
+                        self.writeln(indent, &format!("twr_csr(state, 0x{:x}, {});", csr, value_str));
                     }
                     Space::Pc => {
                         self.writeln(indent, &format!("state->pc = {};", value_str));
@@ -629,7 +633,8 @@ impl<X: Xlen> CEmitter<X> {
         self.writeln(indent + 2, "return;");
         self.writeln(indent + 1, "}");
         self.writeln(indent, "} else {");
-        self.writeln(indent + 1, &format!("wr_mem_u32(memory, {}, {}, {});", base, offset, value));
+        // Use traced helper for non-tohost writes
+        self.writeln(indent + 1, &format!("twr_mem_u32(memory, {}, {}, {});", base, offset, value));
         self.writeln(indent, "}");
     }
 

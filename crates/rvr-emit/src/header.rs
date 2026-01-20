@@ -92,7 +92,14 @@ pub fn gen_header<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     s.push_str(&gen_memory_functions::<X>(cfg));
     s.push_str(&gen_csr_functions::<X>(cfg));
     s.push_str(&gen_helpers());
-    s.push_str(&gen_no_trace_helpers::<X>(cfg));
+
+    // Generate traced helpers - passthrough if tracing disabled, with trace calls if enabled
+    if cfg.tracer_config.is_none() {
+        s.push_str(&gen_no_trace_helpers::<X>(cfg));
+    } else {
+        s.push_str(&gen_trace_helpers::<X>(cfg));
+    }
+
     s.push_str(&gen_fn_type(cfg));
     s.push_str(&gen_dispatch::<X>(cfg));
 
@@ -122,6 +129,13 @@ fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         String::new()
     };
 
+    // Include tracer header when tracing is enabled
+    let tracer_include = if !cfg.tracer_config.is_none() {
+        "#include \"rv_tracer.h\"\n".to_string()
+    } else {
+        String::new()
+    };
+
     format!(
         r#"#pragma once
 #include <stdint.h>
@@ -133,12 +147,13 @@ fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 #include <assert.h>
 #include <sys/mman.h>
 
-{}/* Branch prediction hints */
+{htif}{tracer}/* Branch prediction hints */
 static inline int likely(int x) {{ return __builtin_expect(!!(x), 1); }}
 static inline int unlikely(int x) {{ return __builtin_expect(!!(x), 0); }}
 
 "#,
-        htif_include
+        htif = htif_include,
+        tracer = tracer_include,
     )
 }
 
@@ -613,6 +628,7 @@ __attribute__((always_inline)) static inline int32_t trd_mem_i8(uint8_t* m, {add
 __attribute__((always_inline)) static inline uint32_t trd_mem_u16(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u16(m, b, o); }}
 __attribute__((always_inline)) static inline int32_t trd_mem_i16(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_i16(m, b, o); }}
 __attribute__((always_inline)) static inline uint32_t trd_mem_u32(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u32(m, b, o); }}
+__attribute__((always_inline)) static inline int64_t trd_mem_i32(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_i32(m, b, o); }}
 __attribute__((always_inline)) static inline uint64_t trd_mem_u64(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u64(m, b, o); }}
 __attribute__((always_inline)) static inline void twr_mem_u8(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u8(m, b, o, v); }}
 __attribute__((always_inline)) static inline void twr_mem_u16(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u16(m, b, o, v); }}
@@ -624,6 +640,117 @@ __attribute__((always_inline)) static inline {rtype} trd_reg(RvState* s, uint32_
 __attribute__((always_inline)) static inline void twr_reg(RvState* s, uint32_t r, {rtype} v) {{ s->regs[r] = v; }}
 __attribute__((always_inline)) static inline uint32_t trd_csr(RvState* s{instret_param}, uint32_t c) {{ return rd_csr(s{instret_arg}, c); }}
 __attribute__((always_inline)) static inline void twr_csr(RvState* s, uint32_t c, uint32_t v) {{ wr_csr(s, c, v); }}
+
+"#,
+        addr_type = addr_type,
+        rtype = rtype,
+        instret_param = instret_param,
+        instret_arg = instret_arg,
+    )
+}
+
+/// Generate traced helpers that call trace functions when tracing is enabled.
+fn gen_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
+    let rtype = reg_type::<X>();
+    let addr_type = reg_type::<X>();
+    let instret_param = if cfg.instret_mode.counts() {
+        ", uint64_t instret"
+    } else {
+        ""
+    };
+    let instret_arg = if cfg.instret_mode.counts() {
+        ", instret"
+    } else {
+        ""
+    };
+
+    format!(
+        r#"/* Traced helpers (with trace function calls) */
+
+/* Memory reads with tracing */
+__attribute__((always_inline)) static inline uint32_t trd_mem_u8(uint8_t* m, {addr_type} b, int16_t o) {{
+    uint32_t v = rd_mem_u8(m, b, o);
+    trace_mem_read_byte(({addr_type})b + o, (uint8_t)v);
+    return v;
+}}
+__attribute__((always_inline)) static inline int32_t trd_mem_i8(uint8_t* m, {addr_type} b, int16_t o) {{
+    int32_t v = rd_mem_i8(m, b, o);
+    trace_mem_read_byte(({addr_type})b + o, (uint8_t)v);
+    return v;
+}}
+__attribute__((always_inline)) static inline uint32_t trd_mem_u16(uint8_t* m, {addr_type} b, int16_t o) {{
+    uint32_t v = rd_mem_u16(m, b, o);
+    trace_mem_read_halfword(({addr_type})b + o, (uint16_t)v);
+    return v;
+}}
+__attribute__((always_inline)) static inline int32_t trd_mem_i16(uint8_t* m, {addr_type} b, int16_t o) {{
+    int32_t v = rd_mem_i16(m, b, o);
+    trace_mem_read_halfword(({addr_type})b + o, (uint16_t)v);
+    return v;
+}}
+__attribute__((always_inline)) static inline uint32_t trd_mem_u32(uint8_t* m, {addr_type} b, int16_t o) {{
+    uint32_t v = rd_mem_u32(m, b, o);
+    trace_mem_read_word(({addr_type})b + o, v);
+    return v;
+}}
+__attribute__((always_inline)) static inline int64_t trd_mem_i32(uint8_t* m, {addr_type} b, int16_t o) {{
+    int64_t v = rd_mem_i32(m, b, o);
+    trace_mem_read_word(({addr_type})b + o, (uint32_t)v);
+    return v;
+}}
+__attribute__((always_inline)) static inline uint64_t trd_mem_u64(uint8_t* m, {addr_type} b, int16_t o) {{
+    uint64_t v = rd_mem_u64(m, b, o);
+    trace_mem_read_dword(({addr_type})b + o, v);
+    return v;
+}}
+
+/* Memory writes with tracing */
+__attribute__((always_inline)) static inline void twr_mem_u8(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{
+    wr_mem_u8(m, b, o, v);
+    trace_mem_write_byte(({addr_type})b + o, (uint8_t)v);
+}}
+__attribute__((always_inline)) static inline void twr_mem_u16(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{
+    wr_mem_u16(m, b, o, v);
+    trace_mem_write_halfword(({addr_type})b + o, (uint16_t)v);
+}}
+__attribute__((always_inline)) static inline void twr_mem_u32(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{
+    wr_mem_u32(m, b, o, v);
+    trace_mem_write_word(({addr_type})b + o, v);
+}}
+__attribute__((always_inline)) static inline void twr_mem_u64(uint8_t* m, {addr_type} b, int16_t o, uint64_t v) {{
+    wr_mem_u64(m, b, o, v);
+    trace_mem_write_dword(({addr_type})b + o, v);
+}}
+
+/* Register access with tracing */
+__attribute__((always_inline)) static inline {rtype} trd_regval({rtype} v) {{
+    /* Hot register read - value already in local var, trace if needed */
+    return v;
+}}
+__attribute__((always_inline)) static inline {rtype} twr_regval({rtype} v) {{
+    /* Hot register write - value going to local var, trace if needed */
+    return v;
+}}
+__attribute__((always_inline)) static inline {rtype} trd_reg(RvState* s, uint32_t r) {{
+    {rtype} v = s->regs[r];
+    trace_reg_read(r, v);
+    return v;
+}}
+__attribute__((always_inline)) static inline void twr_reg(RvState* s, uint32_t r, {rtype} v) {{
+    s->regs[r] = v;
+    trace_reg_write(r, v);
+}}
+
+/* CSR access with tracing */
+__attribute__((always_inline)) static inline uint32_t trd_csr(RvState* s{instret_param}, uint32_t c) {{
+    uint32_t v = rd_csr(s{instret_arg}, c);
+    trace_csr_read(c, v);
+    return v;
+}}
+__attribute__((always_inline)) static inline void twr_csr(RvState* s, uint32_t c, uint32_t v) {{
+    wr_csr(s, c, v);
+    trace_csr_write(c, v);
+}}
 
 "#,
         addr_type = addr_type,
