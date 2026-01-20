@@ -460,11 +460,17 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
     match args {
         InstrArgs::I { rd, rs1, imm } => {
             let mut stmts = Vec::new();
+            let base = if rd == rs1 {
+                stmts.push(Stmt::write_temp(0, Expr::read(*rs1)));
+                Expr::temp(0)
+            } else {
+                Expr::read(*rs1)
+            };
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(*rd, Expr::imm(pc + X::from_u64(size as u64))));
             }
             let target = Expr::and(
-                Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))),
+                Expr::add(base, Expr::imm(X::sign_extend_32(*imm as u32))),
                 Expr::not(Expr::imm(X::from_u64(1))),
             );
             (stmts, Terminator::jump_dyn(target))

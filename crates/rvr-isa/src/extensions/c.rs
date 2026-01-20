@@ -655,7 +655,8 @@ fn lift_jal<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, T
 fn lift_jr<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::I { rs1, .. } => {
-            (Vec::new(), Terminator::jump_dyn(Expr::read(*rs1)))
+            let target = Expr::and(Expr::read(*rs1), Expr::not(Expr::imm(X::from_u64(1))));
+            (Vec::new(), Terminator::jump_dyn(target))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -665,10 +666,17 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
     match args {
         InstrArgs::I { rd, rs1, .. } => {
             let mut stmts = Vec::new();
+            let base = if rd == rs1 {
+                stmts.push(Stmt::write_temp(0, Expr::read(*rs1)));
+                Expr::temp(0)
+            } else {
+                Expr::read(*rs1)
+            };
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(*rd, Expr::imm(pc + X::from_u64(size as u64))));
             }
-            (stmts, Terminator::jump_dyn(Expr::read(*rs1)))
+            let target = Expr::and(base, Expr::not(Expr::imm(X::from_u64(1))));
+            (stmts, Terminator::jump_dyn(target))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
