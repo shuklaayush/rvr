@@ -393,7 +393,11 @@ impl<X: Xlen> CEmitter<X> {
             }
             ExprKind::Orc8 => {
                 let o = self.render_expr(expr.left.as_ref().unwrap());
-                format!("rv_orc_b({})", o)
+                if X::VALUE == 64 {
+                    format!("rv_orc_b64({})", o)
+                } else {
+                    format!("rv_orc_b32({})", o)
+                }
             }
             ExprKind::Rev8 => {
                 let o = self.render_expr(expr.left.as_ref().unwrap());
@@ -425,15 +429,21 @@ impl<X: Xlen> CEmitter<X> {
             }
             ExprKind::Brev8 => {
                 let o = self.render_expr(expr.left.as_ref().unwrap());
-                format!("rv_brev8({})", o)
+                if X::VALUE == 64 {
+                    format!("rv_brev8_64({})", o)
+                } else {
+                    format!("rv_brev8_32({})", o)
+                }
             }
             ExprKind::Zip => {
+                // ZIP is RV32-only
                 let o = self.render_expr(expr.left.as_ref().unwrap());
-                format!("rv_zip({})", o)
+                format!("rv_zip32({})", o)
             }
             ExprKind::Unzip => {
+                // UNZIP is RV32-only
                 let o = self.render_expr(expr.left.as_ref().unwrap());
-                format!("rv_unzip({})", o)
+                format!("rv_unzip32({})", o)
             }
         }
     }
