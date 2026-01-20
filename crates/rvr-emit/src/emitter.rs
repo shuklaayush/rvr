@@ -202,9 +202,10 @@ impl<X: Xlen> CEmitter<X> {
                     BinaryOp::And => format!("({} & {})", l, r),
                     BinaryOp::Or => format!("({} | {})", l, r),
                     BinaryOp::Xor => format!("({} ^ {})", l, r),
-                    BinaryOp::Sll => format!("({} << {})", l, r),
-                    BinaryOp::Srl => format!("({} >> {})", l, r),
-                    BinaryOp::Sra => format!("(({})(({}){}  >> {}))", self.reg_type, self.signed_type, l, r),
+                    // Mask shift amount per RISC-V spec: lower 5 bits (RV32) or 6 bits (RV64)
+                    BinaryOp::Sll => format!("({} << ({} & 0x{:x}ULL))", l, r, X::VALUE - 1),
+                    BinaryOp::Srl => format!("({} >> ({} & 0x{:x}ULL))", l, r, X::VALUE - 1),
+                    BinaryOp::Sra => format!("(({})(({}){}  >> ({} & 0x{:x}ULL)))", self.reg_type, self.signed_type, l, r, X::VALUE - 1),
                     BinaryOp::Eq => format!("{} == {}", l, r),
                     BinaryOp::Ne => format!("{} != {}", l, r),
                     BinaryOp::Lt => format!("({}){} < ({}){}", self.signed_type, l, self.signed_type, r),
@@ -679,6 +680,23 @@ impl<X: Xlen> CEmitter<X> {
         // Emit trace_branch_not_taken for fall-through path
         if !trace_not_taken.is_empty() {
             self.write(&trace_not_taken);
+        }
+
+        // Emit fall-through musttail return
+        if self.is_valid_address(fall_pc) {
+            let resolved = self.inputs.resolve_address(fall_pc);
+            let pc_str = self.fmt_pc(resolved);
+            self.writeln(1, &format!("[[clang::musttail]] return B_{}({});", pc_str, args));
+        } else {
+            // Invalid fall address - exit
+            self.writeln(1, "state->has_exited = true;");
+            self.writeln(1, "state->exit_code = 1;");
+            let pc_lit = self.fmt_addr(fall_pc);
+            self.writeln(1, &format!("state->pc = {};", pc_lit));
+            if !save_to_state.is_empty() {
+                self.writeln(1, &save_to_state);
+            }
+            self.writeln(1, "return;");
         }
     }
 
