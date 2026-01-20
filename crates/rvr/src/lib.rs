@@ -24,7 +24,7 @@ pub use rvr_ir::{
     Expr, ExprKind, Space, Stmt, Terminator, BranchHint,
     InstrIR, BlockIR, IRBuilder,
 };
-pub use rvr_cfg::{BlockTable, CfgAnalyzer, CfgResult, CodeView};
+pub use rvr_cfg::{BlockTable, InstructionTable, CfgAnalyzer, CfgResult, CodeView};
 pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig, TracerKind, CEmitter, CProject};
 
 mod pipeline;
@@ -105,8 +105,8 @@ impl<X: Xlen> Recompiler<X> {
         // Build pipeline
         let mut pipeline = Pipeline::<X>::new(image, self.config.clone());
 
-        // Run CFG analysis
-        pipeline.analyze_cfg();
+        // Build CFG (InstructionTable → BlockTable → optimizations)
+        pipeline.build_cfg();
 
         // Lift to IR
         pipeline.lift_to_ir();

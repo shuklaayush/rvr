@@ -3,138 +3,212 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use rvr_cfg::{CfgAnalyzer, CfgResult};
+use rvr_cfg::{BlockTable, InstructionTable};
 use rvr_elf::ElfImage;
 use rvr_emit::{CProject, EmitConfig, MemorySegment};
 use rvr_ir::BlockIR;
-use rvr_isa::{Xlen, CompositeDecoder, InstructionExtension};
+use rvr_isa::{ExtensionRegistry, Xlen};
 
 use crate::Result;
 
 /// Recompilation pipeline.
 pub struct Pipeline<X: Xlen> {
     /// ELF image.
-    pub image: ElfImage<X>,
+    image: ElfImage<X>,
     /// Emit configuration.
-    pub config: EmitConfig<X>,
-    /// CFG analysis result.
-    pub cfg_result: Option<CfgResult>,
+    config: EmitConfig<X>,
+    /// Block table (from CFG analysis).
+    block_table: Option<BlockTable<X>>,
     /// Lifted IR blocks (keyed by start PC).
-    pub ir_blocks: HashMap<u64, BlockIR<X>>,
-    /// Instruction decoder (supports custom extensions).
-    pub decoder: CompositeDecoder<X>,
+    ir_blocks: HashMap<u64, BlockIR<X>>,
+    /// Extension registry for decoding and lifting.
+    registry: ExtensionRegistry<X>,
 }
 
 impl<X: Xlen> Pipeline<X> {
-    /// Create a new pipeline with default decoder.
+    /// Create a new pipeline with standard extensions.
     pub fn new(image: ElfImage<X>, config: EmitConfig<X>) -> Self {
         Self {
             image,
             config,
-            cfg_result: None,
+            block_table: None,
             ir_blocks: HashMap::new(),
-            decoder: CompositeDecoder::default(),
+            registry: ExtensionRegistry::standard(),
         }
     }
 
-    /// Create a new pipeline with custom extensions.
-    pub fn with_extensions(
+    /// Create a new pipeline with custom extension registry.
+    pub fn with_registry(
         image: ElfImage<X>,
         config: EmitConfig<X>,
-        extensions: Vec<Box<dyn InstructionExtension<X>>>,
+        registry: ExtensionRegistry<X>,
     ) -> Self {
         Self {
             image,
             config,
-            cfg_result: None,
+            block_table: None,
             ir_blocks: HashMap::new(),
-            decoder: CompositeDecoder::new(extensions),
+            registry,
         }
     }
 
-    /// Add an extension to the decoder chain.
-    pub fn add_extension(&mut self, ext: impl InstructionExtension<X> + 'static) {
-        self.decoder = std::mem::take(&mut self.decoder).with_extension(ext);
+    /// Get reference to ELF image.
+    pub fn image(&self) -> &ElfImage<X> {
+        &self.image
     }
 
-    /// Run CFG analysis.
-    pub fn analyze_cfg(&mut self) {
-        let analyzer = CfgAnalyzer::<X>::new(&self.image);
-        self.cfg_result = Some(analyzer.analyze());
+    /// Get reference to emit config.
+    pub fn config(&self) -> &EmitConfig<X> {
+        &self.config
     }
 
-    /// Lift all blocks to IR.
-    pub fn lift_to_ir(&mut self) {
-        let cfg = self.cfg_result.as_ref().expect("CFG analysis must be run first");
+    /// Get mutable reference to emit config.
+    pub fn config_mut(&mut self) -> &mut EmitConfig<X> {
+        &mut self.config
+    }
 
-        // Get sorted leaders
-        let mut leaders: Vec<u64> = cfg.leaders.iter().copied().collect();
-        leaders.sort_unstable();
+    /// Get reference to block table (if built).
+    pub fn block_table(&self) -> Option<&BlockTable<X>> {
+        self.block_table.as_ref()
+    }
 
-        // For each leader, find the block extent and lift instructions
-        for (i, &leader) in leaders.iter().enumerate() {
-            // Find block end (next leader or end of code)
-            let block_end = if i + 1 < leaders.len() {
-                leaders[i + 1]
-            } else {
-                // Find the end from successors or use a reasonable default
-                self.find_block_end(leader, cfg)
-            };
+    /// Get reference to lifted IR blocks.
+    pub fn ir_blocks(&self) -> &HashMap<u64, BlockIR<X>> {
+        &self.ir_blocks
+    }
 
-            // Lift the block
-            if let Some(block_ir) = self.lift_block(leader, block_end) {
-                self.ir_blocks.insert(leader, block_ir);
+    /// Build CFG: creates InstructionTable → BlockTable with optimizations.
+    pub fn build_cfg(&mut self) {
+        // Find the code segment containing entry point
+        let entry_pc = X::to_u64(self.image.entry_point);
+        let (code_start, _code_end, code_data) = self.find_code_segment(entry_pc)
+            .expect("No code segment containing entry point");
+
+        // Create InstructionTable from code segment
+        let mut instr_table = InstructionTable::from_bytes(
+            &code_data,
+            code_start,
+            &self.registry,
+        );
+        instr_table.set_entry_point(entry_pc);
+
+        // Add read-only segments for constant propagation
+        for seg in &self.image.memory_segments {
+            let seg_start = X::to_u64(seg.virtual_start);
+            let seg_end = X::to_u64(seg.virtual_end);
+            if seg_start != code_start {
+                instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
             }
         }
 
-        // Update config with valid addresses
+        // Create BlockTable with CFG analysis
+        let mut block_table = BlockTable::from_instruction_table(instr_table, &self.registry);
+
+        // Apply block transforms (merge, tail-dup, superblock)
+        block_table.optimize(&self.registry);
+
+        self.block_table = Some(block_table);
+    }
+
+    /// Find code segment containing the given PC.
+    fn find_code_segment(&self, pc: u64) -> Option<(u64, u64, Vec<u8>)> {
+        for seg in &self.image.memory_segments {
+            let start = X::to_u64(seg.virtual_start);
+            let end = X::to_u64(seg.virtual_end);
+            if pc >= start && pc < end {
+                return Some((start, end, seg.data.clone()));
+            }
+        }
+        None
+    }
+
+    /// Lift all blocks to IR using BlockTable.
+    pub fn lift_to_ir(&mut self) {
+        let block_table = self.block_table.as_ref()
+            .expect("build_cfg must be called before lift_to_ir");
+
+        // Collect block info first to avoid borrow issues
+        let blocks_info: Vec<_> = block_table.iter()
+            .map(|b| (b.start, b.end))
+            .collect();
+        let continuations = block_table.block_continuations.clone();
+
+        // Lift each block from BlockTable, following continuations
+        for (start, end) in blocks_info {
+            let conts = continuations.get(&start);
+            if let Some(block_ir) = self.lift_block_with_continuations(start, end, conts) {
+                self.ir_blocks.insert(start, block_ir);
+            }
+        }
+
+        // Update config with valid addresses from blocks
+        // NOTE: Only add actual block addresses, NOT absorbed addresses.
+        // Absorbed addresses are handled separately via absorbed_to_merged mapping.
         for &addr in self.ir_blocks.keys() {
             self.config.valid_addresses.insert(addr);
         }
     }
 
-    /// Find block end address.
-    fn find_block_end(&self, start: u64, cfg: &CfgResult) -> u64 {
-        // Use successors to find where the block ends
-        if let Some(succs) = cfg.successors.get(&start) {
-            if !succs.is_empty() {
-                // Block ends at the instruction that branches
-                return start + 4; // Conservative: assume single instruction block
-            }
-        }
-        start + 4
-    }
+    /// Lift a single block with continuations (absorbed blocks).
+    fn lift_block_with_continuations(
+        &self,
+        start: u64,
+        end: u64,
+        continuations: Option<&Vec<(u64, u64)>>,
+    ) -> Option<BlockIR<X>> {
+        let block_table = self.block_table.as_ref()?;
+        let instr_table = block_table.instruction_table();
 
-    /// Lift a single block from start to end.
-    fn lift_block(&self, start: u64, end: u64) -> Option<BlockIR<X>> {
         let mut block = BlockIR::new(X::from_u64(start));
 
-        let mut pc = start;
-        while pc < end {
-            // Read instruction bytes
-            let Some((raw, size)) = self.read_instr(pc) else {
-                break;
-            };
+        // Build list of ranges to lift: main block + continuations
+        let mut ranges = vec![(start, end)];
+        if let Some(conts) = continuations {
+            ranges.extend(conts.iter().copied());
+        }
 
-            // Decode using CompositeDecoder (supports custom extensions)
-            let bytes = raw.to_le_bytes();
-            let decoded = match self.decoder.decode(&bytes, X::from_u64(pc)) {
-                Some(d) => d,
-                None => break,
-            };
+        // Lift all ranges
+        for (range_idx, (range_start, range_end)) in ranges.iter().enumerate() {
+            let is_last_range = range_idx == ranges.len() - 1;
+            let mut pc = *range_start;
 
-            // Lift to IR using CompositeDecoder
-            let instr_ir = self.decoder.lift(&decoded);
+            while pc < *range_end {
+                // Get decoded instruction from table
+                let instr = match instr_table.get_at_pc(pc) {
+                    Some(i) => i,
+                    None => break,
+                };
 
-            // Check if this instruction ends the block
-            let is_terminator = instr_ir.terminator.is_control_flow();
+                let size = instr.size as u64;
 
-            block.push(instr_ir);
+                // Lift to IR
+                let instr_ir = self.registry.lift(instr);
 
-            pc += size as u64;
+                // Check if this is a control flow terminator
+                let is_terminator = instr_ir.terminator.is_control_flow();
 
-            if is_terminator {
-                break;
+                block.push(instr_ir);
+                pc += size;
+
+                // Only stop at terminator if this is the LAST range
+                // (Terminators in absorbed ranges are internal jumps/falls)
+                if is_terminator && is_last_range {
+                    break;
+                }
+            }
+        }
+
+        // If block doesn't end with a terminator, add fall-through
+        if !block.is_empty() {
+            let last_term = &block.instructions.last().unwrap().terminator;
+            if !last_term.is_control_flow() {
+                // Mark the fall-through target - use end of last range
+                let final_pc = ranges.last().map(|(_, e)| *e).unwrap_or(end);
+                if let Some(last_instr) = block.instructions.last_mut() {
+                    last_instr.terminator = rvr_ir::Terminator::Fall {
+                        target: Some(X::from_u64(final_pc)),
+                    };
+                }
             }
         }
 
@@ -145,46 +219,17 @@ impl<X: Xlen> Pipeline<X> {
         }
     }
 
-    /// Read instruction bytes at PC.
-    fn read_instr(&self, pc: u64) -> Option<(u32, u8)> {
-        for seg in &self.image.memory_segments {
-            let start = X::to_u64(seg.virtual_start);
-            let end = X::to_u64(seg.virtual_end);
-            if pc >= start && pc < end {
-                let offset = (pc - start) as usize;
-                if offset >= seg.data.len() {
-                    return None;
-                }
-
-                // Check for compressed instruction
-                if offset + 2 > seg.data.len() {
-                    return None;
-                }
-                let low = u16::from_le_bytes([seg.data[offset], seg.data[offset + 1]]);
-
-                // Compressed if low 2 bits != 0b11
-                if (low & 0x3) != 0x3 {
-                    return Some((low as u32, 2));
-                }
-
-                // 4-byte instruction
-                if offset + 4 > seg.data.len() {
-                    return None;
-                }
-                let raw = u32::from_le_bytes([
-                    seg.data[offset],
-                    seg.data[offset + 1],
-                    seg.data[offset + 2],
-                    seg.data[offset + 3],
-                ]);
-                return Some((raw, 4));
-            }
-        }
-        None
+    /// Lift a single block from start to end (legacy, without continuations).
+    #[allow(dead_code)]
+    fn lift_block(&self, start: u64, end: u64) -> Option<BlockIR<X>> {
+        self.lift_block_with_continuations(start, end, None)
     }
 
     /// Emit C code to output directory using CProject.
     pub fn emit_c(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
+        let block_table = self.block_table.as_ref()
+            .expect("build_cfg must be called before emit_c");
+
         // Set entry point in config
         self.config.entry_point = self.image.entry_point;
 
@@ -212,11 +257,18 @@ impl<X: Xlen> Pipeline<X> {
             .max()
             .unwrap_or(0);
 
-        // Create CProject
+        // Get absorbed_to_merged mapping from BlockTable
+        let absorbed_to_merged = block_table.absorbed_to_merged.clone();
+
+        // Add absorbed mapping to config for emitter use
+        self.config.absorbed_to_merged = absorbed_to_merged.clone();
+
+        // Create CProject with block transform mappings
         let project = CProject::new(output_dir, base_name, self.config.clone())
             .with_entry_point(X::to_u64(self.image.entry_point))
             .with_pc_end(pc_end)
             .with_valid_addresses(self.config.valid_addresses.clone())
+            .with_absorbed_mapping(absorbed_to_merged)
             .with_segments(segments)
             .with_tohost(self.config.tohost_enabled);
 
@@ -235,11 +287,11 @@ impl<X: Xlen> Pipeline<X> {
 
     /// Get statistics.
     pub fn stats(&self) -> PipelineStats {
-        let cfg = self.cfg_result.as_ref();
+        let block_table = self.block_table.as_ref();
         PipelineStats {
             num_blocks: self.ir_blocks.len(),
-            num_leaders: cfg.map(|c| c.leaders.len()).unwrap_or(0),
-            num_functions: cfg.map(|c| c.function_entries.len()).unwrap_or(0),
+            num_basic_blocks: block_table.map(|b| b.len()).unwrap_or(0),
+            num_absorbed: block_table.map(|b| b.absorbed_to_merged.len()).unwrap_or(0),
         }
     }
 }
@@ -247,7 +299,10 @@ impl<X: Xlen> Pipeline<X> {
 /// Pipeline statistics.
 #[derive(Debug, Default)]
 pub struct PipelineStats {
+    /// Number of lifted IR blocks.
     pub num_blocks: usize,
-    pub num_leaders: usize,
-    pub num_functions: usize,
+    /// Number of basic blocks from CFG analysis.
+    pub num_basic_blocks: usize,
+    /// Number of blocks absorbed (merged/tail-duped).
+    pub num_absorbed: usize,
 }

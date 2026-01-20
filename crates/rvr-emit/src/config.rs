@@ -3,7 +3,7 @@
 //! Code generation configuration including hot register selection,
 //! instret handling, and platform-specific defaults.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 
 use rvr_ir::Xlen;
@@ -132,6 +132,8 @@ pub struct EmitConfig<X: Xlen> {
     pub memory_bits: u8,
     /// Valid instruction addresses.
     pub valid_addresses: HashSet<u64>,
+    /// Absorbed block mapping: absorbed_pc -> merged_block_start.
+    pub absorbed_to_merged: HashMap<u64, u64>,
     /// Program entry point.
     pub entry_point: X::Reg,
     /// Program end address.
@@ -157,6 +159,7 @@ impl<X: Xlen> Default for EmitConfig<X> {
             tohost_enabled: false,
             memory_bits: 32,
             valid_addresses: HashSet::new(),
+            absorbed_to_merged: HashMap::new(),
             entry_point: X::from_u64(0),
             pc_end: X::from_u64(0),
             tracer_config: TracerConfig::none(),
@@ -234,9 +237,17 @@ impl<X: Xlen> EmitConfig<X> {
         self.hot_regs.len()
     }
 
-    /// Check if address is valid.
+    /// Check if address is valid (either directly or via absorbed mapping).
     pub fn is_valid_address(&self, pc: u64) -> bool {
-        self.valid_addresses.contains(&pc)
+        self.valid_addresses.contains(&pc) || self.absorbed_to_merged.contains_key(&pc)
+    }
+
+    /// Resolve an address to its actual target (handles absorbed blocks).
+    ///
+    /// If the address was absorbed into another block, returns the merged block's address.
+    /// Otherwise returns the address unchanged.
+    pub fn resolve_address(&self, pc: u64) -> u64 {
+        self.absorbed_to_merged.get(&pc).copied().unwrap_or(pc)
     }
 
     /// Check if tracing is enabled.

@@ -724,7 +724,9 @@ impl<X: Xlen> CEmitter<X> {
     /// Render static jump.
     fn render_jump_static(&mut self, target: u64) {
         if self.is_valid_address(target) {
-            let pc_str = self.fmt_pc(target);
+            // Resolve absorbed addresses to their merged block
+            let resolved = self.config.resolve_address(target);
+            let pc_str = self.fmt_pc(resolved);
             self.writeln(1, &format!("[[clang::musttail]] return B_{}({});", pc_str, self.sig.args));
         } else {
             self.render_exit("1");
@@ -806,7 +808,9 @@ impl<X: Xlen> CEmitter<X> {
         let save_to_state = self.sig.save_to_state.clone();
 
         if self.is_valid_address(target) {
-            let pc_str = self.fmt_pc(target);
+            // Resolve absorbed addresses to their merged block
+            let resolved = self.config.resolve_address(target);
+            let pc_str = self.fmt_pc(resolved);
             self.writeln(1, &format!("if ({}) {{", cond_str));
             if !trace_taken.is_empty() {
                 self.writeln(2, trace_taken.trim_end());

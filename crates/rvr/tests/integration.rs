@@ -25,24 +25,23 @@ fn test_lift_rv64ui_add() {
     let config = EmitConfig::default();
     let mut pipeline = Pipeline::<Rv64>::new(image, config);
 
-    // Run CFG analysis
-    pipeline.analyze_cfg();
-    let cfg = pipeline.cfg_result.as_ref().expect("CFG analysis failed");
+    // Build CFG (InstructionTable → BlockTable → optimizations)
+    pipeline.build_cfg();
+    let block_table = pipeline.block_table().expect("CFG build failed");
 
     // Verify we found some basic blocks
-    assert!(!cfg.leaders.is_empty(), "No basic block leaders found");
-    assert!(!cfg.function_entries.is_empty(), "No function entries found");
+    assert!(!block_table.blocks.is_empty(), "No basic blocks found");
 
     // Lift to IR
     pipeline.lift_to_ir();
-    assert!(!pipeline.ir_blocks.is_empty(), "No IR blocks generated");
+    assert!(!pipeline.ir_blocks().is_empty(), "No IR blocks generated");
 
     // Get stats
     let stats = pipeline.stats();
     println!("Test binary: {}", path.display());
-    println!("  Blocks: {}", stats.num_blocks);
-    println!("  Leaders: {}", stats.num_leaders);
-    println!("  Functions: {}", stats.num_functions);
+    println!("  IR Blocks: {}", stats.num_blocks);
+    println!("  Basic Blocks: {}", stats.num_basic_blocks);
+    println!("  Absorbed: {}", stats.num_absorbed);
 }
 
 #[test]
@@ -59,12 +58,12 @@ fn test_lift_rv64ui_addi() {
     let config = EmitConfig::default();
     let mut pipeline = Pipeline::<Rv64>::new(image, config);
 
-    pipeline.analyze_cfg();
+    pipeline.build_cfg();
     pipeline.lift_to_ir();
 
     let stats = pipeline.stats();
     assert!(stats.num_blocks > 0, "No blocks generated");
-    println!("rv64ui-p-addi: {} blocks, {} functions", stats.num_blocks, stats.num_functions);
+    println!("rv64ui-p-addi: {} IR blocks, {} basic blocks", stats.num_blocks, stats.num_basic_blocks);
 }
 
 #[test]
@@ -86,7 +85,7 @@ fn test_emit_c_code() {
     let config = EmitConfig::default();
     let mut pipeline = Pipeline::<Rv64>::new(image, config);
 
-    pipeline.analyze_cfg();
+    pipeline.build_cfg();
     pipeline.lift_to_ir();
     pipeline.emit_c(&temp_dir, "rv64").expect("Failed to emit C code");
 

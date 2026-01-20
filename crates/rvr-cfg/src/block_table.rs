@@ -371,9 +371,10 @@ impl<X: Xlen> BlockTable<X> {
             }
 
             if !continuations.is_empty() {
-                self.block_continuations.insert(block.start, continuations);
+                self.block_continuations.insert(block.start, continuations.clone());
             }
 
+            // Keep original end - continuations handle absorbed blocks
             merged.push(BasicBlock::new(block.start, block.end, count, last_pc));
         }
 
@@ -686,7 +687,7 @@ impl<X: Xlen> BlockTable<X> {
             }
         }
 
-        // Remove absorbed blocks
+        // Remove absorbed blocks (keep original ends - continuations handle absorbed code)
         let new_blocks: Vec<_> = self
             .blocks
             .iter()
@@ -704,7 +705,69 @@ impl<X: Xlen> BlockTable<X> {
         let merged = self.merge_blocks(registry);
         let tail_duped = self.tail_duplicate(DEFAULT_TAIL_DUP_SIZE, registry);
         let superblocked = self.form_superblocks(DEFAULT_SUPERBLOCK_DEPTH, registry);
+
+        // Fix any stale mappings from chained absorptions
+        self.fix_stale_mappings();
+
         (merged, tail_duped, superblocked)
+    }
+
+    /// Fix stale absorbed_to_merged mappings by following chains.
+    ///
+    /// After multiple transform passes, a block A might map to block B,
+    /// which was subsequently absorbed into block C. This method follows
+    /// chains to ensure all mappings point to actually remaining blocks.
+    fn fix_stale_mappings(&mut self) {
+        // Build set of remaining block starts
+        let remaining: HashSet<u64> = self.blocks.iter().map(|b| b.start).collect();
+
+        // For each absorbed block, follow chain to find final target
+        let mut to_update = Vec::new();
+        let mut to_remove = Vec::new();
+
+        for (&absorbed_pc, &target_pc) in &self.absorbed_to_merged {
+            if remaining.contains(&target_pc) {
+                // Already points to a remaining block
+                continue;
+            }
+
+            // Follow chain
+            let mut current = target_pc;
+            let mut found = false;
+            let mut visited = HashSet::new();
+            visited.insert(absorbed_pc);
+
+            while !visited.contains(&current) {
+                visited.insert(current);
+
+                if remaining.contains(&current) {
+                    // Found final target
+                    to_update.push((absorbed_pc, current));
+                    found = true;
+                    break;
+                }
+
+                match self.absorbed_to_merged.get(&current) {
+                    Some(&next) => current = next,
+                    None => break, // Broken chain
+                }
+            }
+
+            if !found {
+                // Broken chain - remove mapping
+                to_remove.push(absorbed_pc);
+            }
+        }
+
+        // Apply updates
+        for (pc, target) in to_update {
+            self.absorbed_to_merged.insert(pc, target);
+        }
+
+        // Remove broken chains
+        for pc in to_remove {
+            self.absorbed_to_merged.remove(&pc);
+        }
     }
 }
 
