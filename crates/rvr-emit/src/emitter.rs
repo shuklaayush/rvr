@@ -559,25 +559,43 @@ impl<X: Xlen> CEmitter<X> {
     ///
     /// `fall_pc` is the address to fall through to (typically end_pc of the block).
     pub fn render_instruction(&mut self, ir: &InstrIR<X>, is_last: bool, fall_pc: u64) {
+        self.render_instruction_impl(ir, is_last, fall_pc, 1, false);
+    }
+
+    /// Render instruction with custom indent (for inlined blocks).
+    ///
+    /// When `use_simple_branch` is true, uses simplified branch rendering for superblock side-exits.
+    fn render_instruction_impl(
+        &mut self,
+        ir: &InstrIR<X>,
+        is_last: bool,
+        fall_pc: u64,
+        indent: usize,
+        use_simple_branch: bool,
+    ) {
         self.current_pc = X::to_u64(ir.pc);
         self.current_op = ir.op;
 
         // Optional: emit comment
         if self.config.emit_comments {
             let pc_hex = self.fmt_addr(self.current_pc);
-            self.writeln(1, &format!("// PC: {}", pc_hex));
+            self.writeln(indent, &format!("// PC: {}", pc_hex));
         }
 
         // Render statements
         for stmt in &ir.statements {
-            self.render_stmt(stmt, 1);
+            self.render_stmt(stmt, indent);
         }
 
         self.instr_idx += 1;
 
         // Render terminator
         if is_last {
-            self.render_terminator(&ir.terminator, fall_pc);
+            if use_simple_branch {
+                self.render_terminator_simple(&ir.terminator, fall_pc, indent);
+            } else {
+                self.render_terminator(&ir.terminator, fall_pc);
+            }
         } else {
             // For superblocks: render BRANCH terminators as side exits even if not last
             // If branch is taken, jump to target. If not, fall through to next inlined instr.
@@ -586,7 +604,7 @@ impl<X: Xlen> CEmitter<X> {
             } = &ir.terminator
             {
                 let cond_str = self.render_expr(cond);
-                self.render_side_exit(&cond_str, X::to_u64(*target), *hint);
+                self.render_side_exit_impl(&cond_str, X::to_u64(*target), *hint, indent);
             }
         }
     }
@@ -833,12 +851,6 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Render superblock side exit (branch with instret update).
-    /// Unlike full branch, this only handles the taken path - fall-through goes to next instruction.
-    fn render_side_exit(&mut self, cond: &str, target: u64, hint: BranchHint) {
-        self.render_side_exit_impl(cond, target, hint, 1);
-    }
-
-    /// Render superblock side exit with custom indent.
     fn render_side_exit_impl(&mut self, cond: &str, target: u64, hint: BranchHint, indent: usize) {
         let cond_str = match hint {
             BranchHint::Taken => format!("likely({})", cond),
@@ -995,67 +1007,30 @@ impl<X: Xlen> CEmitter<X> {
         fall_pc: u64,
         indent: usize,
     ) {
-        self.current_pc = X::to_u64(ir.pc);
-        self.current_op = ir.op;
-
-        // Optional: emit comment
-        if self.config.emit_comments {
-            let pc_hex = self.fmt_addr(self.current_pc);
-            self.writeln(indent, &format!("// PC: {}", pc_hex));
-        }
-
-        // Render statements
-        for stmt in &ir.statements {
-            self.render_stmt(stmt, indent);
-        }
-
-        self.instr_idx += 1;
-
-        // Render terminator
-        if is_last {
-            self.render_terminator_indented(&ir.terminator, fall_pc, indent);
-        } else {
-            // For superblocks: render BRANCH terminators as side exits even if not last
-            if let Terminator::Branch {
-                cond, target, hint, ..
-            } = &ir.terminator
-            {
-                let cond_str = self.render_expr(cond);
-                self.render_side_exit_indented(&cond_str, X::to_u64(*target), *hint, indent);
-            }
-        }
+        self.render_instruction_impl(ir, is_last, fall_pc, indent, true);
     }
 
-    /// Render superblock side exit with custom indent.
-    fn render_side_exit_indented(
-        &mut self,
-        cond: &str,
-        target: u64,
-        hint: BranchHint,
-        indent: usize,
-    ) {
-        self.render_side_exit_impl(cond, target, hint, indent);
-    }
-
-    /// Render terminator with custom indent.
-    fn render_terminator_indented(&mut self, term: &Terminator<X>, fall_pc: u64, indent: usize) {
+    /// Render terminator with custom indent (simplified, no tracing).
+    ///
+    /// Used for inlined blocks in superblocks where branches are side-exits.
+    fn render_terminator_simple(&mut self, term: &Terminator<X>, fall_pc: u64, indent: usize) {
         match term {
             Terminator::Fall { target } => {
                 let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
-                self.render_jump_static_indented(target_pc, indent);
+                self.render_jump_static_impl(target_pc, indent);
             }
             Terminator::Jump { target } => {
-                self.render_jump_static_indented(X::to_u64(*target), indent);
+                self.render_jump_static_impl(X::to_u64(*target), indent);
             }
             Terminator::JumpDyn { addr, resolved } => {
                 if let Some(targets) = resolved {
-                    self.render_jump_resolved_indented(
+                    self.render_jump_resolved_impl(
                         targets.iter().map(|t| X::to_u64(*t)).collect(),
                         addr,
                         indent,
                     );
                 } else {
-                    self.render_jump_dynamic_indented(addr, None, indent);
+                    self.render_jump_dynamic_impl(addr, None, indent);
                 }
             }
             Terminator::Branch {
@@ -1066,52 +1041,23 @@ impl<X: Xlen> CEmitter<X> {
             } => {
                 let cond_str = self.render_expr(cond);
                 let fall_target = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
-                self.render_branch_indented(
-                    &cond_str,
-                    X::to_u64(*target),
-                    *hint,
-                    fall_target,
-                    indent,
-                );
+                self.render_branch_simple(&cond_str, X::to_u64(*target), *hint, fall_target, indent);
             }
             Terminator::Exit { code } => {
                 let code_str = self.render_expr(code);
-                self.render_exit_indented(&code_str, indent);
+                self.render_exit_impl(&code_str, indent);
             }
             Terminator::Trap { message } => {
                 self.writeln(indent, &format!("// TRAP: {}", message));
-                self.render_exit_indented("1", indent);
+                self.render_exit_impl("1", indent);
             }
         }
     }
 
-    /// Render static jump with custom indent.
-    fn render_jump_static_indented(&mut self, target: u64, indent: usize) {
-        self.render_jump_static_impl(target, indent);
-    }
-
-    /// Render dynamic jump with custom indent.
-    fn render_jump_dynamic_indented(
-        &mut self,
-        target_expr: &Expr<X>,
-        pre_eval_var: Option<&str>,
-        indent: usize,
-    ) {
-        self.render_jump_dynamic_impl(target_expr, pre_eval_var, indent);
-    }
-
-    /// Render jump with resolved targets with custom indent.
-    fn render_jump_resolved_indented(
-        &mut self,
-        targets: Vec<u64>,
-        fallback: &Expr<X>,
-        indent: usize,
-    ) {
-        self.render_jump_resolved_impl(targets, fallback, indent);
-    }
-
-    /// Render branch with custom indent.
-    fn render_branch_indented(
+    /// Render branch (simplified, no tracing, no fall-through).
+    ///
+    /// Used for inlined blocks where fall-through continues to next instruction.
+    fn render_branch_simple(
         &mut self,
         cond: &str,
         target: u64,
@@ -1149,11 +1095,6 @@ impl<X: Xlen> CEmitter<X> {
             self.writeln(indent + 1, "return;");
             self.writeln(indent, "}");
         }
-    }
-
-    /// Render exit with custom indent.
-    fn render_exit_indented(&mut self, code: &str, indent: usize) {
-        self.render_exit_impl(code, indent);
     }
 
     /// Render instret update with custom indent.
