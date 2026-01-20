@@ -24,21 +24,13 @@
 //! ```
 
 use std::path::PathBuf;
-
 use std::process::Command;
 
 use rvr::{EmitConfig, InstretMode, Pipeline, Rv64};
 use rvr_isa::{syscalls::LinuxHandler, syscalls::SyscallAbi, ExtensionRegistry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
-        std::process::exit(1);
-    }
-
-    let elf_path = PathBuf::from(&args[1]);
-    let output_dir = PathBuf::from(&args[2]);
+    let (elf_path, output_dir) = parse_args()?;
 
     // Explicit RV64 configuration (use RV32 for rv32 binaries)
     let mut config = EmitConfig::<Rv64>::default();
@@ -47,16 +39,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register indices: ra=1, sp=2, a0=10, a1=11, a2=12
     config.hot_regs = vec![1, 2, 10, 11, 12];
 
-    // Configure memory (32-bit address space = 4GB)
+    // Configure memory (32-bit address space = 4GB).
     config.memory_bits = 32;
 
-    // Enable instruction retirement counting
+    // Enable instruction retirement counting.
     config.instret_mode = InstretMode::Count;
 
-    // Enable address bounds checking (slower but safer)
+    // Enable address bounds checking (slower but safer).
     config.addr_check = true;
 
-    // Linux syscall handling for user-space workloads
+    // Linux syscall handling for user-space workloads.
     let registry = ExtensionRegistry::<Rv64>::standard()
         .with_syscall_handler(LinuxHandler::new(SyscallAbi::Standard));
 
@@ -91,4 +83,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     result.print_mojo_format();
 
     Ok(())
+}
+
+fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
+        std::process::exit(1);
+    }
+    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
 }

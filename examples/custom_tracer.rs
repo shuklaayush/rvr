@@ -16,14 +16,7 @@ use rvr::{EmitConfig, Pipeline, Rv64, Runner, TracerConfig};
 use rvr_isa::ExtensionRegistry;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
-        std::process::exit(1);
-    }
-
-    let elf_path = PathBuf::from(&args[1]);
-    let output_dir = PathBuf::from(&args[2]);
+    let (elf_path, output_dir) = parse_args()?;
 
     // Minimal tracer that counts instructions and register accesses.
     let tracer_header = r#"/* Minimal custom tracer */
@@ -194,4 +187,13 @@ static inline void trace_csr_write(Tracer* t, uint64_t pc, uint16_t op, uint16_t
     println!("Instructions: {}", result.instret);
 
     Ok(())
+}
+
+fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
+        std::process::exit(1);
+    }
+    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
 }

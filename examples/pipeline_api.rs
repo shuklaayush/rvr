@@ -47,14 +47,7 @@ use rvr::{ElfImage, EmitConfig, Pipeline, Rv64};
 use rvr_ir::Terminator;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
-        std::process::exit(1);
-    }
-
-    let elf_path = PathBuf::from(&args[1]);
-    let output_dir = PathBuf::from(&args[2]);
+    let (elf_path, output_dir) = parse_args()?;
 
     // Stage 1: Parse ELF
     println!("=== Stage 1: Parse ELF ===");
@@ -144,12 +137,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pipeline.emit_c(&output_dir, base_name)?;
 
     println!("Output directory: {}", output_dir.display());
-    println!("Generated files:");
-    for entry in std::fs::read_dir(&output_dir)? {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        println!("  {} ({} bytes)", entry.file_name().to_string_lossy(), meta.len());
-    }
 
     // Summary stats
     println!("\n=== Summary ===");
@@ -159,4 +146,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Absorbed: {}", stats.num_absorbed);
 
     Ok(())
+}
+
+fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
+        std::process::exit(1);
+    }
+    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
 }

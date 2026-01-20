@@ -25,6 +25,7 @@
 //! ```
 
 use std::path::PathBuf;
+use std::process::Command;
 
 use rvr::{EmitConfig, Rv64};
 use rvr_ir::{Expr, InstrIR, Terminator};
@@ -52,53 +53,8 @@ impl InstructionOverride<Rv64> for RiscvTestsEcall {
     }
 }
 
-/// Custom ECALL handler that generates a trap for debugging.
-struct DebugEcall;
-
-impl InstructionOverride<Rv64> for DebugEcall {
-    fn lift(
-        &self,
-        instr: &DecodedInstr<Rv64>,
-        _default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
-    ) -> InstrIR<Rv64> {
-        // Generate a trap with a descriptive message
-        InstrIR::new(
-            instr.pc,
-            instr.size,
-            instr.opid.pack(),
-            Vec::new(),
-            Terminator::trap(&format!("ECALL at PC {:#x}", instr.pc)),
-        )
-    }
-}
-
-/// Passthrough override that logs and delegates to default.
-struct LoggingOverride;
-
-impl InstructionOverride<Rv64> for LoggingOverride {
-    fn lift(
-        &self,
-        instr: &DecodedInstr<Rv64>,
-        default: &dyn Fn(&DecodedInstr<Rv64>) -> InstrIR<Rv64>,
-    ) -> InstrIR<Rv64> {
-        println!(
-            "Lifting ECALL at PC {:#x}, opid={:?}",
-            instr.pc, instr.opid
-        );
-        // Delegate to default implementation
-        default(instr)
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
-        std::process::exit(1);
-    }
-
-    let elf_path = PathBuf::from(&args[1]);
-    let output_dir = PathBuf::from(&args[2]);
+    let (elf_path, output_dir) = parse_args()?;
 
     // Method 1: Start with standard() and add override
     let registry = ExtensionRegistry::<Rv64>::standard().with_override(OP_ECALL, RiscvTestsEcall);
@@ -123,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pipeline.build_cfg()?;
     pipeline.lift_to_ir()?;
 
-    // Emit C code
+    // Emit C code and build shared library
     std::fs::create_dir_all(&output_dir)?;
     let base_name = output_dir
         .file_name()
@@ -131,8 +87,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or("rv");
     pipeline.emit_c(&output_dir, base_name)?;
 
+    let status = Command::new("make")
+        .arg("-C")
+        .arg(&output_dir)
+        .arg("shared")
+        .status()?;
+    if !status.success() {
+        return Err("make failed".into());
+    }
+
+    let runner = rvr::Runner::load(&output_dir)?;
+    let result = runner.run()?;
+
     println!("Generated C code with custom ECALL handling");
+    println!("Exit code: {}", result.exit_code);
+    println!("Instructions: {}", result.instret);
     println!("Stats: {:?}", pipeline.stats());
 
     Ok(())
+}
+
+fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 3 {
+        eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
+        std::process::exit(1);
+    }
+    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
 }
