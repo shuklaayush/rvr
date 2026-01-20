@@ -18,6 +18,7 @@ use crate::config::EmitConfig;
 use crate::dispatch::{DispatchConfig, gen_dispatch_file};
 use crate::emitter::CEmitter;
 use crate::header::{HeaderConfig, gen_header, gen_blocks_header};
+use crate::htif::{HtifConfig, gen_htif_header, gen_htif_source};
 use crate::memory::{MemoryConfig, MemorySegment, gen_memory_file};
 
 /// Default instructions per partition.
@@ -156,6 +157,16 @@ impl<X: Xlen> CProject<X> {
     /// Path to memory file.
     pub fn memory_path(&self) -> PathBuf {
         self.output_dir.join(format!("{}_memory.c", self.base_name))
+    }
+
+    /// Path to HTIF header file.
+    pub fn htif_header_path(&self) -> PathBuf {
+        self.output_dir.join(format!("{}_htif.h", self.base_name))
+    }
+
+    /// Path to HTIF source file.
+    pub fn htif_source_path(&self) -> PathBuf {
+        self.output_dir.join(format!("{}_htif.c", self.base_name))
     }
 
     /// Path to Makefile.
@@ -299,6 +310,19 @@ impl<X: Xlen> CProject<X> {
         fs::write(self.memory_path(), memory)
     }
 
+    /// Write HTIF files.
+    pub fn write_htif(&self) -> std::io::Result<()> {
+        let htif_cfg = HtifConfig::new(&self.base_name, self.enable_tohost);
+
+        let htif_header = gen_htif_header::<X>(&htif_cfg);
+        fs::write(self.htif_header_path(), htif_header)?;
+
+        let htif_source = gen_htif_source::<X>(&htif_cfg);
+        fs::write(self.htif_source_path(), htif_source)?;
+
+        Ok(())
+    }
+
     /// Write Makefile.
     pub fn write_makefile(&self, num_partitions: usize) -> std::io::Result<()> {
         let mut content = String::new();
@@ -377,6 +401,11 @@ impl<X: Xlen> CProject<X> {
         // Write memory if segments exist
         if !self.segments.is_empty() {
             self.write_memory()?;
+        }
+
+        // Write HTIF if tohost enabled
+        if self.enable_tohost {
+            self.write_htif()?;
         }
 
         // Write Makefile
