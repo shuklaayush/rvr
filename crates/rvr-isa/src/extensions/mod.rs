@@ -9,6 +9,7 @@ mod m;
 mod a;
 mod c;
 mod zicsr;
+mod zifencei;
 
 // Re-export extension structs
 pub use base::BaseExtension;
@@ -16,6 +17,7 @@ pub use m::MExtension;
 pub use a::AExtension;
 pub use c::CExtension;
 pub use zicsr::ZicsrExtension;
+pub use zifencei::ZifenceiExtension;
 
 // Re-export OpId constants and mnemonic functions from each extension
 pub use base::{
@@ -56,11 +58,11 @@ pub use c::{
 };
 pub use zicsr::{
     OP_CSRRW, OP_CSRRS, OP_CSRRC, OP_CSRRWI, OP_CSRRSI, OP_CSRRCI,
-    OP_FENCE_I,
     CSR_CYCLE, CSR_TIME, CSR_INSTRET, CSR_CYCLEH, CSR_TIMEH, CSR_INSTRETH,
     CSR_MISA, CSR_MVENDORID, CSR_MARCHID, CSR_MIMPID, CSR_MHARTID,
     zicsr_mnemonic, csr_name,
 };
+pub use zifencei::OP_FENCE_I;
 
 use rvr_ir::{InstrIR, Xlen, Terminator};
 use crate::{DecodedInstr, OpId, OpInfo};
@@ -133,14 +135,15 @@ impl<X: Xlen> ExtensionRegistry<X> {
     }
 
     /// Create a registry with all standard RISC-V extensions.
-    /// Order: C (compressed first), I (base), M (multiply), A (atomic), Zicsr.
+    /// Order: C (compressed first), I (base), M (multiply), A (atomic), Zicsr, Zifencei.
     pub fn standard() -> Self {
         Self::new(vec![
-            Box::new(CExtension),      // C first (handles 16-bit instructions)
-            Box::new(BaseExtension),   // Base I
-            Box::new(MExtension),      // M extension
-            Box::new(AExtension),      // A extension
-            Box::new(ZicsrExtension),  // Zicsr/Zifencei
+            Box::new(CExtension),        // C first (handles 16-bit instructions)
+            Box::new(BaseExtension),     // Base I
+            Box::new(MExtension),        // M extension
+            Box::new(AExtension),        // A extension
+            Box::new(ZicsrExtension),    // Zicsr (CSR instructions)
+            Box::new(ZifenceiExtension), // Zifencei (instruction fence)
         ])
     }
 
@@ -273,7 +276,7 @@ mod tests {
     fn test_registry_extensions() {
         let registry = ExtensionRegistry::<Rv64>::standard();
         let extensions = registry.extensions();
-        assert_eq!(extensions.len(), 5); // C, I, M, A, Zicsr
+        assert_eq!(extensions.len(), 6); // C, I, M, A, Zicsr, Zifencei
         assert_eq!(extensions[0].name(), "C"); // C first
         assert_eq!(extensions[1].name(), "I");
     }

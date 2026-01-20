@@ -1,9 +1,9 @@
-//! Zicsr extension (CSR instructions) and Zifencei - decode, lift, disasm.
+//! Zicsr extension (CSR instructions) - decode, lift, disasm.
 
 use rvr_ir::{Xlen, InstrIR, Expr, Stmt, Terminator};
 
 use crate::{
-    DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_ZICSR, EXT_ZIFENCEI, reg_name,
+    DecodedInstr, InstrArgs, OpId, OpInfo, OpClass, EXT_ZICSR, reg_name,
     encode::{decode_opcode, decode_funct3, decode_rd, decode_rs1},
 };
 use super::InstructionExtension;
@@ -15,9 +15,6 @@ pub const OP_CSRRC: OpId = OpId::new(EXT_ZICSR, 2);
 pub const OP_CSRRWI: OpId = OpId::new(EXT_ZICSR, 3);
 pub const OP_CSRRSI: OpId = OpId::new(EXT_ZICSR, 4);
 pub const OP_CSRRCI: OpId = OpId::new(EXT_ZICSR, 5);
-
-// Zifencei
-pub const OP_FENCE_I: OpId = OpId::new(EXT_ZIFENCEI, 0);
 
 // Common CSR addresses
 pub const CSR_CYCLE: u16 = 0xC00;
@@ -63,7 +60,7 @@ pub fn csr_name(csr: u16) -> &'static str {
     }
 }
 
-/// Zicsr extension (CSR instructions) and Zifencei.
+/// Zicsr extension (CSR instructions).
 pub struct ZicsrExtension;
 
 impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
@@ -79,26 +76,25 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
         let opcode = decode_opcode(raw);
         let funct3 = decode_funct3(raw);
 
-        match opcode {
-            0x0F if funct3 == 1 => Some(DecodedInstr::new(OP_FENCE_I, pc, 4, InstrArgs::None)),
-            0x73 if funct3 != 0 => {
-                let rd = decode_rd(raw);
-                let rs1 = decode_rs1(raw);
-                let csr = ((raw >> 20) & 0xFFF) as u16;
-
-                let (opid, args) = match funct3 {
-                    1 => (OP_CSRRW, InstrArgs::Csr { rd, rs1, csr }),
-                    2 => (OP_CSRRS, InstrArgs::Csr { rd, rs1, csr }),
-                    3 => (OP_CSRRC, InstrArgs::Csr { rd, rs1, csr }),
-                    5 => (OP_CSRRWI, InstrArgs::CsrI { rd, imm: rs1, csr }),
-                    6 => (OP_CSRRSI, InstrArgs::CsrI { rd, imm: rs1, csr }),
-                    7 => (OP_CSRRCI, InstrArgs::CsrI { rd, imm: rs1, csr }),
-                    _ => return None,
-                };
-                Some(DecodedInstr::new(opid, pc, 4, args))
-            }
-            _ => None,
+        // CSR instructions: opcode=0x73, funct3 != 0
+        if opcode != 0x73 || funct3 == 0 {
+            return None;
         }
+
+        let rd = decode_rd(raw);
+        let rs1 = decode_rs1(raw);
+        let csr = ((raw >> 20) & 0xFFF) as u16;
+
+        let (opid, args) = match funct3 {
+            1 => (OP_CSRRW, InstrArgs::Csr { rd, rs1, csr }),
+            2 => (OP_CSRRS, InstrArgs::Csr { rd, rs1, csr }),
+            3 => (OP_CSRRC, InstrArgs::Csr { rd, rs1, csr }),
+            5 => (OP_CSRRWI, InstrArgs::CsrI { rd, imm: rs1, csr }),
+            6 => (OP_CSRRSI, InstrArgs::CsrI { rd, imm: rs1, csr }),
+            7 => (OP_CSRRCI, InstrArgs::CsrI { rd, imm: rs1, csr }),
+            _ => return None,
+        };
+        Some(DecodedInstr::new(opid, pc, 4, args))
     }
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
@@ -107,9 +103,6 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
     }
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
-        if instr.opid.ext == EXT_ZIFENCEI {
-            return "fence.i".to_string();
-        }
         let mnemonic = zicsr_mnemonic(instr.opid);
         match &instr.args {
             InstrArgs::Csr { rd, rs1, csr } => {
@@ -127,22 +120,18 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
     }
 }
 
-/// Table-driven OpInfo for Zicsr and Zifencei extensions.
+/// Table-driven OpInfo for Zicsr extension.
 const OP_INFO_ZICSR: &[OpInfo] = &[
-    // Zicsr
     OpInfo { opid: OP_CSRRW, name: "csrrw", class: OpClass::Csr, size_hint: 4 },
     OpInfo { opid: OP_CSRRS, name: "csrrs", class: OpClass::Csr, size_hint: 4 },
     OpInfo { opid: OP_CSRRC, name: "csrrc", class: OpClass::Csr, size_hint: 4 },
     OpInfo { opid: OP_CSRRWI, name: "csrrwi", class: OpClass::Csr, size_hint: 4 },
     OpInfo { opid: OP_CSRRSI, name: "csrrsi", class: OpClass::Csr, size_hint: 4 },
     OpInfo { opid: OP_CSRRCI, name: "csrrci", class: OpClass::Csr, size_hint: 4 },
-    // Zifencei
-    OpInfo { opid: OP_FENCE_I, name: "fence.i", class: OpClass::Fence, size_hint: 4 },
 ];
 
 fn lift_zicsr<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {
-        OP_FENCE_I => (Vec::new(), Terminator::Fall),
         OP_CSRRW => lift_csrrw(args),
         OP_CSRRS => lift_csrrs(args),
         OP_CSRRC => lift_csrrc(args),
