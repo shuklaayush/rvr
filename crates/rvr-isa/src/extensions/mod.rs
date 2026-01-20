@@ -10,6 +10,11 @@ mod a;
 mod c;
 mod zicsr;
 mod zifencei;
+mod zba;
+mod zbb;
+mod zbs;
+mod zbkb;
+mod zicond;
 
 // Re-export extension structs
 pub use base::BaseExtension;
@@ -18,6 +23,11 @@ pub use a::AExtension;
 pub use c::CExtension;
 pub use zicsr::ZicsrExtension;
 pub use zifencei::ZifenceiExtension;
+pub use zba::ZbaExtension;
+pub use zbb::ZbbExtension;
+pub use zbs::ZbsExtension;
+pub use zbkb::ZbkbExtension;
+pub use zicond::ZicondExtension;
 
 // Re-export OpId constants and mnemonic functions from each extension
 pub use base::{
@@ -63,6 +73,31 @@ pub use zicsr::{
     zicsr_mnemonic, csr_name,
 };
 pub use zifencei::OP_FENCE_I;
+pub use zba::{
+    OP_SH1ADD, OP_SH2ADD, OP_SH3ADD, OP_ADD_UW,
+    OP_SH1ADD_UW, OP_SH2ADD_UW, OP_SH3ADD_UW, OP_SLLI_UW,
+    zba_mnemonic,
+};
+pub use zbb::{
+    OP_ANDN, OP_ORN, OP_XNOR, OP_CLZ, OP_CTZ, OP_CPOP,
+    OP_CLZW, OP_CTZW, OP_CPOPW, OP_MAX, OP_MAXU, OP_MIN, OP_MINU,
+    OP_SEXT_B, OP_SEXT_H, OP_ZEXT_H, OP_ROL, OP_ROR, OP_RORI,
+    OP_ROLW, OP_RORW, OP_RORIW, OP_ORC_B, OP_REV8,
+    zbb_mnemonic,
+};
+pub use zbs::{
+    OP_BCLR, OP_BCLRI, OP_BEXT, OP_BEXTI,
+    OP_BINV, OP_BINVI, OP_BSET, OP_BSETI,
+    zbs_mnemonic,
+};
+pub use zbkb::{
+    OP_PACK, OP_PACKH, OP_PACKW, OP_BREV8, OP_ZIP, OP_UNZIP,
+    zbkb_mnemonic,
+};
+pub use zicond::{
+    OP_CZERO_EQZ, OP_CZERO_NEZ,
+    zicond_mnemonic,
+};
 
 use rvr_ir::{InstrIR, Xlen, Terminator};
 use crate::{DecodedInstr, OpId, OpInfo};
@@ -135,7 +170,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     }
 
     /// Create a registry with all standard RISC-V extensions.
-    /// Order: C (compressed first), I (base), M (multiply), A (atomic), Zicsr, Zifencei.
+    /// Order: C (compressed first), I (base), M (multiply), A (atomic), Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond.
     pub fn standard() -> Self {
         Self::new(vec![
             Box::new(CExtension),        // C first (handles 16-bit instructions)
@@ -144,6 +179,11 @@ impl<X: Xlen> ExtensionRegistry<X> {
             Box::new(AExtension),        // A extension
             Box::new(ZicsrExtension),    // Zicsr (CSR instructions)
             Box::new(ZifenceiExtension), // Zifencei (instruction fence)
+            Box::new(ZbaExtension),      // Zba (address generation)
+            Box::new(ZbbExtension),      // Zbb (basic bit manipulation)
+            Box::new(ZbsExtension),      // Zbs (single-bit operations)
+            Box::new(ZbkbExtension),     // Zbkb (bit manipulation for crypto)
+            Box::new(ZicondExtension),   // Zicond (conditional operations)
         ])
     }
 
@@ -276,7 +316,7 @@ mod tests {
     fn test_registry_extensions() {
         let registry = ExtensionRegistry::<Rv64>::standard();
         let extensions = registry.extensions();
-        assert_eq!(extensions.len(), 6); // C, I, M, A, Zicsr, Zifencei
+        assert_eq!(extensions.len(), 11); // C, I, M, A, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond
         assert_eq!(extensions[0].name(), "C"); // C first
         assert_eq!(extensions[1].name(), "I");
     }
