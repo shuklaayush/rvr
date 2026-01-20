@@ -654,3 +654,324 @@ impl<X: Xlen> Expr<X> {
         Self::select(cond, right, left)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Rv32, Rv64};
+
+    // ===== Basic expression construction tests =====
+
+    #[test]
+    fn test_expr_imm_rv64() {
+        let expr = Expr::<Rv64>::imm(42);
+        assert_eq!(expr.kind, ExprKind::Imm);
+        assert_eq!(expr.imm, 42);
+    }
+
+    #[test]
+    fn test_expr_imm_rv32() {
+        let expr = Expr::<Rv32>::imm(42);
+        assert_eq!(expr.kind, ExprKind::Imm);
+        assert_eq!(expr.imm, 42);
+    }
+
+    #[test]
+    fn test_expr_reg() {
+        let expr = Expr::<Rv64>::reg(10);
+        assert_eq!(expr.kind, ExprKind::Read);
+        assert_eq!(expr.space, Space::Reg);
+        assert_eq!(expr.imm, 10);
+    }
+
+    // ===== Bitmanip expression tests =====
+
+    #[test]
+    fn test_expr_clz_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::clz(val);
+        assert_eq!(expr.kind, ExprKind::Clz);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_ctz_rv32() {
+        let val = Expr::<Rv32>::reg(5);
+        let expr = Expr::ctz(val);
+        assert_eq!(expr.kind, ExprKind::Ctz);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_cpop_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::cpop(val);
+        assert_eq!(expr.kind, ExprKind::Cpop);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_orc8_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::orc8(val);
+        assert_eq!(expr.kind, ExprKind::Orc8);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_rev8_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::rev8(val);
+        assert_eq!(expr.kind, ExprKind::Rev8);
+        assert!(expr.left.is_some());
+    }
+
+    // ===== 32-bit bitmanip (RV64 word operations) =====
+
+    #[test]
+    fn test_expr_clz32_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::clz32(val);
+        assert_eq!(expr.kind, ExprKind::Clz32);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_ctz32_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::ctz32(val);
+        assert_eq!(expr.kind, ExprKind::Ctz32);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_cpop32_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::cpop32(val);
+        assert_eq!(expr.kind, ExprKind::Cpop32);
+        assert!(expr.left.is_some());
+    }
+
+    // ===== Zbkb tests =====
+
+    #[test]
+    fn test_expr_pack_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::pack(left, right);
+        assert_eq!(expr.kind, ExprKind::Pack);
+        assert!(expr.left.is_some());
+        assert!(expr.right.is_some());
+    }
+
+    #[test]
+    fn test_expr_pack_rv32() {
+        let left = Expr::<Rv32>::reg(5);
+        let right = Expr::<Rv32>::reg(6);
+        let expr = Expr::pack(left, right);
+        assert_eq!(expr.kind, ExprKind::Pack);
+    }
+
+    #[test]
+    fn test_expr_pack8_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::pack8(left, right);
+        assert_eq!(expr.kind, ExprKind::Pack8);
+    }
+
+    #[test]
+    fn test_expr_pack16_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::pack16(left, right);
+        assert_eq!(expr.kind, ExprKind::Pack16);
+    }
+
+    #[test]
+    fn test_expr_brev8_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::brev8(val);
+        assert_eq!(expr.kind, ExprKind::Brev8);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_zip_rv32() {
+        // ZIP is RV32-only
+        let val = Expr::<Rv32>::reg(5);
+        let expr = Expr::zip(val);
+        assert_eq!(expr.kind, ExprKind::Zip);
+        assert!(expr.left.is_some());
+    }
+
+    #[test]
+    fn test_expr_unzip_rv32() {
+        // UNZIP is RV32-only
+        let val = Expr::<Rv32>::reg(5);
+        let expr = Expr::unzip(val);
+        assert_eq!(expr.kind, ExprKind::Unzip);
+        assert!(expr.left.is_some());
+    }
+
+    // ===== Extension tests =====
+
+    #[test]
+    fn test_expr_sext8_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::sext8(val);
+        assert_eq!(expr.kind, ExprKind::Sext8);
+    }
+
+    #[test]
+    fn test_expr_sext16_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::sext16(val);
+        assert_eq!(expr.kind, ExprKind::Sext16);
+    }
+
+    #[test]
+    fn test_expr_sext32_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::sext32(val);
+        assert_eq!(expr.kind, ExprKind::Sext32);
+    }
+
+    #[test]
+    fn test_expr_zext8_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::zext8(val);
+        assert_eq!(expr.kind, ExprKind::Zext8);
+    }
+
+    #[test]
+    fn test_expr_zext16_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::zext16(val);
+        assert_eq!(expr.kind, ExprKind::Zext16);
+    }
+
+    #[test]
+    fn test_expr_zext32_rv64() {
+        let val = Expr::<Rv64>::reg(5);
+        let expr = Expr::zext32(val);
+        assert_eq!(expr.kind, ExprKind::Zext32);
+    }
+
+    // ===== Select/ternary tests =====
+
+    #[test]
+    fn test_expr_select_rv64() {
+        let cond = Expr::<Rv64>::eq(Expr::reg(1), Expr::imm(0));
+        let then_val = Expr::imm(100);
+        let else_val = Expr::imm(200);
+        let expr = Expr::select(cond, then_val, else_val);
+        assert_eq!(expr.kind, ExprKind::Select);
+        assert!(expr.left.is_some());
+        assert!(expr.right.is_some());
+        assert!(expr.third.is_some());
+    }
+
+    // ===== Min/max tests =====
+
+    #[test]
+    fn test_expr_min_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::min(left, right);
+        // min is implemented as select(lt(left, right), left, right)
+        assert_eq!(expr.kind, ExprKind::Select);
+    }
+
+    #[test]
+    fn test_expr_max_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::max(left, right);
+        assert_eq!(expr.kind, ExprKind::Select);
+    }
+
+    #[test]
+    fn test_expr_minu_rv32() {
+        let left = Expr::<Rv32>::reg(5);
+        let right = Expr::<Rv32>::reg(6);
+        let expr = Expr::minu(left, right);
+        assert_eq!(expr.kind, ExprKind::Select);
+    }
+
+    #[test]
+    fn test_expr_maxu_rv32() {
+        let left = Expr::<Rv32>::reg(5);
+        let right = Expr::<Rv32>::reg(6);
+        let expr = Expr::maxu(left, right);
+        assert_eq!(expr.kind, ExprKind::Select);
+    }
+
+    // ===== M extension high-bits multiplication =====
+
+    #[test]
+    fn test_expr_mulh_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::mulh(left, right);
+        assert_eq!(expr.kind, ExprKind::MulH);
+    }
+
+    #[test]
+    fn test_expr_mulhsu_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::mulhsu(left, right);
+        assert_eq!(expr.kind, ExprKind::MulHSU);
+    }
+
+    #[test]
+    fn test_expr_mulhu_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::mulhu(left, right);
+        assert_eq!(expr.kind, ExprKind::MulHU);
+    }
+
+    // ===== RV64 word operations =====
+
+    #[test]
+    fn test_expr_addw_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::addw(left, right);
+        assert_eq!(expr.kind, ExprKind::AddW);
+    }
+
+    #[test]
+    fn test_expr_subw_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::subw(left, right);
+        assert_eq!(expr.kind, ExprKind::SubW);
+    }
+
+    #[test]
+    fn test_expr_sllw_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::sllw(left, right);
+        assert_eq!(expr.kind, ExprKind::SllW);
+    }
+
+    #[test]
+    fn test_expr_srlw_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::srlw(left, right);
+        assert_eq!(expr.kind, ExprKind::SrlW);
+    }
+
+    #[test]
+    fn test_expr_sraw_rv64() {
+        let left = Expr::<Rv64>::reg(5);
+        let right = Expr::<Rv64>::reg(6);
+        let expr = Expr::sraw(left, right);
+        assert_eq!(expr.kind, ExprKind::SraW);
+    }
+}
