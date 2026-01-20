@@ -11,7 +11,6 @@ use std::collections::HashSet;
 use rvr_ir::Xlen;
 
 use crate::config::EmitConfig;
-use crate::tracer::{PassedVarKind, TracerConfig};
 
 /// RISC-V register ABI names.
 pub const REG_ABI_NAMES: [&str; 32] = [
@@ -83,7 +82,10 @@ impl FnSignature {
         }
 
         // Add tracer passed variables
-        Self::add_tracer_params::<X>(&config.tracer_config, &mut params, &mut args, &mut args_from_state, &mut save_to_state);
+        params.push_str(&config.tracer_config.passed_var_params::<X>());
+        args.push_str(&config.tracer_config.passed_var_args());
+        args_from_state.push_str(&config.tracer_config.passed_var_args_from_state());
+        save_to_state.push_str(&config.tracer_config.passed_var_save_to_state());
 
         // Add hot registers
         let mut hot_reg_set = HashSet::new();
@@ -104,36 +106,6 @@ impl FnSignature {
             hot_reg_set,
             counts_instret,
             trace_regs,
-        }
-    }
-
-    /// Add tracer passed variables to signature parts.
-    fn add_tracer_params<X: Xlen>(
-        tracer_config: &TracerConfig,
-        params: &mut String,
-        args: &mut String,
-        args_from_state: &mut String,
-        save_to_state: &mut String,
-    ) {
-        let rtype = reg_type::<X>();
-
-        for var in &tracer_config.passed_vars {
-            // Parameter declaration
-            let param_type = match var.kind {
-                PassedVarKind::Ptr => format!("{}*", rtype),
-                PassedVarKind::Index => "uint32_t".to_string(),
-                PassedVarKind::Value => rtype.to_string(),
-            };
-            params.push_str(&format!(", {} {}", param_type, var.name));
-
-            // Argument passing
-            args.push_str(&format!(", {}", var.name));
-
-            // Extracting from state->tracer
-            args_from_state.push_str(&format!(", state->tracer.{}", var.name));
-
-            // Saving back to state->tracer
-            save_to_state.push_str(&format!(" state->tracer.{0} = {0};", var.name));
         }
     }
 

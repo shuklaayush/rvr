@@ -1,10 +1,17 @@
-//! Tracer configuration and header generation for C-first tracer design.
+//! Tracer configuration and header generation.
 //!
-//! Tracers are implemented as C headers. This module provides configuration
-//! for selecting which tracer to use and which variables to pass directly
-//! to block functions for performance.
+//! Tracers are implemented as C headers. This module selects a built-in
+//! tracer or loads a custom header and describes which tracer fields are
+//! passed directly to block functions.
 
-/// Tracer kind.
+use std::fs;
+use std::path::PathBuf;
+
+use rvr_ir::Xlen;
+
+use crate::tracers;
+
+/// Built-in tracer kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TracerKind {
     /// No tracing - all calls optimize away.
@@ -24,17 +31,42 @@ impl TracerKind {
     pub fn is_none(&self) -> bool {
         *self == Self::None
     }
+}
 
-    /// Check if RvState needs a Tracer field.
-    pub fn has_tracer_struct(&self) -> bool {
-        *self != Self::None
+/// Tracer source.
+#[derive(Clone, Debug)]
+pub enum TracerSource {
+    /// Built-in tracer header.
+    Builtin(TracerKind),
+    /// Inline custom header content.
+    Inline { name: String, header: String },
+    /// Custom header loaded from a file.
+    File { name: String, path: PathBuf },
+}
+
+impl TracerSource {
+    /// Name used for display/logging.
+    pub fn name(&self) -> &str {
+        match self {
+            TracerSource::Builtin(kind) => match kind {
+                TracerKind::None => "none",
+                TracerKind::Preflight => "preflight",
+                TracerKind::Stats => "stats",
+                TracerKind::Ffi => "ffi",
+                TracerKind::Dynamic => "dynamic",
+            },
+            TracerSource::Inline { name, .. } => name,
+            TracerSource::File { name, .. } => name,
+        }
+    }
+
+    /// Return true when this represents a disabled tracer.
+    pub fn is_none(&self) -> bool {
+        matches!(self, TracerSource::Builtin(TracerKind::None))
     }
 }
 
 /// Variable passed directly to block functions.
-///
-/// Used to "hoist" tracer struct fields to function parameters for
-/// performance (avoids pointer indirection on hot paths).
 #[derive(Clone, Debug)]
 pub struct PassedVar {
     /// Variable name.
@@ -80,65 +112,107 @@ pub enum PassedVarKind {
     Value,
 }
 
-/// Tracer configuration: which tracer + what to pass directly.
+/// Tracer configuration: source + passed variables.
 #[derive(Clone, Debug)]
 pub struct TracerConfig {
-    /// Tracer kind.
-    pub kind: TracerKind,
+    /// Tracer header source.
+    pub source: TracerSource,
     /// Variables passed directly to block functions.
     pub passed_vars: Vec<PassedVar>,
 }
 
 impl TracerConfig {
-    /// Create config with given kind and no passed variables.
-    pub fn new(kind: TracerKind) -> Self {
-        Self {
-            kind,
-            passed_vars: Vec::new(),
-        }
-    }
-
-    /// No tracing.
-    pub fn none() -> Self {
-        Self::new(TracerKind::None)
-    }
-
-    /// Preflight tracer with passed vars (data, data_idx, pc, pc_idx).
-    pub fn preflight() -> Self {
-        Self {
-            kind: TracerKind::Preflight,
-            passed_vars: vec![
+    /// Create config for a built-in tracer kind.
+    pub fn builtin(kind: TracerKind) -> Self {
+        let passed_vars = match kind {
+            TracerKind::Preflight => vec![
                 PassedVar::ptr("data"),
                 PassedVar::index("data_idx"),
                 PassedVar::ptr("pc"),
                 PassedVar::index("pc_idx"),
             ],
+            _ => Vec::new(),
+        };
+        Self {
+            source: TracerSource::Builtin(kind),
+            passed_vars,
         }
     }
 
-    /// Stats tracer - counts events, opcodes, and register usage.
+    /// No tracing.
+    pub fn none() -> Self {
+        Self::builtin(TracerKind::None)
+    }
+
+    /// Preflight tracer with default passed vars (data, data_idx, pc, pc_idx).
+    pub fn preflight() -> Self {
+        Self::builtin(TracerKind::Preflight)
+    }
+
+    /// Stats tracer.
     pub fn stats() -> Self {
-        Self::new(TracerKind::Stats)
+        Self::builtin(TracerKind::Stats)
     }
 
-    /// FFI tracer - calls external functions.
+    /// FFI tracer.
     pub fn ffi() -> Self {
-        Self::new(TracerKind::Ffi)
+        Self::builtin(TracerKind::Ffi)
     }
 
-    /// Dynamic tracer - runtime function pointers.
+    /// Dynamic tracer.
     pub fn dynamic() -> Self {
-        Self::new(TracerKind::Dynamic)
+        Self::builtin(TracerKind::Dynamic)
+    }
+
+    /// Custom tracer with inline header content.
+    pub fn custom_inline(
+        name: impl Into<String>,
+        header: impl Into<String>,
+        passed_vars: Vec<PassedVar>,
+    ) -> Self {
+        Self {
+            source: TracerSource::Inline {
+                name: name.into(),
+                header: header.into(),
+            },
+            passed_vars,
+        }
+    }
+
+    /// Custom tracer with header loaded from a file.
+    pub fn custom_file(
+        name: impl Into<String>,
+        path: impl Into<PathBuf>,
+        passed_vars: Vec<PassedVar>,
+    ) -> Self {
+        Self {
+            source: TracerSource::File {
+                name: name.into(),
+                path: path.into(),
+            },
+            passed_vars,
+        }
+    }
+
+    /// Replace passed vars.
+    pub fn with_passed_vars(mut self, vars: Vec<PassedVar>) -> Self {
+        self.passed_vars = vars;
+        self
+    }
+
+    /// Add a passed variable.
+    pub fn push_passed_var(&mut self, var: PassedVar) {
+        self.passed_vars.push(var);
     }
 
     /// Check if tracing is disabled.
     pub fn is_none(&self) -> bool {
-        self.kind.is_none()
+        self.source.is_none()
     }
 
     /// Check if RvState needs a Tracer field.
     pub fn has_tracer_struct(&self) -> bool {
-        self.kind.has_tracer_struct()
+        !self.is_none()
     }
 
     /// Check if there are passed variables.
@@ -146,7 +220,7 @@ impl TracerConfig {
         !self.passed_vars.is_empty()
     }
 
-    /// Parse tracer type from string.
+    /// Parse tracer type from string for built-ins.
     pub fn from_string(s: &str) -> Option<Self> {
         match s {
             "none" => Some(Self::none()),
@@ -157,6 +231,66 @@ impl TracerConfig {
             _ => None,
         }
     }
+
+    /// Generate passed-var params (", uint64_t* data, uint32_t data_idx, ...").
+    pub fn passed_var_params<X: Xlen>(&self) -> String {
+        if self.passed_vars.is_empty() {
+            return String::new();
+        }
+
+        let rtype = crate::signature::reg_type::<X>();
+        let mut result = String::new();
+        for var in &self.passed_vars {
+            let param_type = match var.kind {
+                PassedVarKind::Ptr => format!("{}*", rtype),
+                PassedVarKind::Index => "uint32_t".to_string(),
+                PassedVarKind::Value => rtype.to_string(),
+            };
+            result.push_str(&format!(", {} {}", param_type, var.name));
+        }
+        result
+    }
+
+    /// Generate passed-var args (", data, data_idx, ...").
+    pub fn passed_var_args(&self) -> String {
+        if self.passed_vars.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+        for var in &self.passed_vars {
+            result.push_str(&format!(", {}", var.name));
+        }
+        result
+    }
+
+    /// Generate passed-var args from state->tracer (", state->tracer.data, ...").
+    pub fn passed_var_args_from_state(&self) -> String {
+        if self.passed_vars.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+        for var in &self.passed_vars {
+            result.push_str(&format!(", state->tracer.{}", var.name));
+        }
+        result
+    }
+
+    /// Generate save-to-state code for passed vars.
+    pub fn passed_var_save_to_state(&self) -> String {
+        if self.passed_vars.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+        for var in &self.passed_vars {
+            if var.kind == PassedVarKind::Index {
+                result.push_str(&format!(" state->tracer.{0} = {0};", var.name));
+            }
+        }
+        result
+    }
 }
 
 impl Default for TracerConfig {
@@ -165,59 +299,13 @@ impl Default for TracerConfig {
     }
 }
 
-/// Generate a minimal tracer header.
-///
-/// This provides a `Tracer` struct plus `trace_*` hooks used by the emitter.
-/// The default implementation is no-op (keeps overhead near zero), but it
-/// allows tracing-enabled builds to compile cleanly.
-pub fn gen_tracer_header<X: rvr_ir::Xlen>(cfg: &TracerConfig) -> String {
-    if cfg.is_none() {
-        return "#pragma once\n/* Tracing disabled */\n".to_string();
+/// Generate tracer header based on config.
+pub fn gen_tracer_header<X: Xlen>(cfg: &TracerConfig) -> std::io::Result<String> {
+    match &cfg.source {
+        TracerSource::Builtin(kind) => Ok(tracers::gen_tracer_header::<X>(*kind)),
+        TracerSource::Inline { header, .. } => Ok(header.clone()),
+        TracerSource::File { path, .. } => fs::read_to_string(path),
     }
-
-    let rtype = crate::signature::reg_type::<X>();
-    let mut fields = String::new();
-    for var in &cfg.passed_vars {
-        let ty = match var.kind {
-            PassedVarKind::Ptr => format!("{}*", rtype),
-            PassedVarKind::Index => "uint32_t".to_string(),
-            PassedVarKind::Value => rtype.to_string(),
-        };
-        fields.push_str(&format!("    {} {};\n", ty, var.name));
-    }
-
-    format!(
-        r#"#pragma once
-#include <stdint.h>
-
-typedef struct Tracer {{
-{fields}}} Tracer;
-
-static inline void trace_init(Tracer* t) {{ (void)t; }}
-static inline void trace_fini(Tracer* t) {{ (void)t; }}
-
-static inline void trace_block(Tracer* t, uint64_t pc) {{ (void)t; (void)pc; }}
-static inline void trace_pc(Tracer* t, uint64_t pc) {{ (void)t; (void)pc; }}
-static inline void trace_branch_taken(Tracer* t, uint64_t pc, uint64_t target) {{ (void)t; (void)pc; (void)target; }}
-static inline void trace_branch_not_taken(Tracer* t, uint64_t pc, uint64_t target) {{ (void)t; (void)pc; (void)target; }}
-
-static inline void trace_mem_read_byte(uint64_t addr, uint8_t v) {{ (void)addr; (void)v; }}
-static inline void trace_mem_read_halfword(uint64_t addr, uint16_t v) {{ (void)addr; (void)v; }}
-static inline void trace_mem_read_word(uint64_t addr, uint32_t v) {{ (void)addr; (void)v; }}
-static inline void trace_mem_read_dword(uint64_t addr, uint64_t v) {{ (void)addr; (void)v; }}
-
-static inline void trace_mem_write_byte(uint64_t addr, uint8_t v) {{ (void)addr; (void)v; }}
-static inline void trace_mem_write_halfword(uint64_t addr, uint16_t v) {{ (void)addr; (void)v; }}
-static inline void trace_mem_write_word(uint64_t addr, uint32_t v) {{ (void)addr; (void)v; }}
-static inline void trace_mem_write_dword(uint64_t addr, uint64_t v) {{ (void)addr; (void)v; }}
-
-static inline void trace_reg_read(uint32_t r, uint64_t v) {{ (void)r; (void)v; }}
-static inline void trace_reg_write(uint32_t r, uint64_t v) {{ (void)r; (void)v; }}
-static inline void trace_csr_read(uint32_t c, uint32_t v) {{ (void)c; (void)v; }}
-static inline void trace_csr_write(uint32_t c, uint32_t v) {{ (void)c; (void)v; }}
-"#,
-        fields = fields
-    )
 }
 
 #[cfg(test)]
@@ -228,8 +316,6 @@ mod tests {
     fn test_tracer_kind() {
         assert!(TracerKind::None.is_none());
         assert!(!TracerKind::Preflight.is_none());
-        assert!(!TracerKind::None.has_tracer_struct());
-        assert!(TracerKind::Stats.has_tracer_struct());
     }
 
     #[test]
@@ -256,8 +342,8 @@ mod tests {
     #[test]
     fn test_tracer_from_string() {
         assert!(TracerConfig::from_string("none").unwrap().is_none());
-        assert_eq!(TracerConfig::from_string("preflight").unwrap().kind, TracerKind::Preflight);
-        assert_eq!(TracerConfig::from_string("stats").unwrap().kind, TracerKind::Stats);
+        assert!(matches!(TracerConfig::from_string("preflight").unwrap().source, TracerSource::Builtin(TracerKind::Preflight)));
+        assert!(matches!(TracerConfig::from_string("stats").unwrap().source, TracerSource::Builtin(TracerKind::Stats)));
         assert!(TracerConfig::from_string("invalid").is_none());
     }
 }

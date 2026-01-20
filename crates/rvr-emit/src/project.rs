@@ -34,12 +34,10 @@ pub struct CProject<X: Xlen> {
     pub base_name: String,
     /// Emit configuration.
     pub config: EmitConfig<X>,
-    /// Derived inputs for emission (entry point, block map).
+    /// Derived inputs for emission (entry point, pc_end, valid addresses, initial_brk).
     pub inputs: EmitInputs,
     /// Taken-inline mapping: branch_pc -> (inline_start, inline_end).
     pub taken_inlines: HashMap<u64, (u64, u64)>,
-    /// Initial brk value.
-    pub initial_brk: u64,
     /// Memory segments.
     pub segments: Vec<MemorySegment>,
     /// Instructions per partition.
@@ -63,18 +61,11 @@ impl<X: Xlen> CProject<X> {
             config,
             inputs: EmitInputs::default(),
             taken_inlines: HashMap::new(),
-            initial_brk: 0,
             segments: Vec::new(),
             partition_size: DEFAULT_PARTITION_SIZE,
             compiler: "clang".to_string(),
             enable_lto: true,
         }
-    }
-
-    /// Set initial brk.
-    pub fn with_initial_brk(mut self, brk: u64) -> Self {
-        self.initial_brk = brk;
-        self
     }
 
     /// Set derived emission inputs.
@@ -348,7 +339,6 @@ impl<X: Xlen> CProject<X> {
         let dispatch_cfg = DispatchConfig::new(
             &self.config,
             &self.base_name,
-            self.initial_brk,
             self.inputs.clone(),
         );
 
@@ -386,7 +376,7 @@ impl<X: Xlen> CProject<X> {
         if self.config.tracer_config.is_none() {
             return Ok(());
         }
-        let tracer_header = gen_tracer_header::<X>(&self.config.tracer_config);
+        let tracer_header = gen_tracer_header::<X>(&self.config.tracer_config)?;
         fs::write(self.tracer_header_path(), tracer_header)
     }
 

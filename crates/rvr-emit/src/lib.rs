@@ -10,6 +10,7 @@ mod memory;
 mod project;
 mod signature;
 mod tracer;
+mod tracers;
 
 pub use config::*;
 pub use dispatch::*;
