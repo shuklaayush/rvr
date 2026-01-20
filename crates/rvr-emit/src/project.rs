@@ -140,7 +140,8 @@ impl<X: Xlen> CProject<X> {
 
     /// Path to syscalls source file.
     pub fn syscalls_path(&self) -> PathBuf {
-        self.output_dir.join(format!("{}_syscalls.c", self.base_name))
+        self.output_dir
+            .join(format!("{}_syscalls.c", self.base_name))
     }
 
     /// Path to tracer header file.
@@ -471,11 +472,7 @@ impl<X: Xlen> CProject<X> {
         // Conditional flag selection
         writeln!(content, "# Select flags based on compiler").unwrap();
         writeln!(content, "ifeq ($(IS_CLANG),1)").unwrap();
-        writeln!(
-            content,
-            "  CFLAGS = $(BASE_CFLAGS) $(CLANG_CFLAGS)"
-        )
-        .unwrap();
+        writeln!(content, "  CFLAGS = $(BASE_CFLAGS) $(CLANG_CFLAGS)").unwrap();
         writeln!(content, "  LDFLAGS = $(CLANG_LDFLAGS)").unwrap();
         writeln!(content, "else").unwrap();
         writeln!(content, "  CFLAGS = $(BASE_CFLAGS) $(GCC_CFLAGS)").unwrap();

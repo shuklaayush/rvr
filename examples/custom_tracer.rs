@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use rvr::{EmitConfig, Pipeline, Rv64, Runner, TracerConfig};
+use rvr::{EmitConfig, Pipeline, Runner, Rv64, TracerConfig};
 use rvr_isa::ExtensionRegistry;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

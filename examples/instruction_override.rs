@@ -61,10 +61,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Method 2: Build custom extension set with override (more control)
     let _custom_registry = ExtensionRegistry::<Rv64>::base()
-        .with_c()       // Compressed instructions first (for correct decode order)
-        .with_m()       // Integer multiply/divide
-        .with_a()       // Atomics
-        .with_zicsr()   // CSR access
+        .with_c() // Compressed instructions first (for correct decode order)
+        .with_m() // Integer multiply/divide
+        .with_a() // Atomics
+        .with_zicsr() // CSR access
         .with_override(OP_ECALL, RiscvTestsEcall);
 
     // Load ELF

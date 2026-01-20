@@ -568,9 +568,7 @@ mod tests {
     #[test]
     fn test_builder_incremental() {
         // Build up extensions one by one
-        let registry = ExtensionRegistry::<Rv64>::base()
-            .with_m()
-            .with_c();
+        let registry = ExtensionRegistry::<Rv64>::base().with_m().with_c();
 
         let extensions = registry.extensions();
         assert_eq!(extensions.len(), 3);
@@ -891,7 +889,8 @@ mod tests {
         use rvr_ir::Terminator;
 
         // Use LinuxHandler instead of default
-        let registry = ExtensionRegistry::<Rv64>::standard().with_syscall_handler(LinuxHandler::default());
+        let registry =
+            ExtensionRegistry::<Rv64>::standard().with_syscall_handler(LinuxHandler::default());
 
         // ECALL encoding: 0x00000073
         let bytes = [0x73, 0x00, 0x00, 0x00];

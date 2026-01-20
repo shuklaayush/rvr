@@ -1081,7 +1081,13 @@ impl<X: Xlen> CEmitter<X> {
             } => {
                 let cond_str = self.render_expr(cond);
                 let fall_target = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
-                self.render_branch_simple(&cond_str, X::to_u64(*target), *hint, fall_target, indent);
+                self.render_branch_simple(
+                    &cond_str,
+                    X::to_u64(*target),
+                    *hint,
+                    fall_target,
+                    indent,
+                );
             }
             Terminator::Exit { code } => {
                 let code_str = self.render_expr(code);

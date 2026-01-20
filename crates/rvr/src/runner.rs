@@ -37,7 +37,6 @@ pub enum RunError {
 
     #[error("tracer setup failed: {0}")]
     TracerSetupFailed(String),
-
 }
 
 /// C API function types.
@@ -400,10 +399,7 @@ impl Runner {
         let lib_dir = lib_dir.as_ref();
 
         // Derive library name from directory name
-        let dir_name = lib_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("rv");
+        let dir_name = lib_dir.file_name().and_then(|n| n.to_str()).unwrap_or("rv");
 
         let lib_path = lib_dir.join(format!("lib{}.so", dir_name));
 

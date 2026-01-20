@@ -60,7 +60,10 @@ impl InstructionExtension<Rv64> for ToyExtension {
         let (stmts, term) = match &instr.args {
             InstrArgs::R { rd, rs1, rs2 } => {
                 let stmts = if *rd != 0 {
-                    vec![Stmt::write_reg(*rd, Expr::add(Expr::read(*rs1), Expr::read(*rs2)))]
+                    vec![Stmt::write_reg(
+                        *rd,
+                        Expr::add(Expr::read(*rs1), Expr::read(*rs2)),
+                    )]
                 } else {
                     Vec::new()
                 };

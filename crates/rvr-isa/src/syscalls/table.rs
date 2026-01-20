@@ -147,10 +147,8 @@ impl SyscallTable {
         }
 
         // Default error return
-        let mut dispatch: Stmt<X> = Stmt::write_reg(
-            REG_A0,
-            Expr::imm(X::from_u64(self.default_error as u64)),
-        );
+        let mut dispatch: Stmt<X> =
+            Stmt::write_reg(REG_A0, Expr::imm(X::from_u64(self.default_error as u64)));
 
         // Build non-exit dispatch chain
         for entry in non_exit_entries.iter().rev() {

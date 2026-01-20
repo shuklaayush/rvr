@@ -9,9 +9,9 @@ mod inputs;
 mod memory;
 mod project;
 mod signature;
+mod syscalls;
 mod tracer;
 mod tracers;
-mod syscalls;
 
 pub use config::*;
 pub use dispatch::*;
@@ -22,5 +22,5 @@ pub use inputs::*;
 pub use memory::*;
 pub use project::*;
 pub use signature::*;
-pub use tracer::*;
 pub use syscalls::*;
+pub use tracer::*;
