@@ -460,7 +460,15 @@ fn lift_amo<X: Xlen, F>(
 where
     F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
 {
-    let addr = Expr::read(rs1);
+    let mut stmts = Vec::new();
+    let addr = if rd == rs1 {
+        // Preserve address when rd == rs1 so the AMO store uses the original pointer.
+        // Use temp 1 to avoid conflict with JALR which uses temp 0.
+        stmts.push(Stmt::write_temp(1, Expr::read(rs1)));
+        Expr::temp(1)
+    } else {
+        Expr::read(rs1)
+    };
     // .W operations sign-extend the loaded value, .D operations don't need extension
     let old = if signed {
         Expr::mem_s(addr.clone(), width)
@@ -468,6 +476,7 @@ where
         Expr::mem_u(addr.clone(), width)
     };
     let new = op(old.clone(), Expr::read(rs2));
-    let stmts = vec![Stmt::write_reg(rd, old), Stmt::write_mem(addr, new, width)];
+    stmts.push(Stmt::write_reg(rd, old));
+    stmts.push(Stmt::write_mem(addr, new, width));
     (stmts, Terminator::Fall { target: None })
 }
