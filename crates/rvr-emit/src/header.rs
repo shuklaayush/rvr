@@ -161,31 +161,31 @@ static inline int unlikely(int x) {{ return __builtin_expect(!!(x), 0); }}
 
 fn gen_constants<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     format!(
-        r#"/* Architecture constants */
-#define XLEN {xlen}
+        r#"/* Architecture constants (C23 constexpr) */
+constexpr int XLEN = {xlen};
 
 /* Memory configuration */
-#define MEMORY_BITS {memory_bits}
-#define RV_MEMORY_SIZE (1ull << {memory_bits})
-#define RV_MEMORY_MASK ((1ull << {memory_bits}) - 1)
+constexpr int MEMORY_BITS = {memory_bits};
+constexpr uint64_t RV_MEMORY_SIZE = 1ull << {memory_bits};
+constexpr uint64_t RV_MEMORY_MASK = (1ull << {memory_bits}) - 1;
 
 /* Entry point */
-#define RV_ENTRY_POINT {entry_point:#x}
+constexpr uint32_t RV_ENTRY_POINT = {entry_point:#x};
 
 /* CSR addresses */
-#define CSR_MISA      {csr_misa:#x}
-#define CSR_CYCLE     {csr_cycle:#x}
-#define CSR_CYCLEH    {csr_cycleh:#x}
-#define CSR_INSTRET   {csr_instret:#x}
-#define CSR_INSTRETH  {csr_instreth:#x}
-#define CSR_MCYCLE    {csr_mcycle:#x}
-#define CSR_MCYCLEH   {csr_mcycleh:#x}
-#define CSR_MINSTRET  {csr_minstret:#x}
-#define CSR_MINSTRETH {csr_minstreth:#x}
+constexpr uint32_t CSR_MISA      = {csr_misa:#x};
+constexpr uint32_t CSR_CYCLE     = {csr_cycle:#x};
+constexpr uint32_t CSR_CYCLEH    = {csr_cycleh:#x};
+constexpr uint32_t CSR_INSTRET   = {csr_instret:#x};
+constexpr uint32_t CSR_INSTRETH  = {csr_instreth:#x};
+constexpr uint32_t CSR_MCYCLE    = {csr_mcycle:#x};
+constexpr uint32_t CSR_MCYCLEH   = {csr_mcycleh:#x};
+constexpr uint32_t CSR_MINSTRET  = {csr_minstret:#x};
+constexpr uint32_t CSR_MINSTRETH = {csr_minstreth:#x};
 
 /* RISC-V division special values */
-#define RV_DIV_BY_ZERO UINT32_MAX
-#define RV_INT32_MIN   INT32_MIN
+constexpr uint32_t RV_DIV_BY_ZERO = UINT32_MAX;
+constexpr int32_t  RV_INT32_MIN   = INT32_MIN;
 
 "#,
         xlen = X::VALUE,
@@ -289,17 +289,17 @@ typedef struct RvState {{
         extra_fields = extra_fields,
     );
 
-    // Layout verification
+    // Layout verification (C23 static_assert without message)
     s.push_str(&format!(
-        r#"/* Layout verification */
-_Static_assert(offsetof(RvState, memory) == {offset_memory}, "memory offset");
-_Static_assert(offsetof(RvState, regs) == {offset_regs}, "regs offset");
-_Static_assert(offsetof(RvState, csrs) == {offset_csrs}, "csrs offset");
-_Static_assert(offsetof(RvState, pc) == {offset_pc}, "pc offset");
-_Static_assert(offsetof(RvState, instret) == {offset_instret}, "instret offset");
-_Static_assert(offsetof(RvState, reservation_addr) == {offset_reservation_addr}, "reservation_addr offset");
-_Static_assert(offsetof(RvState, has_exited) == {offset_has_exited}, "has_exited offset");
-_Static_assert(offsetof(RvState, brk) == {offset_brk}, "brk offset");
+        r#"/* Layout verification (C23 static_assert) */
+static_assert(offsetof(RvState, memory) == {offset_memory});
+static_assert(offsetof(RvState, regs) == {offset_regs});
+static_assert(offsetof(RvState, csrs) == {offset_csrs});
+static_assert(offsetof(RvState, pc) == {offset_pc});
+static_assert(offsetof(RvState, instret) == {offset_instret});
+static_assert(offsetof(RvState, reservation_addr) == {offset_reservation_addr});
+static_assert(offsetof(RvState, has_exited) == {offset_has_exited});
+static_assert(offsetof(RvState, brk) == {offset_brk});
 
 "#,
         offset_memory = offset_memory,

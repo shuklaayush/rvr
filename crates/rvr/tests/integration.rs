@@ -112,7 +112,7 @@ fn test_emit_c_code() {
     // Read and verify header content
     let header = std::fs::read_to_string(temp_dir.join("rv64.h")).expect("Failed to read header");
     assert!(
-        header.contains("#define XLEN 64"),
+        header.contains("constexpr int XLEN = 64"),
         "XLEN not set correctly in header"
     );
     assert!(

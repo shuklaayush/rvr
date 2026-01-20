@@ -155,7 +155,7 @@ fn gen_segment_data(index: usize, seg: &MemorySegment) -> String {
 
 fn gen_memory_functions(_cfg: &MemoryConfig) -> String {
     r#"/* Guard size (>= page size and max load/store offset +/-2048) */
-#define GUARD_SIZE (1 << 14)
+constexpr size_t GUARD_SIZE = 1 << 14;
 
 void rv_init_memory(RvState* state) {
     size_t total_size = RV_MEMORY_SIZE + 2 * GUARD_SIZE;
