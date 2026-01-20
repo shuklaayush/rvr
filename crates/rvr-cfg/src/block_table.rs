@@ -104,7 +104,7 @@ impl<X: Xlen> BlockTable<X> {
 
     /// Build linear blocks (one instruction per block).
     fn build_linear_blocks(&mut self) {
-        let _base = self.instruction_table.base_address();
+        let base = self.instruction_table.base_address();
         let end = self.instruction_table.end_address();
         let mut pc = base;
 
