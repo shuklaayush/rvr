@@ -462,7 +462,11 @@ impl<X: Xlen> CEmitter<X> {
             }
             Space::Csr => {
                 let csr = X::to_u64(expr.imm) as u16;
-                format!("rd_csr(state, 0x{:x})", csr)
+                if self.config.instret_mode.counts() {
+                    format!("rd_csr(state, instret, 0x{:x})", csr)
+                } else {
+                    format!("rd_csr(state, 0x{:x})", csr)
+                }
             }
             Space::Pc => "state->pc".to_string(),
             Space::Cycle => "state->cycle".to_string(),
@@ -496,7 +500,8 @@ impl<X: Xlen> CEmitter<X> {
                         }
                     }
                     Space::Mem => {
-                        let base = self.render_expr(addr);
+                        let base = self.render_expr(addr.left.as_ref().unwrap());
+                        let offset = addr.mem_offset;
                         let store_fn = match width {
                             1 => "wr_mem_u8",
                             2 => "wr_mem_u16",
@@ -504,7 +509,7 @@ impl<X: Xlen> CEmitter<X> {
                             8 => "wr_mem_u64",
                             _ => "wr_mem_u32",
                         };
-                        self.writeln(indent, &format!("{}(memory, {}, {});", store_fn, base, value_str));
+                        self.writeln(indent, &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value_str));
                     }
                     Space::Csr => {
                         let csr = X::to_u64(addr.imm) as u16;

@@ -87,10 +87,10 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     while addr < cfg.pc_end {
         if cfg.valid_addresses.contains(&addr) {
             // Block start - point to its own function
-            writeln!(s, "    B_{:08x},", addr).unwrap();
+            writeln!(s, "    B_{:016x},", addr).unwrap();
         } else if let Some(&merged) = cfg.absorbed_to_merged.get(&addr) {
             // Absorbed block - point to merged block's function
-            writeln!(s, "    B_{:08x},", merged).unwrap();
+            writeln!(s, "    B_{:016x},", merged).unwrap();
         } else {
             s.push_str("    rv_trap,\n");
         }
@@ -181,8 +181,8 @@ mod tests {
         let dispatch = gen_dispatch_file::<Rv64>(&dispatch_cfg);
 
         assert!(dispatch.contains("dispatch_table"));
-        assert!(dispatch.contains("B_80000000"));
-        assert!(dispatch.contains("B_80000004"));
+        assert!(dispatch.contains("B_0000000080000000"));
+        assert!(dispatch.contains("B_0000000080000004"));
         assert!(dispatch.contains("rv_trap"));
         assert!(dispatch.contains("rv_execute_from"));
     }
@@ -208,7 +208,7 @@ mod tests {
 
         let dispatch = gen_dispatch_file::<Rv64>(&dispatch_cfg);
 
-        // Address 0x80000002 should point to B_80000000
-        assert!(dispatch.contains("B_80000000,\n    B_80000000,"));
+        // Address 0x80000002 should point to B_0000000080000000
+        assert!(dispatch.contains("B_0000000080000000,\n    B_0000000080000000,"));
     }
 }

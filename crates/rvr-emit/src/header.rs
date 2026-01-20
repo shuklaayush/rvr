@@ -126,6 +126,7 @@ fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         r#"#pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -647,7 +648,7 @@ fn gen_block_declarations<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     for &addr in &cfg.block_addresses {
         writeln!(
             decls,
-            "__attribute__((preserve_none)) void B_{:08x}({});",
+            "__attribute__((preserve_none)) void B_{:016x}({});",
             addr, cfg.sig.params
         ).unwrap();
     }
@@ -701,8 +702,8 @@ mod tests {
         let header_cfg = HeaderConfig::new("test", &config, vec![0x80000000, 0x80000004]);
         let blocks = gen_blocks_header::<Rv64>(&header_cfg);
 
-        assert!(blocks.contains("B_80000000"));
-        assert!(blocks.contains("B_80000004"));
+        assert!(blocks.contains("B_0000000080000000"));
+        assert!(blocks.contains("B_0000000080000004"));
         assert!(blocks.contains("rv_trap"));
     }
 }
