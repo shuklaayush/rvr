@@ -1,6 +1,6 @@
 //! Basic compilation example.
 //!
-//! Demonstrates the simplest usage of rvr: compiling a RISC-V ELF to a shared library.
+//! Demonstrates compiling a RISC-V ELF and running it via the built-in runner.
 //!
 //! # Usage
 //!
@@ -16,6 +16,7 @@
 //! - `{name}_memory.c` - Memory initialization
 //! - `Makefile` - Build system
 //! - `lib{name}.so` - Compiled shared library (after make)
+//! - Run output from the shared library
 
 use std::path::PathBuf;
 
@@ -31,7 +32,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compile with auto-detected XLEN (RV32 or RV64)
     let lib_path = rvr::compile(&elf_path, &output_dir)?;
-
     println!("Compiled to: {}", lib_path.display());
+
+    // Run the compiled program
+    let runner = rvr::Runner::load(&output_dir)?;
+    let result = runner.run()?;
+    println!("Exit code: {}", result.exit_code);
+    println!("Instructions: {}", result.instret);
+    println!("Time: {:.6}s", result.time_secs);
+    println!("Speed: {:.2} MIPS", result.mips);
     Ok(())
 }

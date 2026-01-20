@@ -4,7 +4,7 @@
 //! - Hot registers (passed as function arguments for speed)
 //! - Instruction retirement counting
 //! - Address bounds checking
-//! - HTIF support for riscv-tests
+//! - Linux syscall handling for user-space workloads
 //!
 //! # Hot Registers
 //!
@@ -25,7 +25,10 @@
 
 use std::path::PathBuf;
 
-use rvr::{CompileOptions, EmitConfig, InstretMode, Recompiler, Rv64};
+use std::process::Command;
+
+use rvr::{EmitConfig, InstretMode, Pipeline, Rv64};
+use rvr_isa::{syscalls::LinuxHandler, syscalls::SyscallAbi, ExtensionRegistry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
@@ -37,17 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elf_path = PathBuf::from(&args[1]);
     let output_dir = PathBuf::from(&args[2]);
 
-    // Method 1: Using CompileOptions (simple, auto-detects XLEN)
-    let options = CompileOptions::new()
-        .with_instret_mode(InstretMode::Count) // Count retired instructions
-        .with_addr_check(true) // Enable bounds checking
-        .with_tohost(true) // Enable HTIF for riscv-tests
-        .with_jobs(0); // Auto-detect parallelism
-
-    let lib_path = rvr::compile_with_options(&elf_path, &output_dir, options)?;
-    println!("Method 1 - Compiled to: {}", lib_path.display());
-
-    // Method 2: Using Recompiler directly (more control, explicit XLEN)
+    // Explicit RV64 configuration (use RV32 for rv32 binaries)
     let mut config = EmitConfig::<Rv64>::default();
 
     // Configure hot registers - these become function parameters
@@ -63,12 +56,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Enable address bounds checking (slower but safer)
     config.addr_check = true;
 
-    // Enable HTIF support for riscv-tests
-    config.tohost_enabled = true;
+    // Linux syscall handling for user-space workloads
+    let registry = ExtensionRegistry::<Rv64>::standard()
+        .with_syscall_handler(LinuxHandler::new(SyscallAbi::Standard));
 
-    let recompiler = Recompiler::new(config);
-    let lib_path = recompiler.compile(&elf_path, &output_dir, 0)?;
-    println!("Method 2 - Compiled to: {}", lib_path.display());
+    // Load ELF and build pipeline with custom registry.
+    let data = std::fs::read(&elf_path)?;
+    let image = rvr::ElfImage::<Rv64>::parse(&data)?;
+    let mut pipeline = Pipeline::with_registry(image, config, registry);
+
+    pipeline.build_cfg()?;
+    pipeline.lift_to_ir()?;
+
+    std::fs::create_dir_all(&output_dir)?;
+    let base_name = output_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("rv");
+    pipeline.emit_c(&output_dir, base_name)?;
+
+    let status = Command::new("make")
+        .arg("-C")
+        .arg(&output_dir)
+        .arg("shared")
+        .status()?;
+    if !status.success() {
+        return Err("make failed".into());
+    }
+
+    println!("Compiled to: {}", output_dir.display());
+
+    let runner = rvr::Runner::load(&output_dir)?;
+    let result = runner.run()?;
+    result.print_mojo_format();
 
     Ok(())
 }
