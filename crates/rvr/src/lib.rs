@@ -48,6 +48,10 @@ pub enum Error {
     CompilationFailed(String),
     #[error("No program loaded")]
     NoProgramLoaded,
+    #[error("No code segment containing entry point 0x{0:x}")]
+    NoCodeSegment(u64),
+    #[error("CFG not built: call build_cfg before {0}")]
+    CfgNotBuilt(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -106,10 +110,10 @@ impl<X: Xlen> Recompiler<X> {
         let mut pipeline = Pipeline::<X>::new(image, self.config.clone());
 
         // Build CFG (InstructionTable → BlockTable → optimizations)
-        pipeline.build_cfg();
+        pipeline.build_cfg()?;
 
         // Lift to IR
-        pipeline.lift_to_ir();
+        pipeline.lift_to_ir()?;
 
         // Emit C code
         let base_name = output_dir.file_name()

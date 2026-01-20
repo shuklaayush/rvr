@@ -9,7 +9,7 @@ use rvr_emit::{CProject, EmitConfig, MemorySegment};
 use rvr_ir::BlockIR;
 use rvr_isa::{ExtensionRegistry, Xlen};
 
-use crate::Result;
+use crate::{Error, Result};
 
 /// Recompilation pipeline.
 pub struct Pipeline<X: Xlen> {
@@ -78,11 +78,15 @@ impl<X: Xlen> Pipeline<X> {
     }
 
     /// Build CFG: creates InstructionTable → BlockTable with optimizations.
-    pub fn build_cfg(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::NoCodeSegment` if the entry point is not within any memory segment.
+    pub fn build_cfg(&mut self) -> Result<()> {
         // Find the code segment containing entry point
         let entry_pc = X::to_u64(self.image.entry_point);
         let (code_start, _code_end, code_data) = self.find_code_segment(entry_pc)
-            .expect("No code segment containing entry point");
+            .ok_or(Error::NoCodeSegment(entry_pc))?;
 
         // Create InstructionTable from code segment
         let mut instr_table = InstructionTable::from_bytes(
@@ -108,6 +112,7 @@ impl<X: Xlen> Pipeline<X> {
         block_table.optimize(&self.registry);
 
         self.block_table = Some(block_table);
+        Ok(())
     }
 
     /// Find code segment containing the given PC.
@@ -123,9 +128,13 @@ impl<X: Xlen> Pipeline<X> {
     }
 
     /// Lift all blocks to IR using BlockTable.
-    pub fn lift_to_ir(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
+    pub fn lift_to_ir(&mut self) -> Result<()> {
         let block_table = self.block_table.as_ref()
-            .expect("build_cfg must be called before lift_to_ir");
+            .ok_or(Error::CfgNotBuilt("lift_to_ir"))?;
 
         // Collect block info first to avoid borrow issues
         let blocks_info: Vec<_> = block_table.iter()
@@ -147,6 +156,8 @@ impl<X: Xlen> Pipeline<X> {
         for &addr in self.ir_blocks.keys() {
             self.config.valid_addresses.insert(addr);
         }
+
+        Ok(())
     }
 
     /// Lift a single block with continuations (absorbed blocks).
@@ -226,9 +237,14 @@ impl<X: Xlen> Pipeline<X> {
     }
 
     /// Emit C code to output directory using CProject.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
+    /// Returns `Error::Io` if file writing fails.
     pub fn emit_c(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
         let block_table = self.block_table.as_ref()
-            .expect("build_cfg must be called before emit_c");
+            .ok_or(Error::CfgNotBuilt("emit_c"))?;
 
         // Set entry point in config
         self.config.entry_point = self.image.entry_point;

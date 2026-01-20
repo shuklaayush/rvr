@@ -26,14 +26,14 @@ fn test_lift_rv64ui_add() {
     let mut pipeline = Pipeline::<Rv64>::new(image, config);
 
     // Build CFG (InstructionTable → BlockTable → optimizations)
-    pipeline.build_cfg();
-    let block_table = pipeline.block_table().expect("CFG build failed");
+    pipeline.build_cfg().expect("CFG build failed");
+    let block_table = pipeline.block_table().expect("Block table not built");
 
     // Verify we found some basic blocks
     assert!(!block_table.blocks.is_empty(), "No basic blocks found");
 
     // Lift to IR
-    pipeline.lift_to_ir();
+    pipeline.lift_to_ir().expect("Lift failed");
     assert!(!pipeline.ir_blocks().is_empty(), "No IR blocks generated");
 
     // Get stats
@@ -58,8 +58,8 @@ fn test_lift_rv64ui_addi() {
     let config = EmitConfig::default();
     let mut pipeline = Pipeline::<Rv64>::new(image, config);
 
-    pipeline.build_cfg();
-    pipeline.lift_to_ir();
+    pipeline.build_cfg().expect("CFG build failed");
+    pipeline.lift_to_ir().expect("Lift failed");
 
     let stats = pipeline.stats();
     assert!(stats.num_blocks > 0, "No blocks generated");
@@ -85,8 +85,8 @@ fn test_emit_c_code() {
     let config = EmitConfig::default();
     let mut pipeline = Pipeline::<Rv64>::new(image, config);
 
-    pipeline.build_cfg();
-    pipeline.lift_to_ir();
+    pipeline.build_cfg().expect("CFG build failed");
+    pipeline.lift_to_ir().expect("Lift failed");
     pipeline.emit_c(&temp_dir, "rv64").expect("Failed to emit C code");
 
     // Verify generated files
