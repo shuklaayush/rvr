@@ -7,7 +7,7 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::time::Instant;
 
-use libloading::Library;
+use libloading::os::unix::{Library, Symbol, RTLD_NOW};
 use perf_event::events::Hardware;
 use perf_event::{Builder, Group};
 use rvr_elf::{get_elf_xlen, ElfImage};
@@ -74,7 +74,7 @@ unsafe fn load_symbol<T: Copy>(
     symbol: &'static [u8],
     label: &'static str,
 ) -> Result<T, RunError> {
-    let sym: libloading::Symbol<T> = lib.get(symbol).map_err(|e| {
+    let sym: Symbol<T> = lib.get(symbol).map_err(|e| {
         error!(symbol = label, "symbol not found in library");
         RunError::SymbolNotFound(label.to_string(), e)
     })?;
@@ -82,7 +82,7 @@ unsafe fn load_symbol<T: Copy>(
 }
 
 unsafe fn load_data_symbol(lib: &Library, symbol: &'static [u8]) -> Option<u32> {
-    let sym: libloading::Symbol<*const u32> = lib.get(symbol).ok()?;
+    let sym: Symbol<*const u32> = lib.get(symbol).ok()?;
     Some(**sym)
 }
 
@@ -574,8 +574,10 @@ impl Runner {
         }
 
         // Load library and API
+        // RTLD_NOW is required - RTLD_LAZY causes execution failures because
+        // PLT lazy resolution corrupts registers used by preserve_none functions.
         debug!(path = %lib_path.display(), "loading shared library");
-        let lib = unsafe { Library::new(&lib_path)? };
+        let lib = unsafe { Library::open(Some(&lib_path), RTLD_NOW)? };
         let api = unsafe { RvApi::load(&lib)? };
         let tracer_kind = TracerKind::from_raw(api.tracer_kind);
 
