@@ -10,7 +10,7 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
-use crate::config::{EmitConfig, InstretMode};
+use crate::config::{EmitConfig, InstretMode, SyscallMode};
 use crate::inputs::EmitInputs;
 use crate::signature::{reg_type, FnSignature};
 use crate::tracer::TracerConfig;
@@ -51,6 +51,8 @@ pub struct HeaderConfig<X: Xlen> {
     pub sig: FnSignature,
     /// Tracer configuration.
     pub tracer_config: TracerConfig,
+    /// Syscall mode.
+    pub syscall_mode: SyscallMode,
     _marker: std::marker::PhantomData<X>,
 }
 
@@ -73,6 +75,7 @@ impl<X: Xlen> HeaderConfig<X> {
             block_addresses,
             sig: FnSignature::new(config),
             tracer_config: config.tracer_config.clone(),
+            syscall_mode: config.syscall_mode,
             _marker: std::marker::PhantomData,
         }
     }
@@ -95,14 +98,14 @@ pub fn gen_header<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     s.push_str(&gen_csr_functions::<X>(cfg));
     s.push_str(&gen_helpers());
 
-    // Generate traced helpers - passthrough if tracing disabled, with trace calls if enabled
-    if cfg.tracer_config.is_none() {
-        s.push_str(&gen_no_trace_helpers::<X>(cfg));
-    } else {
+    // Generate traced helpers only when tracing is enabled
+    if !cfg.tracer_config.is_none() {
         s.push_str(&gen_trace_helpers::<X>(cfg));
     }
 
-    s.push_str(&gen_syscall_declarations::<X>());
+    if cfg.syscall_mode == SyscallMode::Linux {
+        s.push_str(&gen_syscall_declarations::<X>());
+    }
     s.push_str(&gen_fn_type(cfg));
     s.push_str(&gen_dispatch::<X>(cfg));
 
@@ -220,8 +223,7 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let instret_align_offset = offset_pad0 + 4;
     let instret_padding = (8 - (instret_align_offset % 8)) % 8;
     let offset_instret = instret_align_offset + instret_padding;
-    let offset_target_instret = offset_instret + 8; // 8 bytes for instret
-    let offset_reservation_addr = offset_target_instret + 8; // 8 bytes for target_instret
+    let offset_reservation_addr = offset_instret + 8; // 8 bytes for instret (no target_instret when suspender=())
     let offset_reservation_valid = offset_reservation_addr + reg_bytes;
     let offset_has_exited = offset_reservation_valid + 1;
     let offset_exit_code = offset_has_exited + 1;
@@ -254,7 +256,6 @@ typedef struct RvState {{
     {rtype} pc;                         /* offset {offset_pc} */
     uint32_t _pad0;                     /* offset {offset_pad0} */
     uint64_t instret;                   /* offset {offset_instret} */
-    uint64_t target_instret;            /* suspend when instret >= target */
 
     /* Reservation for LR/SC */
     {rtype} reservation_addr;           /* offset {offset_reservation_addr} */
@@ -635,48 +636,6 @@ static inline uint32_t rv_unzip32(uint32_t x) {
     .to_string()
 }
 
-fn gen_no_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
-    let rtype = reg_type::<X>();
-    let addr_type = reg_type::<X>();
-    let instret_param = if cfg.instret_mode.counts() {
-        ", uint64_t instret"
-    } else {
-        ""
-    };
-    let instret_arg = if cfg.instret_mode.counts() {
-        ", instret"
-    } else {
-        ""
-    };
-
-    format!(
-        r#"/* Traced helpers (passthrough when tracing disabled) */
-__attribute__((always_inline)) static inline uint32_t trd_mem_u8(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u8(m, b, o); }}
-__attribute__((always_inline)) static inline int32_t trd_mem_i8(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_i8(m, b, o); }}
-__attribute__((always_inline)) static inline uint32_t trd_mem_u16(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u16(m, b, o); }}
-__attribute__((always_inline)) static inline int32_t trd_mem_i16(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_i16(m, b, o); }}
-__attribute__((always_inline)) static inline uint32_t trd_mem_u32(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u32(m, b, o); }}
-__attribute__((always_inline)) static inline int64_t trd_mem_i32(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_i32(m, b, o); }}
-__attribute__((always_inline)) static inline uint64_t trd_mem_u64(uint8_t* m, {addr_type} b, int16_t o) {{ return rd_mem_u64(m, b, o); }}
-__attribute__((always_inline)) static inline void twr_mem_u8(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u8(m, b, o, v); }}
-__attribute__((always_inline)) static inline void twr_mem_u16(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u16(m, b, o, v); }}
-__attribute__((always_inline)) static inline void twr_mem_u32(uint8_t* m, {addr_type} b, int16_t o, uint32_t v) {{ wr_mem_u32(m, b, o, v); }}
-__attribute__((always_inline)) static inline void twr_mem_u64(uint8_t* m, {addr_type} b, int16_t o, uint64_t v) {{ wr_mem_u64(m, b, o, v); }}
-__attribute__((always_inline)) static inline {rtype} trd_regval(uint32_t r, {rtype} v) {{ (void)r; return v; }}
-__attribute__((always_inline)) static inline {rtype} twr_regval(uint32_t r, {rtype} v) {{ (void)r; return v; }}
-__attribute__((always_inline)) static inline {rtype} trd_reg(RvState* s, uint32_t r) {{ return s->regs[r]; }}
-__attribute__((always_inline)) static inline void twr_reg(RvState* s, uint32_t r, {rtype} v) {{ s->regs[r] = v; }}
-__attribute__((always_inline)) static inline uint32_t trd_csr(RvState* s{instret_param}, uint32_t c) {{ return rd_csr(s{instret_arg}, c); }}
-__attribute__((always_inline)) static inline void twr_csr(RvState* s, uint32_t c, uint32_t v) {{ wr_csr(s, c, v); }}
-
-"#,
-        addr_type = addr_type,
-        rtype = rtype,
-        instret_param = instret_param,
-        instret_arg = instret_arg,
-    )
-}
-
 /// Generate traced helpers that call trace functions when tracing is enabled.
 fn gen_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let rtype = reg_type::<X>();
@@ -875,7 +834,7 @@ fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 
     format!(
         r#"/* Dispatch: (pc & MASK) >> 1 */
-static inline size_t dispatch_index({rtype} pc) {{
+static inline uint64_t dispatch_index({rtype} pc) {{
     return (pc & {mask:#x}) >> 1;
 }}
 
