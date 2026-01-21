@@ -130,9 +130,12 @@ run_variant_perf() {
     local output
     output=$("$SCRIPT_DIR/perf-run.sh" $RVR run "$lib_dir" --format mojo --runs "$RUNS" 2>&1)
 
-    local instret=$(echo "$output" | grep "^instret:" | awk '{print $2}')
-    local time=$(echo "$output" | grep "^time:" | awk '{print $2}' | sed 's/s$//')
-    local mips=$(echo "$output" | grep "^speed:" | awk '{print $2}')
+    # Guest metrics (from rvr output - first occurrence)
+    local instret=$(echo "$output" | grep "^instret:" | head -1 | awk '{print $2}')
+    local time=$(echo "$output" | grep "^time:" | head -1 | awk '{print $2}')
+    local mips=$(echo "$output" | grep "^speed:" | head -1 | awk '{print $2}')
+
+    # Host metrics (from perf output)
     local cycles_line=$(echo "$output" | grep "^cycles:")
     local ipc="-"
     if [[ -n "$cycles_line" ]]; then
@@ -169,6 +172,12 @@ fmt_num() {
     fi
 }
 
+# Format percentage with % suffix, "-" stays as "-"
+fmt_pct() { [[ "$1" == "-" || -z "$1" ]] && echo "-" || echo "${1}%"; }
+
+# Format MIPS with suffix
+fmt_mips() { [[ "$1" == "-" || -z "$1" ]] && echo "-" || echo "${1} MIPS"; }
+
 # Check if reth-validator ELF exists for an arch
 check_elf() {
     local arch=$1
@@ -186,7 +195,7 @@ bench_arch() {
     local elf="$PROJECT_DIR/bin/reth/$arch/reth-validator"
 
     if ! check_elf "$arch"; then
-        echo "| $arch | - | - | - | - | - |"
+        printf "| %-6s | %10s | %10s | %12s | %5s | %11s |\n" "$arch" "-" "-" "-" "-" "-"
         return
     fi
 
@@ -201,7 +210,7 @@ bench_arch() {
     compile_variant "$elf" "$out_dir"
 
     if [[ ! -d "$out_dir" ]]; then
-        echo "| $arch | - | - | - | - | - |"
+        printf "| %-6s | %10s | %10s | %12s | %5s | %11s |\n" "$arch" "-" "-" "-" "-" "-"
         return
     fi
 
@@ -211,8 +220,10 @@ bench_arch() {
 
     # Format for table
     local instret_fmt=$(fmt_num "$instret")
+    local mips_fmt=$(fmt_mips "$mips")
+    local branch_fmt=$(fmt_pct "$branch_miss")
 
-    echo "| $arch | $instret_fmt | ${time}s | $mips MIPS | $ipc | ${branch_miss}% |"
+    printf "| %-6s | %10s | %10ss | %12s | %5s | %11s |\n" "$arch" "$instret_fmt" "$time" "$mips_fmt" "$ipc" "$branch_fmt"
 }
 
 # Print markdown table header
@@ -223,10 +234,10 @@ print_header() {
     local mode="Base"
     $TRACE && mode="Trace"
     $FAST && mode="Fast (no instret)"
-    echo "Mode: **$mode** | Runs: **$RUNS**"
+    echo "*Mode: **$mode** | Runs: **$RUNS***"
     echo ""
-    echo "| Arch | Instret | Time | Speed | IPC | Branch Miss |"
-    echo "|------|---------|------|-------|-----|-------------|"
+    printf "| %-6s | %10s | %10s | %12s | %5s | %11s |\n" "Arch" "Instret" "Time" "Speed" "IPC" "Branch Miss"
+    printf "|%s|%s|%s|%s|%s|%s|\n" "--------" "------------" "------------" "--------------" "-------" "-------------"
 }
 
 # Main

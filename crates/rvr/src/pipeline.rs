@@ -8,6 +8,7 @@ use rvr_elf::ElfImage;
 use rvr_emit::{CProject, EmitConfig, EmitInputs, MemorySegment, NUM_REGS_E, NUM_REGS_I};
 use rvr_ir::BlockIR;
 use rvr_isa::{ExtensionRegistry, Xlen};
+use tracing::{debug, info, info_span};
 
 use crate::{Error, Result};
 
@@ -100,6 +101,8 @@ impl<X: Xlen> Pipeline<X> {
     /// Returns `Error::NoCodeSegment` if there are no executable segments or
     /// the entry point is not within any executable segment.
     pub fn build_cfg(&mut self) -> Result<()> {
+        let _span = info_span!("build_cfg").entered();
+
         let entry_pc = X::to_u64(self.image.entry_point);
 
         // Collect all executable segments
@@ -136,6 +139,8 @@ impl<X: Xlen> Pipeline<X> {
             .max()
             .unwrap();
 
+        debug!(base_address = format!("{:#x}", base_address), end_address = format!("{:#x}", end_address), "address range");
+
         // Create InstructionTable spanning all executable segments
         let mut instr_table = InstructionTable::new(base_address, end_address, entry_pc);
 
@@ -154,11 +159,38 @@ impl<X: Xlen> Pipeline<X> {
             }
         }
 
+        let num_instructions = instr_table.valid_indices().count();
+
         // Create BlockTable with CFG analysis
         let mut block_table = BlockTable::from_instruction_table(instr_table, &self.registry);
+        let blocks_before = block_table.len();
 
         // Apply block transforms (merge, tail-dup, superblock)
-        block_table.optimize(&self.registry);
+        let (absorbed, tail_duplicated, superblocked) = block_table.optimize(&self.registry);
+
+        let num_blocks = block_table.len();
+        let insns_per_block = if num_blocks > 0 {
+            num_instructions as f64 / num_blocks as f64
+        } else {
+            0.0
+        };
+
+        info!(
+            instructions = num_instructions,
+            blocks = num_blocks,
+            insns_per_block = format!("{:.1}", insns_per_block),
+            "built CFG"
+        );
+
+        if absorbed > 0 || tail_duplicated > 0 || superblocked > 0 {
+            info!(
+                before = blocks_before,
+                absorbed = absorbed,
+                tail_duplicated = tail_duplicated,
+                superblocked = superblocked,
+                "block transforms"
+            );
+        }
 
         self.block_table = Some(block_table);
         Ok(())
@@ -170,6 +202,8 @@ impl<X: Xlen> Pipeline<X> {
     ///
     /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
     pub fn lift_to_ir(&mut self) -> Result<()> {
+        let _span = info_span!("lift_to_ir").entered();
+
         let block_table = self
             .block_table
             .as_ref()
@@ -186,6 +220,8 @@ impl<X: Xlen> Pipeline<X> {
                 self.ir_blocks.insert(start, block_ir);
             }
         }
+
+        debug!(blocks = self.ir_blocks.len(), "lifted to IR");
 
         Ok(())
     }
@@ -267,6 +303,8 @@ impl<X: Xlen> Pipeline<X> {
     /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
     /// Returns `Error::Io` if file writing fails.
     pub fn emit_c(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
+        let _span = info_span!("emit_c").entered();
+
         let block_table = self
             .block_table
             .as_ref()

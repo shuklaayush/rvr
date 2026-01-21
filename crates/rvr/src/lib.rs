@@ -209,6 +209,8 @@ pub use pipeline::{Pipeline, PipelineStats};
 mod runner;
 pub use runner::{RunError, RunResult, Runner};
 
+pub mod bench;
+
 use std::marker::PhantomData;
 use std::path::Path;
 
@@ -252,6 +254,7 @@ pub struct Recompiler<X: Xlen> {
     config: EmitConfig<X>,
     syscall_mode: SyscallMode,
     compiler: Option<String>,
+    quiet: bool,
     _marker: PhantomData<X>,
 }
 
@@ -262,6 +265,7 @@ impl<X: Xlen> Recompiler<X> {
             config,
             syscall_mode: SyscallMode::BareMetal,
             compiler: None,
+            quiet: false,
             _marker: PhantomData,
         }
     }
@@ -283,6 +287,12 @@ impl<X: Xlen> Recompiler<X> {
         self
     }
 
+    /// Suppress compilation output.
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
     /// Get the configuration.
     pub fn config(&self) -> &EmitConfig<X> {
         &self.config
@@ -301,7 +311,7 @@ impl<X: Xlen> Recompiler<X> {
         let _c_path = self.lift(elf_path, output_dir)?;
 
         // Then compile C to .so
-        compile_c_to_shared(output_dir, jobs, self.compiler.as_deref())?;
+        compile_c_to_shared(output_dir, jobs, self.compiler.as_deref(), self.quiet)?;
 
         // Return the path to the shared library
         let lib_name = output_dir
@@ -371,6 +381,8 @@ pub struct CompileOptions {
     pub syscall_mode: SyscallMode,
     /// Optional C compiler override (e.g. "clang").
     pub compiler: Option<String>,
+    /// Suppress compilation output (make commands, etc).
+    pub quiet: bool,
 }
 
 impl CompileOptions {
@@ -421,6 +433,12 @@ impl CompileOptions {
         self
     }
 
+    /// Suppress compilation output.
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
@@ -449,8 +467,9 @@ pub fn compile_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let mut recompiler =
-                Recompiler::<Rv32>::new(config).with_syscall_mode(options.syscall_mode);
+            let mut recompiler = Recompiler::<Rv32>::new(config)
+                .with_syscall_mode(options.syscall_mode)
+                .with_quiet(options.quiet);
             if let Some(compiler) = &options.compiler {
                 recompiler = recompiler.with_compiler(compiler.clone());
             }
@@ -459,8 +478,9 @@ pub fn compile_with_options(
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let mut recompiler =
-                Recompiler::<Rv64>::new(config).with_syscall_mode(options.syscall_mode);
+            let mut recompiler = Recompiler::<Rv64>::new(config)
+                .with_syscall_mode(options.syscall_mode)
+                .with_quiet(options.quiet);
             if let Some(compiler) = &options.compiler {
                 recompiler = recompiler.with_compiler(compiler.clone());
             }
@@ -526,8 +546,13 @@ fn dispatch_by_xlen<R>(
 /// Compile C source to shared library.
 ///
 /// If `jobs` is 0, auto-detects based on CPU count.
-fn compile_c_to_shared(output_dir: &Path, jobs: usize, compiler: Option<&str>) -> Result<()> {
-    use std::process::Command;
+fn compile_c_to_shared(
+    output_dir: &Path,
+    jobs: usize,
+    compiler: Option<&str>,
+    quiet: bool,
+) -> Result<()> {
+    use std::process::{Command, Stdio};
 
     let makefile_path = output_dir.join("Makefile");
     if !makefile_path.exists() {
@@ -548,8 +573,13 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, compiler: Option<&str>) -
     if let Some(cc) = compiler {
         cmd.arg(format!("CC={}", cc));
     }
+    cmd.arg("shared");
+
+    if quiet {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
     let status = cmd
-        .arg("shared")
         .status()
         .map_err(|e| Error::CompilationFailed(format!("Failed to run make: {}", e)))?;
 

@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use tracing::debug;
+
 use rvr_isa::{
     DecodedInstr, InstrArgs, Xlen, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT,
     OP_BLTU, OP_BNE, OP_C_ADD, OP_C_ADDI, OP_C_ADDI16SP, OP_C_ADDI4SPN, OP_C_BEQZ, OP_C_BNEZ,
@@ -428,6 +430,13 @@ impl ControlFlowAnalyzer {
             &function_entries,
             &internal_targets,
             &return_sites,
+        );
+
+        debug!(
+            functions = function_entries.len(),
+            leaders = leaders.len(),
+            unresolved = unresolved_dynamic_jumps.len(),
+            "CFG analysis complete"
         );
 
         let mut block_to_function = HashMap::new();

@@ -3,8 +3,11 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use rvr::bench::{self, Arch, TableRow};
 use rvr::{CompileOptions, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "rvr")]
@@ -194,6 +197,37 @@ enum Commands {
         #[arg(long, default_value = "1")]
         runs: usize,
     },
+    /// Run benchmarks
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum BenchCommands {
+    /// Benchmark reth-validator across architectures
+    Reth {
+        /// Architectures to benchmark (comma-separated: rv32i,rv32e,rv64i,rv64e)
+        #[arg(short, long, default_value = "rv32i,rv32e,rv64i,rv64e")]
+        arch: String,
+
+        /// Number of runs for averaging
+        #[arg(short, long, default_value = "3")]
+        runs: usize,
+
+        /// Enable tracing
+        #[arg(short, long)]
+        trace: bool,
+
+        /// Fast mode (no instret counting)
+        #[arg(short, long)]
+        fast: bool,
+
+        /// Skip compilation (use existing .so)
+        #[arg(short, long)]
+        no_compile: bool,
+    },
 }
 
 fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
@@ -300,6 +334,12 @@ fn exit_if_failed(code: u8) {
 }
 
 fn main() {
+    // Initialize tracing with env filter (RUST_LOG=debug for debug output)
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("rvr=info".parse().unwrap()))
+        .with_target(false)
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -314,7 +354,7 @@ fn main() {
             cc,
             tracer,
         } => {
-            println!("Compiling {} to {}", input.display(), output.display());
+            info!(input = %input.display(), output = %output.display(), "compiling");
             let tracer_config = match build_tracer_config(&tracer) {
                 Ok(config) => config,
                 Err(err) => {
@@ -335,7 +375,7 @@ fn main() {
                 options
             };
             match rvr::compile_with_options(&input, &output, options) {
-                Ok(path) => println!("Output: {}", path.display()),
+                Ok(path) => info!(output = %path.display(), "done"),
                 Err(e) => {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
@@ -351,7 +391,7 @@ fn main() {
             syscalls,
             tracer,
         } => {
-            println!("Lifting {} to {}", input.display(), output.display());
+            info!(input = %input.display(), output = %output.display(), "lifting");
             let tracer_config = match build_tracer_config(&tracer) {
                 Ok(config) => config,
                 Err(err) => {
@@ -366,7 +406,7 @@ fn main() {
                 .with_syscall_mode(syscalls.into())
                 .with_tracer_config(tracer_config);
             match rvr::lift_to_c_with_options(&input, &output, options) {
-                Ok(path) => println!("Output: {}", path.display()),
+                Ok(path) => info!(output = %path.display(), "done"),
                 Err(e) => {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
@@ -416,5 +456,109 @@ fn main() {
                 }
             }
         }
+        Commands::Bench { command } => match command {
+            BenchCommands::Reth {
+                arch,
+                runs,
+                trace,
+                fast,
+                no_compile,
+            } => {
+                run_reth_benchmark(&arch, runs, trace, fast, no_compile);
+            }
+        },
+    }
+}
+
+fn run_reth_benchmark(arch_str: &str, runs: usize, trace: bool, fast: bool, no_compile: bool) {
+    // Parse architectures
+    let archs = match Arch::parse_list(arch_str) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Get project directory (assuming we're running from project root or rvr is installed)
+    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let bin_dir = project_dir.join("bin/reth");
+
+    // Check if perf is available
+    let use_perf = bench::perf_available();
+
+    // Collect results
+    let mut rows = Vec::new();
+
+    bench::print_table_header(trace, fast, runs);
+
+    for arch in &archs {
+        let row = run_single_arch(&project_dir, &bin_dir, *arch, runs, trace, fast, no_compile, use_perf);
+        bench::print_table_row(&row);
+        rows.push(row);
+    }
+
+    println!();
+}
+
+fn run_single_arch(
+    project_dir: &std::path::Path,
+    bin_dir: &std::path::Path,
+    arch: Arch,
+    runs: usize,
+    trace: bool,
+    fast: bool,
+    no_compile: bool,
+    use_perf: bool,
+) -> TableRow {
+    let elf_path = bin_dir.join(arch.as_str()).join("reth-validator");
+
+    // Check if ELF exists
+    if !elf_path.exists() {
+        return TableRow::error(
+            arch,
+            format!("ELF not found (run scripts/reth-build.sh {})", arch),
+        );
+    }
+
+    // Determine output directory
+    let suffix = match (trace, fast) {
+        (true, true) => "trace-fast",
+        (true, false) => "trace",
+        (false, true) => "fast",
+        (false, false) => "base",
+    };
+    let out_dir = project_dir
+        .join("target")
+        .join(arch.as_str())
+        .join(format!("reth-{}", suffix));
+
+    // Compile if needed
+    if !no_compile || !out_dir.exists() {
+        let mut options = CompileOptions::new();
+        if trace {
+            options = options.with_tracer_config(rvr_emit::TracerConfig::builtin(
+                rvr_emit::TracerKind::Stats,
+            ));
+        }
+        if fast {
+            options = options.with_instret_mode(InstretMode::Off);
+        }
+
+        if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
+            return TableRow::error(arch, format!("compile failed: {}", e));
+        }
+    }
+
+    // Run benchmark
+    let result = if use_perf {
+        bench::run_with_perf(&out_dir, runs)
+    } else {
+        bench::run_without_perf(&out_dir, runs)
+    };
+
+    match result {
+        Ok(bench_result) => TableRow::success(arch, bench_result),
+        Err(e) => TableRow::error(arch, e),
     }
 }

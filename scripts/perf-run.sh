@@ -4,23 +4,28 @@
 
 if command -v perf &> /dev/null && perf stat -e instructions true 2>/dev/null; then
     # Use perf stat for time, instruction count, cycles, and branch stats
-    output=$(perf stat -e instructions,cycles,branches,branch-misses "$@" 2>&1)
+    # Capture both perf stats (stderr) and command output (stdout) separately
+    tmpfile=$(mktemp)
+    perf stat -e instructions,cycles,branches,branch-misses "$@" 2>"$tmpfile"
     exit_code=$?
+    perf_output=$(cat "$tmpfile")
+    rm -f "$tmpfile"
 
     # Extract instructions (handles both standard Linux and Apple Silicon formats)
-    instrs=$(echo "$output" | grep -i "instructions" | head -1 | awk '{print $1}' | tr -d ',')
+    instrs=$(echo "$perf_output" | grep -i "instructions" | head -1 | awk '{print $1}' | tr -d ',')
 
     # Extract cycles
-    cycles=$(echo "$output" | grep -i "cycles" | head -1 | awk '{print $1}' | tr -d ',')
+    cycles=$(echo "$perf_output" | grep -i "cycles" | head -1 | awk '{print $1}' | tr -d ',')
 
     # Extract elapsed time (format: "0.123456789 seconds time elapsed")
-    elapsed=$(echo "$output" | grep "seconds time elapsed" | awk '{print $1}')
+    elapsed=$(echo "$perf_output" | grep "seconds time elapsed" | awk '{print $1}')
 
     # Extract branch stats
-    branches=$(echo "$output" | grep -i "branches" | grep -v "branch-misses" | head -1 | awk '{print $1}' | tr -d ',')
-    branch_misses=$(echo "$output" | grep -i "branch-misses" | head -1 | awk '{print $1}' | tr -d ',')
+    branches=$(echo "$perf_output" | grep -i "branches" | grep -v "branch-misses" | head -1 | awk '{print $1}' | tr -d ',')
+    branch_misses=$(echo "$perf_output" | grep -i "branch-misses" | head -1 | awk '{print $1}' | tr -d ',')
 
     # Format instruction count with suffix (K, M, B)
+    # Note: This is host CPU instructions, not guest RISC-V instret
     if [[ -n "$instrs" && "$instrs" =~ ^[0-9]+$ ]]; then
         if (( instrs >= 1000000000 )); then
             instrs_fmt=$(printf "%.2fB" $(echo "$instrs / 1000000000" | bc -l))
@@ -31,7 +36,7 @@ if command -v perf &> /dev/null && perf stat -e instructions true 2>/dev/null; t
         else
             instrs_fmt="$instrs"
         fi
-        echo "instret:    $instrs_fmt"
+        echo "host_instrs: $instrs_fmt"
     fi
 
     # Print cycles and IPC if available
