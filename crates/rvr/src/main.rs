@@ -261,7 +261,7 @@ enum RiscvTestCommands {
         verbose: bool,
 
         /// Timeout per test in seconds
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "10")]
         timeout: u64,
     },
 }

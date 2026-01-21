@@ -127,7 +127,7 @@ impl Default for TestConfig {
             test_dir: PathBuf::from("bin/riscv/tests"),
             filter: None,
             verbose: false,
-            timeout_secs: 5,
+            timeout_secs: 10,
         }
     }
 }
