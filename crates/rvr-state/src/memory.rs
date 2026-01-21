@@ -66,8 +66,9 @@ impl GuardedMemory {
         };
 
         // Make middle portion readable/writable
-        let memory_start =
-            unsafe { NonNull::new_unchecked((region.as_ptr() as *mut u8).add(GUARD_SIZE) as *mut c_void) };
+        let memory_start = unsafe {
+            NonNull::new_unchecked((region.as_ptr() as *mut u8).add(GUARD_SIZE) as *mut c_void)
+        };
         unsafe {
             mprotect(
                 memory_start,

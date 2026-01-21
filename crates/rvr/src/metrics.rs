@@ -461,7 +461,7 @@ mod tests {
             key: "test_gauge".to_string(),
             storage: gauges,
         };
-        metrics::GaugeFn::set(&gauge, 3.14);
-        assert_eq!(gauge.storage.values.read().get("test_gauge"), Some(&3.14));
+        metrics::GaugeFn::set(&gauge, 1.23);
+        assert_eq!(gauge.storage.values.read().get("test_gauge"), Some(&1.23));
     }
 }
