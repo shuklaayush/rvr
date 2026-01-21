@@ -733,7 +733,7 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
 
     // Run host binary first to get baseline
     let host_bin = project_dir.join("programs/reth-validator/target/release/reth-validator");
-    let host_result = bench::run_host(&host_bin).unwrap_or_default();
+    let host_result = bench::run_host(&host_bin, runs).unwrap_or_default();
     let host_time = host_result.time_secs;
 
     let suffix = get_bench_suffix(trace, fast);

@@ -7,6 +7,9 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
+use perf_event::events::Hardware;
+use perf_event::{Builder, Counter};
+
 use crate::{PerfCounters, RunResultWithPerf, Runner};
 
 /// RISC-V architecture variant.
@@ -70,6 +73,105 @@ pub struct HostResult {
     pub perf: Option<PerfCounters>,
 }
 
+/// Individual perf counters for host binary execution.
+/// Uses inherit(true) to track child processes.
+/// Note: We use individual counters instead of a group because
+/// inherit doesn't work properly with perf groups.
+struct HostPerfCounters {
+    cycles: Counter,
+    instructions: Counter,
+    branches: Counter,
+    branch_misses: Counter,
+}
+
+impl HostPerfCounters {
+    fn setup() -> Option<Self> {
+        // Use inherit(true) to track forked child processes
+        // Don't use groups since inherit doesn't work with groups
+        let cycles = Builder::new()
+            .kind(Hardware::CPU_CYCLES)
+            .inherit(true)
+            .build()
+            .ok()?;
+        let instructions = Builder::new()
+            .kind(Hardware::INSTRUCTIONS)
+            .inherit(true)
+            .build()
+            .ok()?;
+        let branches = Builder::new()
+            .kind(Hardware::BRANCH_INSTRUCTIONS)
+            .inherit(true)
+            .build()
+            .ok()?;
+        let branch_misses = Builder::new()
+            .kind(Hardware::BRANCH_MISSES)
+            .inherit(true)
+            .build()
+            .ok()?;
+
+        Some(Self {
+            cycles,
+            instructions,
+            branches,
+            branch_misses,
+        })
+    }
+
+    fn enable(&mut self) -> std::io::Result<()> {
+        self.cycles.enable()?;
+        self.instructions.enable()?;
+        self.branches.enable()?;
+        self.branch_misses.enable()?;
+        Ok(())
+    }
+
+    fn disable(&mut self) -> std::io::Result<()> {
+        self.cycles.disable()?;
+        self.instructions.disable()?;
+        self.branches.disable()?;
+        self.branch_misses.disable()?;
+        Ok(())
+    }
+
+    fn read(&mut self) -> PerfCounters {
+        PerfCounters {
+            cycles: self.cycles.read().ok(),
+            instructions: self.instructions.read().ok(),
+            branches: self.branches.read().ok(),
+            branch_misses: self.branch_misses.read().ok(),
+        }
+    }
+
+    /// Read counters and return delta since last snapshot.
+    /// This works around the issue that reset() doesn't properly
+    /// clear accumulated child process counts with inherit=true.
+    fn read_delta(&mut self, prev: &PerfCounters) -> PerfCounters {
+        let curr = self.read();
+        PerfCounters {
+            cycles: match (curr.cycles, prev.cycles) {
+                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
+                (Some(c), None) => Some(c),
+                _ => None,
+            },
+            instructions: match (curr.instructions, prev.instructions) {
+                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
+                (Some(c), None) => Some(c),
+                _ => None,
+            },
+            branches: match (curr.branches, prev.branches) {
+                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
+                (Some(c), None) => Some(c),
+                _ => None,
+            },
+            branch_misses: match (curr.branch_misses, prev.branch_misses) {
+                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
+                (Some(c), None) => Some(c),
+                _ => None,
+            },
+        }
+    }
+}
+
 /// Run a compiled library and return results with perf counters.
 pub fn run_bench(
     lib_dir: &Path,
@@ -91,27 +193,68 @@ pub fn run_bench(
 }
 
 /// Run host binary and time it (for baseline comparison).
-pub fn run_host(host_bin: &Path) -> Result<HostResult, String> {
+/// Collects perf counters and supports multiple runs for averaging.
+pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
     if !host_bin.exists() {
         return Err("host binary not found".to_string());
     }
 
-    let start = Instant::now();
-    let status = Command::new(host_bin)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("failed to run host: {}", e))?;
+    let runs = runs.max(1);
+    let mut perf_counters = HostPerfCounters::setup();
+    let mut total_time = 0.0;
+    let mut total_cycles = 0u64;
+    let mut total_instructions = 0u64;
+    let mut total_branches = 0u64;
+    let mut total_branch_misses = 0u64;
 
-    let elapsed = start.elapsed().as_secs_f64();
+    // Get initial snapshot for delta tracking
+    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
 
-    if !status.success() {
-        return Err(format!("host exited with code {:?}", status.code()));
+    for _ in 0..runs {
+        let start = Instant::now();
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.enable();
+        }
+
+        let status = Command::new(host_bin)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| format!("failed to run host: {}", e))?;
+
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.disable();
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+
+        if !status.success() {
+            return Err(format!("host exited with code {:?}", status.code()));
+        }
+
+        total_time += elapsed;
+
+        // Read delta since last snapshot (works around reset() issues with inherit)
+        if let Some(ref mut counters) = perf_counters {
+            let delta = counters.read_delta(&prev_snapshot);
+            total_cycles += delta.cycles.unwrap_or(0);
+            total_instructions += delta.instructions.unwrap_or(0);
+            total_branches += delta.branches.unwrap_or(0);
+            total_branch_misses += delta.branch_misses.unwrap_or(0);
+            prev_snapshot = counters.read();
+        }
     }
 
+    let avg_time = total_time / runs as f64;
+    let perf = perf_counters.map(|_| PerfCounters {
+        cycles: Some(total_cycles / runs as u64),
+        instructions: Some(total_instructions / runs as u64),
+        branches: Some(total_branches / runs as u64),
+        branch_misses: Some(total_branch_misses / runs as u64),
+    });
+
     Ok(HostResult {
-        time_secs: Some(elapsed),
-        perf: None,
+        time_secs: Some(avg_time),
+        perf,
     })
 }
 
