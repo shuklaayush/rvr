@@ -674,11 +674,15 @@ fn worklist<X: Xlen>(
     func_internal_targets: &FxHashMap<u64, FxHashSet<u64>>,
     call_return_map: &FxHashMap<u64, FxHashSet<u64>>,
 ) -> (FxHashMap<u64, FxHashSet<u64>>, FxHashSet<u64>) {
-    // Use FxHash variants for faster integer-key hashing
-    let mut states: FxHashMap<u64, RegisterState> = FxHashMap::default();
-    let mut worklist = Vec::new();
-    let mut in_worklist: FxHashSet<u64> = FxHashSet::default();
-    let mut successors: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
+    // Pre-allocate with estimated capacity to reduce rehashing
+    let estimated_size = function_entries.len() + internal_targets.len();
+    let mut states: FxHashMap<u64, RegisterState> =
+        FxHashMap::with_capacity_and_hasher(estimated_size, Default::default());
+    let mut worklist = Vec::with_capacity(estimated_size);
+    let mut in_worklist: FxHashSet<u64> =
+        FxHashSet::with_capacity_and_hasher(estimated_size, Default::default());
+    let mut successors: FxHashMap<u64, FxHashSet<u64>> =
+        FxHashMap::with_capacity_and_hasher(estimated_size, Default::default());
     let mut unresolved_dynamic_jumps: FxHashSet<u64> = FxHashSet::default();
 
     let entry = instruction_table.entry_point();
