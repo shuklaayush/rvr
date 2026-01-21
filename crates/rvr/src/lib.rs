@@ -207,16 +207,20 @@ mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
 
 mod runner;
-pub use runner::{RunError, RunResult, Runner};
+pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
 
 pub mod bench;
+pub mod metrics;
+pub mod tests;
 
 use std::marker::PhantomData;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 use rvr_isa::syscalls::{LinuxHandler, SyscallAbi};
 use rvr_isa::ExtensionRegistry;
 use thiserror::Error;
+use tracing::{debug, error, info_span, warn};
 
 /// Recompiler errors.
 #[derive(Error, Debug)]
@@ -536,10 +540,13 @@ fn dispatch_by_xlen<R>(
     match xlen {
         32 => rv32(),
         64 => rv64(),
-        _ => Err(Error::XlenMismatch {
-            expected: 32,
-            actual: xlen,
-        }),
+        _ => {
+            warn!(xlen = xlen, "unsupported XLEN (expected 32 or 64)");
+            Err(Error::XlenMismatch {
+                expected: 32,
+                actual: xlen,
+            })
+        }
     }
 }
 
@@ -552,10 +559,11 @@ fn compile_c_to_shared(
     compiler: Option<&str>,
     quiet: bool,
 ) -> Result<()> {
-    use std::process::{Command, Stdio};
+    let _span = info_span!("compile_c").entered();
 
     let makefile_path = output_dir.join("Makefile");
     if !makefile_path.exists() {
+        error!(path = %makefile_path.display(), "Makefile not found");
         return Err(Error::CompilationFailed("Makefile not found".to_string()));
     }
 
@@ -564,6 +572,14 @@ fn compile_c_to_shared(
     } else {
         jobs
     };
+
+    let cc = compiler.unwrap_or("clang");
+    debug!(
+        dir = %output_dir.display(),
+        jobs = job_count,
+        compiler = cc,
+        "running make"
+    );
 
     let mut cmd = Command::new("make");
     cmd.arg("-C")
@@ -581,9 +597,14 @@ fn compile_c_to_shared(
 
     let status = cmd
         .status()
-        .map_err(|e| Error::CompilationFailed(format!("Failed to run make: {}", e)))?;
+        .map_err(|e| {
+            error!(error = %e, "failed to run make");
+            Error::CompilationFailed(format!("Failed to run make: {}", e))
+        })?;
 
     if !status.success() {
+        let code = status.code().unwrap_or(-1);
+        error!(exit_code = code, dir = %output_dir.display(), "make failed");
         return Err(Error::CompilationFailed("make failed".to_string()));
     }
 
@@ -591,7 +612,7 @@ fn compile_c_to_shared(
 }
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use super::*;
 
     #[test]
