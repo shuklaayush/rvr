@@ -47,7 +47,10 @@ impl FromStr for Compiler {
         match s.to_lowercase().as_str() {
             "clang" => Ok(Self::Clang),
             "gcc" => Ok(Self::Gcc),
-            _ => Err(format!("unknown compiler '{}', expected 'clang' or 'gcc'", s)),
+            _ => Err(format!(
+                "unknown compiler '{}', expected 'clang' or 'gcc'",
+                s
+            )),
         }
     }
 }
@@ -147,6 +150,16 @@ impl InstretMode {
     }
 }
 
+/// Syscall handling mode for ECALL instructions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SyscallMode {
+    /// Bare-metal syscalls (exit only).
+    #[default]
+    BareMetal,
+    /// Linux-style syscalls (brk/mmap/read/write, etc).
+    Linux,
+}
+
 /// Code generation configuration.
 #[derive(Clone, Debug)]
 pub struct EmitConfig<X: Xlen> {
@@ -160,6 +173,8 @@ pub struct EmitConfig<X: Xlen> {
     pub instret_mode: InstretMode,
     /// Emit comments in generated C code.
     pub emit_comments: bool,
+    /// Emit #line directives for source-level debugging.
+    pub emit_line_info: bool,
     /// Enable tohost check (for riscv-tests).
     pub tohost_enabled: bool,
     /// Memory address bits (default 32).
@@ -168,6 +183,8 @@ pub struct EmitConfig<X: Xlen> {
     pub tracer_config: TracerConfig,
     /// C compiler to use.
     pub compiler: Compiler,
+    /// Syscall handling mode.
+    pub syscall_mode: SyscallMode,
     _marker: PhantomData<X>,
 }
 
@@ -186,10 +203,12 @@ impl<X: Xlen> EmitConfig<X> {
             addr_check: false,
             instret_mode: InstretMode::Count,
             emit_comments: true,
+            emit_line_info: false,
             tohost_enabled: false,
             memory_bits: 32,
             tracer_config: TracerConfig::none(),
             compiler: Compiler::default(),
+            syscall_mode: SyscallMode::default(),
             _marker: PhantomData,
         }
     }
@@ -286,6 +305,18 @@ impl<X: Xlen> EmitConfig<X> {
     /// Set C compiler.
     pub fn with_compiler(mut self, compiler: Compiler) -> Self {
         self.compiler = compiler;
+        self
+    }
+
+    /// Set emit_line_info (for #line directives).
+    pub fn with_line_info(mut self, enabled: bool) -> Self {
+        self.emit_line_info = enabled;
+        self
+    }
+
+    /// Set syscall mode.
+    pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
+        self.syscall_mode = mode;
         self
     }
 

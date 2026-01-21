@@ -56,7 +56,7 @@ typedef struct RvState RvState;
 /* HTIF constants (C23 constexpr) */
 constexpr uint64_t HTIF_TOHOST_ADDR   = {tohost:#x};
 constexpr uint64_t HTIF_FROMHOST_ADDR = {fromhost:#x};
-constexpr size_t   HTIF_FIELD_SIZE    = 8;  /* 64-bit fields */
+constexpr uint32_t HTIF_FIELD_SIZE    = 8;  /* 64-bit fields */
 constexpr uint64_t HTIF_SYS_WRITE     = {sys_write};
 constexpr uint64_t HTIF_STDOUT_FD     = {stdout_fd};
 

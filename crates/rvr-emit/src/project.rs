@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use rvr_ir::{BlockIR, Xlen};
 use tracing::{debug, info, trace};
 
-use crate::config::EmitConfig;
+use crate::config::{EmitConfig, SyscallMode};
 use crate::dispatch::{gen_dispatch_file, DispatchConfig};
 use crate::emitter::CEmitter;
 use crate::header::{gen_blocks_header, gen_header, HeaderConfig};
@@ -253,7 +253,7 @@ impl<X: Xlen> CProject<X> {
             let end_pc = X::to_u64(block.end_pc);
             let num_instrs = block.instructions.len();
 
-            emitter.render_block_header(start_pc, end_pc);
+            emitter.render_block_header_with_count(start_pc, end_pc, num_instrs);
             emitter.render_instret_check(start_pc);
 
             if num_instrs == 0 {
@@ -500,7 +500,9 @@ impl<X: Xlen> CProject<X> {
             .map(|i| format!("{}_part{}.c", self.base_name, i))
             .collect();
         srcs.push(format!("{}_dispatch.c", self.base_name));
-        srcs.push(format!("{}_syscalls.c", self.base_name));
+        if self.config.syscall_mode == SyscallMode::Linux {
+            srcs.push(format!("{}_syscalls.c", self.base_name));
+        }
         if !self.segments.is_empty() {
             srcs.push(format!("{}_memory.c", self.base_name));
         }
@@ -581,8 +583,10 @@ impl<X: Xlen> CProject<X> {
             self.write_htif()?;
         }
 
-        // Write syscall runtime
-        self.write_syscalls()?;
+        // Write syscall runtime (only for Linux mode)
+        if self.config.syscall_mode == SyscallMode::Linux {
+            self.write_syscalls()?;
+        }
 
         // Write tracer header if tracing enabled
         self.write_tracer_header()?;
