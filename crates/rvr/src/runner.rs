@@ -145,7 +145,7 @@ trait RunnerImpl {
 
 /// Typed runner for a specific XLEN, tracer, and register count.
 struct TypedRunner<X: Xlen, T: TracerState, const NUM_REGS: usize> {
-    state: RvState<X, T, NUM_REGS>,
+    state: RvState<X, T, (), NUM_REGS>,
     memory: GuardedMemory,
     elf_image: ElfImage<X>,
 }
@@ -199,7 +199,7 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
 
 /// Typed runner with preflight tracer (needs buffer management).
 struct PreflightRunner<X: Xlen, const NUM_REGS: usize> {
-    state: RvState<X, PreflightTracer<X>, NUM_REGS>,
+    state: RvState<X, PreflightTracer<X>, (), NUM_REGS>,
     memory: GuardedMemory,
     elf_image: ElfImage<X>,
     data_buffer: Vec<u8>,
@@ -263,7 +263,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
 
 /// Typed runner with stats tracer (needs buffer management).
 struct StatsRunner<X: Xlen, const NUM_REGS: usize> {
-    state: RvState<X, StatsTracer, NUM_REGS>,
+    state: RvState<X, StatsTracer, (), NUM_REGS>,
     memory: GuardedMemory,
     elf_image: ElfImage<X>,
     addr_bitmap: Vec<u64>,
@@ -324,7 +324,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for StatsRunner<X, NUM_REGS> {
 /// The debug tracer's FILE* handle is managed by C code (trace_init opens,
 /// trace_fini closes). Rust just provides the memory layout for the struct.
 struct DebugRunner<X: Xlen, const NUM_REGS: usize> {
-    state: RvState<X, DebugTracer, NUM_REGS>,
+    state: RvState<X, DebugTracer, (), NUM_REGS>,
     memory: GuardedMemory,
     elf_image: ElfImage<X>,
 }
@@ -409,18 +409,18 @@ fn create_rv32_runner(
         (TracerKind::Preflight, true) => Ok(Box::new(PreflightRunner::<Rv32, NUM_REGS_E>::new(
             image, memory,
         ))),
-        (TracerKind::Stats, false) => {
-            Ok(Box::new(StatsRunner::<Rv32, NUM_REGS_I>::new(image, memory)))
-        }
-        (TracerKind::Stats, true) => {
-            Ok(Box::new(StatsRunner::<Rv32, NUM_REGS_E>::new(image, memory)))
-        }
-        (TracerKind::Debug, false) => {
-            Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_I>::new(image, memory)))
-        }
-        (TracerKind::Debug, true) => {
-            Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_E>::new(image, memory)))
-        }
+        (TracerKind::Stats, false) => Ok(Box::new(StatsRunner::<Rv32, NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (TracerKind::Stats, true) => Ok(Box::new(StatsRunner::<Rv32, NUM_REGS_E>::new(
+            image, memory,
+        ))),
+        (TracerKind::Debug, false) => Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (TracerKind::Debug, true) => Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_E>::new(
+            image, memory,
+        ))),
         (_, false) => Ok(Box::new(TypedRunner::<Rv32, (), NUM_REGS_I>::new(
             image, memory,
         ))),
@@ -445,18 +445,18 @@ fn create_rv64_runner(
         (TracerKind::Preflight, true) => Ok(Box::new(PreflightRunner::<Rv64, NUM_REGS_E>::new(
             image, memory,
         ))),
-        (TracerKind::Stats, false) => {
-            Ok(Box::new(StatsRunner::<Rv64, NUM_REGS_I>::new(image, memory)))
-        }
-        (TracerKind::Stats, true) => {
-            Ok(Box::new(StatsRunner::<Rv64, NUM_REGS_E>::new(image, memory)))
-        }
-        (TracerKind::Debug, false) => {
-            Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_I>::new(image, memory)))
-        }
-        (TracerKind::Debug, true) => {
-            Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_E>::new(image, memory)))
-        }
+        (TracerKind::Stats, false) => Ok(Box::new(StatsRunner::<Rv64, NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (TracerKind::Stats, true) => Ok(Box::new(StatsRunner::<Rv64, NUM_REGS_E>::new(
+            image, memory,
+        ))),
+        (TracerKind::Debug, false) => Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (TracerKind::Debug, true) => Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_E>::new(
+            image, memory,
+        ))),
         (_, false) => Ok(Box::new(TypedRunner::<Rv64, (), NUM_REGS_I>::new(
             image, memory,
         ))),
@@ -700,7 +700,10 @@ impl Runner {
     }
 
     /// Run multiple times with hardware performance counters.
-    pub fn run_multiple_with_counters(&mut self, count: usize) -> Result<RunResultWithPerf, RunError> {
+    pub fn run_multiple_with_counters(
+        &mut self,
+        count: usize,
+    ) -> Result<RunResultWithPerf, RunError> {
         let entry_point = self.inner.entry_point();
         let mut perf_group = Self::setup_perf_group();
 
