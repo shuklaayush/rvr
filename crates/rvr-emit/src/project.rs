@@ -270,6 +270,9 @@ impl<X: Xlen> CProject<X> {
                 if is_last {
                     // Handle last instruction specially if it has taken-inline
                     if let Some((cond, hint, inline_start)) = &taken_inline {
+                        // Emit trace_pc for the branch instruction before rendering its statements
+                        emitter.emit_trace_pc_for(X::to_u64(last_instr.pc), last_instr.op);
+
                         // Render the last instruction's statements (but not terminator)
                         for stmt in &last_instr.statements {
                             emitter.render_stmt(stmt, 1);

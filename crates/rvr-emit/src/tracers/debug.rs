@@ -8,43 +8,30 @@ pub fn gen_tracer_debug<X: Xlen>() -> String {
     let rtype = reg_type::<X>();
 
     format!(
-        r#"/* Debug tracer - detects repeated PCs and logs when stuck. */
+        r#"/* Debug tracer - writes PCs to /tmp/rvr_trace.txt for comparison. */
 #pragma once
 
 #include <stdint.h>
 #include <stdio.h>
 
-#ifndef TRACER_DEBUG_REPEAT_LIMIT
-#define TRACER_DEBUG_REPEAT_LIMIT 10000ULL
-#endif
-
-#ifndef TRACER_DEBUG_SAMPLE
-#define TRACER_DEBUG_SAMPLE 1ULL
-#endif
-
-#ifndef TRACER_DEBUG_MAX_PRINT
-#define TRACER_DEBUG_MAX_PRINT 50000ULL
-#endif
-
 typedef struct Tracer {{
+    FILE* fp;
     uint64_t pcs;
-    uint64_t last_pc;
-    uint64_t repeat_count;
-    uint16_t last_op;
-    uint8_t tripped;
 }} Tracer;
 
 static inline void trace_init(Tracer* t) {{
-    (void)t;
+    if (!t) return;
+    t->fp = fopen("/tmp/rvr_trace.txt", "w");
+    t->pcs = 0;
 }}
 
 static inline void trace_fini(Tracer* t) {{
     if (!t) return;
-    fprintf(stderr,
-        "DEBUG: last pc=0x%llx op=%u (pcs=%llu)\n",
-        (unsigned long long)t->last_pc,
-        (unsigned)t->last_op,
-        (unsigned long long)t->pcs);
+    fprintf(stderr, "DEBUG: traced %llu PCs\n", (unsigned long long)t->pcs);
+    if (t->fp) {{
+        fclose(t->fp);
+        t->fp = NULL;
+    }}
 }}
 
 /* Block entry */
@@ -55,29 +42,10 @@ static inline void trace_block(Tracer* t, {rtype} pc) {{
 
 /* Instruction dispatch */
 static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
+    (void)op;
     t->pcs++;
-    uint64_t prev_pc = t->last_pc;
-    t->last_pc = (uint64_t)pc;
-    t->last_op = op;
-    if ((t->pcs % TRACER_DEBUG_SAMPLE) == 0 && t->pcs <= TRACER_DEBUG_MAX_PRINT) {{
-        fprintf(stderr,
-            "DEBUG: pc=0x%llx op=%u (pcs=%llu)\n",
-            (unsigned long long)pc,
-            (unsigned)op,
-            (unsigned long long)t->pcs);
-    }}
-    if ((uint64_t)pc == prev_pc) {{
-        t->repeat_count++;
-        if (!t->tripped && t->repeat_count >= TRACER_DEBUG_REPEAT_LIMIT) {{
-            t->tripped = 1;
-            fprintf(stderr,
-                "DEBUG: repeated pc=0x%llx op=%u (count=%llu)\n",
-                (unsigned long long)t->last_pc,
-                (unsigned)op,
-                (unsigned long long)t->repeat_count);
-        }}
-    }} else {{
-        t->repeat_count = 0;
+    if (t->fp && t->pcs <= 100000) {{
+        fprintf(t->fp, "%x\n", (unsigned)pc);
     }}
 }}
 

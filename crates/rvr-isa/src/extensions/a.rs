@@ -461,22 +461,39 @@ where
     F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
 {
     let mut stmts = Vec::new();
+
+    // Preserve address when rd == rs1 so the AMO store uses the original pointer.
     let addr = if rd == rs1 {
-        // Preserve address when rd == rs1 so the AMO store uses the original pointer.
-        // Use temp 1 to avoid conflict with JALR which uses temp 0.
         stmts.push(Stmt::write_temp(1, Expr::read(rs1)));
         Expr::temp(1)
     } else {
         Expr::read(rs1)
     };
-    // .W operations sign-extend the loaded value, .D operations don't need extension
-    let old = if signed {
+
+    // Preserve rs2 when rd == rs2 so we use the original value, not the overwritten one.
+    let src = if rd == rs2 {
+        stmts.push(Stmt::write_temp(3, Expr::read(rs2)));
+        Expr::temp(3)
+    } else {
+        Expr::read(rs2)
+    };
+
+    // Read old value from memory ONCE and save to temp 2.
+    // .W operations sign-extend the loaded value, .D operations don't need extension.
+    let mem_read = if signed {
         Expr::mem_s(addr.clone(), width)
     } else {
         Expr::mem_u(addr.clone(), width)
     };
-    let new = op(old.clone(), Expr::read(rs2));
+    stmts.push(Stmt::write_temp(2, mem_read));
+    let old = Expr::temp(2);
+
+    // Compute new value using the saved old value and preserved rs2.
+    let new = op(old.clone(), src);
     stmts.push(Stmt::write_reg(rd, old));
     stmts.push(Stmt::write_mem(addr, new, width));
+
+    // Clear reservation on any AMO (per RISC-V spec).
+    stmts.push(Stmt::write_res_valid(Expr::imm(X::from_u64(0))));
     (stmts, Terminator::Fall { target: None })
 }

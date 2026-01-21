@@ -1125,6 +1125,14 @@ impl<X: Xlen> CEmitter<X> {
         }
     }
 
+    /// Render trace_pc call for a specific instruction (used for taken-inline branches).
+    pub fn emit_trace_pc_for(&mut self, pc: u64, op: u16) {
+        if self.config.has_tracing() {
+            let pc_lit = self.fmt_addr(pc);
+            self.writeln(1, &format!("trace_pc(&state->tracer, {}, {});", pc_lit, op));
+        }
+    }
+
     /// Render instret check and early suspend if needed.
     pub fn render_instret_check(&mut self, pc: u64) {
         if !self.config.instret_mode.suspends() {

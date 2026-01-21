@@ -100,7 +100,11 @@ compile_variant() {
     fi
 
     log "Compiling $elf -> $out_dir"
-    $RVR compile "$elf" -o "$out_dir" $opts
+    if [[ "$VERBOSE" == "-v" ]]; then
+        $RVR compile "$elf" -o "$out_dir" $opts
+    else
+        $RVR compile "$elf" -o "$out_dir" $opts >/dev/null 2>&1
+    fi
 }
 
 # Run a compiled program and extract metrics
