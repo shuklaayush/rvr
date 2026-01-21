@@ -6,7 +6,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand, ValueEnum};
 use rvr::bench::{self, Arch, TableRow};
 use rvr::tests::{self, TestConfig};
-use rvr::{CompileOptions, InstretMode, SyscallMode};
+use rvr::{Compiler, CompileOptions, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
 use tracing::{error, info};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -196,6 +196,10 @@ enum Commands {
         #[arg(value_name = "LIB_DIR")]
         lib_dir: PathBuf,
 
+        /// Path to the ELF file
+        #[arg(value_name = "ELF_PATH")]
+        elf_path: PathBuf,
+
         /// Output format
         #[arg(long, value_enum, default_value = "text")]
         format: OutputFormat,
@@ -279,6 +283,10 @@ enum RethBenchCommands {
         /// Fast mode (no instret counting)
         #[arg(short, long)]
         fast: bool,
+
+        /// C compiler to use (clang or gcc)
+        #[arg(long, default_value = "clang")]
+        cc: String,
     },
     /// Run benchmarks (assumes already compiled)
     Run {
@@ -465,7 +473,11 @@ fn run_command(cli: &Cli) -> i32 {
                 .with_tracer_config(tracer_config)
                 .with_jobs(*jobs);
             let options = if let Some(cc) = cc {
-                options.with_compiler(cc)
+                let compiler: Compiler = cc.parse().unwrap_or_else(|e| {
+                    error!(error = %e, "invalid compiler");
+                    std::process::exit(1);
+                });
+                options.with_compiler(compiler)
             } else {
                 options
             };
@@ -516,10 +528,11 @@ fn run_command(cli: &Cli) -> i32 {
         }
         Commands::Run {
             lib_dir,
+            elf_path,
             format,
             runs,
         } => {
-            let runner = match rvr::Runner::load(lib_dir) {
+            let mut runner = match rvr::Runner::load(lib_dir, elf_path) {
                 Ok(r) => r,
                 Err(e) => {
                     error!(error = %e, path = %lib_dir.display(), "failed to load library");
@@ -563,8 +576,8 @@ fn run_command(cli: &Cli) -> i32 {
                     RethBenchCommands::BuildElf { targets } => {
                         reth_build_elf(targets);
                     }
-                    RethBenchCommands::Compile { arch, trace, fast } => {
-                        reth_compile(arch, *trace, *fast);
+                    RethBenchCommands::Compile { arch, trace, fast, cc } => {
+                        reth_compile(arch, *trace, *fast, cc);
                     }
                     RethBenchCommands::Run {
                         arch,
@@ -645,7 +658,7 @@ fn reth_build_elf(targets: &[String]) {
 }
 
 /// Compile reth-validator ELFs to native code for all specified architectures.
-fn reth_compile(arch_str: &str, trace: bool, fast: bool) {
+fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str) {
     let archs = match Arch::parse_list(arch_str) {
         Ok(a) => a,
         Err(e) => {
@@ -671,9 +684,14 @@ fn reth_compile(arch_str: &str, trace: bool, fast: bool) {
             .join(arch.as_str())
             .join(format!("reth-{}", suffix));
 
-        eprintln!("Compiling {} -> {}", arch, out_dir.display());
+        let compiler: Compiler = cc.parse().unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        });
 
-        let mut options = CompileOptions::new();
+        eprintln!("Compiling {} ({}) -> {}", arch, compiler, out_dir.display());
+
+        let mut options = CompileOptions::new().with_compiler(compiler);
         if trace {
             options = options.with_tracer_config(TracerConfig::builtin(TracerKind::Stats));
         }
@@ -712,7 +730,10 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
     // Collect all rows
     let mut rows: Vec<TableRow> = vec![TableRow::host(&host_result)];
 
+    let bin_dir = project_dir.join("bin/reth");
+
     for arch in &archs {
+        let elf_path = bin_dir.join(arch.as_str()).join("reth-validator");
         let out_dir = project_dir
             .join("target")
             .join(arch.as_str())
@@ -724,7 +745,7 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
                 "not compiled (run `rvr bench reth compile` first)".to_string(),
             )
         } else {
-            match bench::run_bench(&out_dir, runs) {
+            match bench::run_bench(&out_dir, &elf_path, runs) {
                 Ok(result) => TableRow::arch(*arch, &result, host_time),
                 Err(e) => TableRow::error(arch.as_str(), e),
             }

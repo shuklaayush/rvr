@@ -198,7 +198,7 @@
 
 // Core types - always available
 pub use rvr_elf::{get_elf_xlen, ElfImage};
-pub use rvr_emit::{EmitConfig, InstretMode, TracerConfig};
+pub use rvr_emit::{Compiler, EmitConfig, InstretMode, TracerConfig};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
 mod pipeline;
@@ -255,7 +255,6 @@ pub enum SyscallMode {
 pub struct Recompiler<X: Xlen> {
     config: EmitConfig<X>,
     syscall_mode: SyscallMode,
-    compiler: Option<String>,
     quiet: bool,
     _marker: PhantomData<X>,
 }
@@ -266,7 +265,6 @@ impl<X: Xlen> Recompiler<X> {
         Self {
             config,
             syscall_mode: SyscallMode::BareMetal,
-            compiler: None,
             quiet: false,
             _marker: PhantomData,
         }
@@ -283,9 +281,9 @@ impl<X: Xlen> Recompiler<X> {
         self
     }
 
-    /// Set the C compiler to use (e.g. "clang" or "gcc").
-    pub fn with_compiler(mut self, compiler: impl Into<String>) -> Self {
-        self.compiler = Some(compiler.into());
+    /// Set the C compiler to use (clang or gcc).
+    pub fn with_compiler(mut self, compiler: Compiler) -> Self {
+        self.config.compiler = compiler;
         self
     }
 
@@ -312,8 +310,8 @@ impl<X: Xlen> Recompiler<X> {
         // First lift to C source
         let _c_path = self.lift(elf_path, output_dir)?;
 
-        // Then compile C to .so
-        compile_c_to_shared(output_dir, jobs, self.compiler.as_deref(), self.quiet)?;
+        // Then compile C to .so (compiler choice is already in the Makefile via config)
+        compile_c_to_shared(output_dir, jobs, self.quiet)?;
 
         // Return the path to the shared library
         let lib_name = output_dir
@@ -381,8 +379,8 @@ pub struct CompileOptions {
     pub tracer_config: TracerConfig,
     /// Syscall handling mode.
     pub syscall_mode: SyscallMode,
-    /// Optional C compiler override (e.g. "clang").
-    pub compiler: Option<String>,
+    /// C compiler to use.
+    pub compiler: Compiler,
     /// Suppress compilation output (make commands, etc).
     pub quiet: bool,
 }
@@ -429,9 +427,9 @@ impl CompileOptions {
         self
     }
 
-    /// Set the C compiler to use (e.g. "clang" or "gcc").
-    pub fn with_compiler(mut self, compiler: impl Into<String>) -> Self {
-        self.compiler = Some(compiler.into());
+    /// Set the C compiler to use.
+    pub fn with_compiler(mut self, compiler: Compiler) -> Self {
+        self.compiler = compiler;
         self
     }
 
@@ -447,6 +445,7 @@ impl CompileOptions {
         config.tohost_enabled = self.tohost;
         config.instret_mode = self.instret_mode;
         config.tracer_config = self.tracer_config.clone();
+        config.compiler = self.compiler;
     }
 }
 
@@ -469,23 +468,17 @@ pub fn compile_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let mut recompiler = Recompiler::<Rv32>::new(config)
+            let recompiler = Recompiler::<Rv32>::new(config)
                 .with_syscall_mode(options.syscall_mode)
                 .with_quiet(options.quiet);
-            if let Some(compiler) = &options.compiler {
-                recompiler = recompiler.with_compiler(compiler.clone());
-            }
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let mut recompiler = Recompiler::<Rv64>::new(config)
+            let recompiler = Recompiler::<Rv64>::new(config)
                 .with_syscall_mode(options.syscall_mode)
                 .with_quiet(options.quiet);
-            if let Some(compiler) = &options.compiler {
-                recompiler = recompiler.with_compiler(compiler.clone());
-            }
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
     )
@@ -510,21 +503,15 @@ pub fn lift_to_c_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let mut recompiler =
+            let recompiler =
                 Recompiler::<Rv32>::new(config).with_syscall_mode(options.syscall_mode);
-            if let Some(compiler) = &options.compiler {
-                recompiler = recompiler.with_compiler(compiler.clone());
-            }
             recompiler.lift(elf_path, output_dir)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let mut recompiler =
+            let recompiler =
                 Recompiler::<Rv64>::new(config).with_syscall_mode(options.syscall_mode);
-            if let Some(compiler) = &options.compiler {
-                recompiler = recompiler.with_compiler(compiler.clone());
-            }
             recompiler.lift(elf_path, output_dir)
         },
     )
@@ -551,12 +538,8 @@ fn dispatch_by_xlen<R>(
 /// Compile C source to shared library.
 ///
 /// If `jobs` is 0, auto-detects based on CPU count.
-fn compile_c_to_shared(
-    output_dir: &Path,
-    jobs: usize,
-    compiler: Option<&str>,
-    quiet: bool,
-) -> Result<()> {
+/// Note: The compiler is set in the Makefile (generated with the chosen CC).
+fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()> {
     let _span = info_span!("compile_c").entered();
 
     let makefile_path = output_dir.join("Makefile");
@@ -571,23 +554,14 @@ fn compile_c_to_shared(
         jobs
     };
 
-    let cc = compiler.unwrap_or("clang");
-    debug!(
-        dir = %output_dir.display(),
-        jobs = job_count,
-        compiler = cc,
-        "running make"
-    );
+    debug!(dir = %output_dir.display(), jobs = job_count, "running make");
 
     let mut cmd = Command::new("make");
     cmd.arg("-C")
         .arg(output_dir)
         .arg("-j")
-        .arg(job_count.to_string());
-    if let Some(cc) = compiler {
-        cmd.arg(format!("CC={}", cc));
-    }
-    cmd.arg("shared");
+        .arg(job_count.to_string())
+        .arg("shared");
 
     if quiet {
         cmd.stdout(Stdio::null()).stderr(Stdio::null());

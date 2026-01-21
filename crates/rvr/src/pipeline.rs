@@ -373,6 +373,7 @@ impl<X: Xlen> Pipeline<X> {
         inputs.absorbed_to_merged = absorbed_to_merged.clone();
 
         // Create CProject with block transform mappings
+        // Note: compiler is already in self.config, no need to call with_compiler
         let project = CProject::new(output_dir, base_name, self.config.clone())
             .with_inputs(inputs)
             .with_taken_inlines(taken_inlines)
