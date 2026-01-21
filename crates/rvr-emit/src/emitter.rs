@@ -1293,10 +1293,11 @@ mod tests {
 
     #[test]
     fn test_render_reg_read() {
-        let config = EmitConfig::<Rv64>::default();
+        let mut config = EmitConfig::<Rv64>::default();
+        config.hot_regs.clear(); // Test non-hot path
         let emitter = CEmitter::new(config, EmitInputs::default());
 
-        // Default config has no hot regs, so uses state->regs[]
+        // Non-hot reg uses state->regs[]
         let expr = Expr::reg(5);
         let result = emitter.render_expr(&expr);
         assert_eq!(result, "state->regs[5]");
@@ -1304,11 +1305,10 @@ mod tests {
 
     #[test]
     fn test_render_reg_read_hot() {
-        let mut config = EmitConfig::<Rv64>::default();
-        config.hot_regs = vec![5]; // Make t0 hot
+        let config = EmitConfig::<Rv64>::default();
         let emitter = CEmitter::new(config, EmitInputs::default());
 
-        // Hot reg uses ABI name directly
+        // Default config has hot regs, t0 (reg 5) should be hot
         let expr = Expr::reg(5);
         let result = emitter.render_expr(&expr);
         assert_eq!(result, "t0");
@@ -1316,7 +1316,8 @@ mod tests {
 
     #[test]
     fn test_render_add() {
-        let config = EmitConfig::<Rv64>::default();
+        let mut config = EmitConfig::<Rv64>::default();
+        config.hot_regs.clear(); // Test non-hot path
         let emitter = CEmitter::new(config, EmitInputs::default());
 
         let expr = Expr::add(Expr::reg(1), Expr::imm(10));
@@ -1326,10 +1327,10 @@ mod tests {
 
     #[test]
     fn test_render_add_hot() {
-        let mut config = EmitConfig::<Rv64>::default();
-        config.hot_regs = vec![1]; // Make ra hot
+        let config = EmitConfig::<Rv64>::default();
         let emitter = CEmitter::new(config, EmitInputs::default());
 
+        // Default config has hot regs, ra (reg 1) should be hot
         let expr = Expr::add(Expr::reg(1), Expr::imm(10));
         let result = emitter.render_expr(&expr);
         assert_eq!(result, "(ra + 0xaULL)");

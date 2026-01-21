@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rvr_ir::{BlockIR, Xlen};
+use tracing::{debug, info, trace};
 
 use crate::config::EmitConfig;
 use crate::dispatch::{gen_dispatch_file, DispatchConfig};
@@ -171,10 +172,14 @@ impl<X: Xlen> CProject<X> {
         );
 
         let header = gen_header::<X>(&header_cfg);
-        fs::write(self.header_path(), header)?;
+        let header_path = self.header_path();
+        trace!(path = %header_path.display(), "writing header");
+        fs::write(&header_path, header)?;
 
         let blocks_header = gen_blocks_header::<X>(&header_cfg);
-        fs::write(self.blocks_header_path(), blocks_header)?;
+        let blocks_path = self.blocks_header_path();
+        trace!(path = %blocks_path.display(), "writing blocks header");
+        fs::write(&blocks_path, blocks_header)?;
 
         Ok(())
     }
@@ -327,7 +332,9 @@ impl<X: Xlen> CProject<X> {
             content.push_str(emitter.output());
         }
 
-        fs::write(self.partition_path(partition_idx), content)
+        let path = self.partition_path(partition_idx);
+        trace!(path = %path.display(), blocks = blocks.len(), "writing partition");
+        fs::write(path, content)
     }
 
     /// Write all partition files.
@@ -338,6 +345,13 @@ impl<X: Xlen> CProject<X> {
 
         let partitions = self.partition_blocks(blocks);
         let num_partitions = partitions.len();
+
+        debug!(
+            total_blocks = blocks.len(),
+            partitions = num_partitions,
+            partition_size = self.partition_size,
+            "partitioning blocks"
+        );
 
         for (idx, partition_blocks) in partitions {
             self.write_partition(idx, &partition_blocks, &block_map)?;
@@ -351,7 +365,9 @@ impl<X: Xlen> CProject<X> {
         let dispatch_cfg = DispatchConfig::new(&self.config, &self.base_name, self.inputs.clone());
 
         let dispatch = gen_dispatch_file::<X>(&dispatch_cfg);
-        fs::write(self.dispatch_path(), dispatch)
+        let path = self.dispatch_path();
+        trace!(path = %path.display(), "writing dispatch");
+        fs::write(path, dispatch)
     }
 
     /// Write memory file.
@@ -365,12 +381,15 @@ impl<X: Xlen> CProject<X> {
 
         // C23 #embed: write segment binaries, then emit memory.c with #embed directives.
         for (name, data) in gen_segment_bins(&mem_cfg) {
-            let path = self.output_dir.join(name);
+            let path = self.output_dir.join(&name);
+            trace!(path = %path.display(), size = data.len(), "writing segment binary");
             fs::write(path, data)?;
         }
 
         let memory = gen_memory_file_with_embed(&mem_cfg);
-        fs::write(self.memory_path(), memory)
+        let path = self.memory_path();
+        trace!(path = %path.display(), segments = self.segments.len(), "writing memory");
+        fs::write(path, memory)
     }
 
     /// Write HTIF files.
@@ -378,10 +397,14 @@ impl<X: Xlen> CProject<X> {
         let htif_cfg = HtifConfig::new(&self.base_name, self.config.tohost_enabled);
 
         let htif_header = gen_htif_header::<X>(&htif_cfg);
-        fs::write(self.htif_header_path(), htif_header)?;
+        let header_path = self.htif_header_path();
+        trace!(path = %header_path.display(), "writing htif header");
+        fs::write(header_path, htif_header)?;
 
         let htif_source = gen_htif_source::<X>(&htif_cfg);
-        fs::write(self.htif_source_path(), htif_source)?;
+        let src_path = self.htif_source_path();
+        trace!(path = %src_path.display(), "writing htif source");
+        fs::write(src_path, htif_source)?;
 
         Ok(())
     }
@@ -390,7 +413,9 @@ impl<X: Xlen> CProject<X> {
     pub fn write_syscalls(&self) -> std::io::Result<()> {
         let cfg = SyscallsConfig::new(&self.base_name);
         let src = gen_syscalls_source::<X>(&cfg);
-        fs::write(self.syscalls_path(), src)
+        let path = self.syscalls_path();
+        trace!(path = %path.display(), "writing syscalls");
+        fs::write(path, src)
     }
 
     /// Write tracer header if tracing is enabled.
@@ -399,7 +424,9 @@ impl<X: Xlen> CProject<X> {
             return Ok(());
         }
         let tracer_header = gen_tracer_header::<X>(&self.config.tracer_config)?;
-        fs::write(self.tracer_header_path(), tracer_header)
+        let path = self.tracer_header_path();
+        trace!(path = %path.display(), "writing tracer header");
+        fs::write(path, tracer_header)
     }
 
     /// Write Makefile.
@@ -532,7 +559,9 @@ impl<X: Xlen> CProject<X> {
 
         writeln!(content, ".PHONY: shared clean").unwrap();
 
-        fs::write(self.makefile_path(), content)
+        let path = self.makefile_path();
+        trace!(path = %path.display(), "writing Makefile");
+        fs::write(path, content)
     }
 
     /// Write all files.
@@ -541,6 +570,13 @@ impl<X: Xlen> CProject<X> {
     pub fn write_all(&self, blocks: &[BlockIR<X>]) -> std::io::Result<usize> {
         // Ensure output directory exists
         fs::create_dir_all(&self.output_dir)?;
+
+        debug!(
+            output_dir = %self.output_dir.display(),
+            base_name = %self.base_name,
+            blocks = blocks.len(),
+            "generating C project"
+        );
 
         // Collect block addresses
         let block_addresses: Vec<u64> = blocks.iter().map(|b| X::to_u64(b.start_pc)).collect();
@@ -572,6 +608,12 @@ impl<X: Xlen> CProject<X> {
 
         // Write Makefile
         self.write_makefile(num_partitions)?;
+
+        info!(
+            output_dir = %self.output_dir.display(),
+            partitions = num_partitions,
+            "C project generated"
+        );
 
         Ok(num_partitions)
     }

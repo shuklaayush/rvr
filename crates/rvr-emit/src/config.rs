@@ -127,8 +127,15 @@ pub struct EmitConfig<X: Xlen> {
 
 impl<X: Xlen> Default for EmitConfig<X> {
     fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl<X: Xlen> EmitConfig<X> {
+    /// Create base config without hot registers (internal use).
+    fn base(num_regs: usize) -> Self {
         Self {
-            num_regs: NUM_REGS_I,
+            num_regs,
             hot_regs: Vec::new(),
             addr_check: false,
             instret_mode: InstretMode::Count,
@@ -139,16 +146,13 @@ impl<X: Xlen> Default for EmitConfig<X> {
             _marker: PhantomData,
         }
     }
-}
 
-impl<X: Xlen> EmitConfig<X> {
-    /// Create config with default settings.
+    /// Create config with specified register count and platform-optimized hot registers.
     pub fn new(num_regs: usize) -> Self {
         assert!(num_regs == NUM_REGS_I || num_regs == NUM_REGS_E);
-        Self {
-            num_regs,
-            ..Default::default()
-        }
+        let mut config = Self::base(num_regs);
+        config.init_hot_regs(default_total_slots());
+        config
     }
 
     /// Create config with platform-optimized defaults.
@@ -156,7 +160,7 @@ impl<X: Xlen> EmitConfig<X> {
     /// This initializes hot registers based on platform-specific total slots
     /// and the given tracer configuration.
     pub fn with_defaults(num_regs: usize, total_slots: usize, tracer_config: TracerConfig) -> Self {
-        let mut config = Self::new(num_regs);
+        let mut config = Self::base(num_regs);
         config.tracer_config = tracer_config;
         config.init_hot_regs(total_slots);
         config
@@ -247,7 +251,8 @@ mod tests {
     fn test_default_config() {
         let config = EmitConfig::<Rv64>::default();
         assert_eq!(config.num_regs, 32);
-        assert!(config.hot_regs.is_empty());
+        // default() now initializes hot registers (same as standard())
+        assert!(!config.hot_regs.is_empty());
         assert!(config.instret_mode.counts());
     }
 
@@ -255,8 +260,6 @@ mod tests {
     fn test_standard_config() {
         let config = EmitConfig::<Rv64>::standard();
         assert_eq!(config.num_regs, 32);
-        assert!(!config.hot_regs.is_empty());
-        // Should have some hot regs based on platform
         assert!(!config.hot_regs.is_empty());
     }
 
