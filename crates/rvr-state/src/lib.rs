@@ -8,30 +8,44 @@
 //! `RvState` is generic over a `TracerState` type. By default, `()` is used which is
 //! a zero-sized type (ZST) that adds no overhead.
 //!
+//! # Suspension
+//!
+//! `RvState` is also generic over a `SuspenderState` type. By default, `()` is used
+//! which means no suspension support. Use `InstretSuspender` for instret-based suspension.
+//!
 //! ```ignore
-//! use rvr_state::{RvState, Rv64State, Rv64StateWith, PreflightTracer};
+//! use rvr_state::{RvState, Rv64State, Rv64StateWith, PreflightTracer, InstretSuspender};
 //! use rvr_ir::Rv64;
 //!
-//! // No tracing (default) - matches C layout without tracer
+//! // No tracing, no suspension (default) - minimal layout
 //! let state = Rv64State::new();
 //!
-//! // With preflight tracer - matches C layout with Tracer struct at end
+//! // With preflight tracer - adds Tracer struct at end
 //! let state = Rv64StateWith::<PreflightTracer<Rv64>>::new();
 //! ```
 
 mod memory;
 mod state;
+mod suspender;
 mod tracer;
 
-pub use memory::{GuardedMemory, MemoryError, GUARD_SIZE, DEFAULT_MEMORY_SIZE};
+pub use memory::{GuardedMemory, MemoryError, DEFAULT_MEMORY_SIZE, GUARD_SIZE};
 pub use state::{
-    RvState, Rv32State, Rv64State, Rv32EState, Rv64EState,
-    Rv32StateWith, Rv64StateWith,
-    NUM_CSRS, NUM_REGS_E, NUM_REGS_I,
+    Rv32EState, Rv32State, Rv32StateWith, Rv64EState, Rv64State, Rv64StateWith, RvState, NUM_CSRS,
+    NUM_REGS_E, NUM_REGS_I,
 };
+pub use suspender::{InstretSuspender, SuspenderState};
 pub use tracer::{
-    // State types (FFI struct layouts)
-    TracerState, PreflightTracer, StatsTracer, FfiTracer, DynamicTracer, DebugTracer,
+    CountingTracer,
+    DebugTracer,
+    DynamicTracer,
+    FfiTracer,
+    FfiTracerPtr,
+    NoopTracer,
+    PreflightTracer,
+    StatsTracer,
     // Behavior trait and implementations
-    Tracer, FfiTracerPtr, NoopTracer, CountingTracer,
+    Tracer,
+    // State types (FFI struct layouts)
+    TracerState,
 };
