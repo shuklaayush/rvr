@@ -253,7 +253,7 @@ pub fn run_test(elf_path: &Path, timeout: Duration) -> TestResult {
     }
 
     // Run with timeout
-    let result = run_with_timeout(&out_dir, timeout);
+    let result = run_with_timeout(&out_dir, elf_path, timeout);
 
     match result {
         Ok(exit_code) => {
@@ -268,13 +268,14 @@ pub fn run_test(elf_path: &Path, timeout: Duration) -> TestResult {
 }
 
 /// Run a compiled test with timeout.
-fn run_with_timeout(lib_dir: &Path, timeout: Duration) -> Result<u8, String> {
+fn run_with_timeout(lib_dir: &Path, elf_path: &Path, timeout: Duration) -> Result<u8, String> {
     // Use std::thread to implement timeout
     let (tx, rx) = std::sync::mpsc::channel();
     let lib_dir_clone = lib_dir.to_path_buf();
+    let elf_path_clone = elf_path.to_path_buf();
 
     std::thread::spawn(move || {
-        let runner = match Runner::load(&lib_dir_clone) {
+        let mut runner = match Runner::load(&lib_dir_clone, &elf_path_clone) {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(Err(format!("load failed: {}", e)));

@@ -23,6 +23,7 @@ rvr-isa.workspace = true
 rvr-ir.workspace = true
 rvr-cfg.workspace = true
 rvr-emit.workspace = true
+rvr-state.workspace = true
 
 [lib]
 name = "rvr"

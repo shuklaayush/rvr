@@ -7,6 +7,7 @@ members = [
     "crates/rvr-ir",
     "crates/rvr-cfg",
     "crates/rvr-emit",
+    "crates/rvr-state",
 ]
 
 [workspace.package]
@@ -36,3 +37,4 @@ rvr-isa = { path = "crates/rvr-isa" }
 rvr-ir = { path = "crates/rvr-ir" }
 rvr-cfg = { path = "crates/rvr-cfg" }
 rvr-emit = { path = "crates/rvr-emit" }
+rvr-state = { path = "crates/rvr-state" }

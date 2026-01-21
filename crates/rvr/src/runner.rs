@@ -1,18 +1,23 @@
 //! Runtime execution of compiled RISC-V programs.
 //!
-//! Uses libloading to load the compiled shared library and call the C API.
+//! State management is handled in Rust; only the hot execution loop is in C.
+//! Uses trait-based type erasure to support RV32/RV64 × I/E × Tracer variants.
 
-use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::ffi::c_void;
 use std::path::Path;
-use std::ptr::NonNull;
 use std::time::Instant;
 
 use libloading::Library;
 use perf_event::events::Hardware;
 use perf_event::{Builder, Group};
+use rvr_elf::{get_elf_xlen, ElfImage};
+use rvr_ir::{Rv32, Rv64, Xlen};
+use rvr_state::{
+    DebugTracer, GuardedMemory, PreflightTracer, RvState, StatsTracer, TracerState,
+    DEFAULT_MEMORY_SIZE, NUM_REGS_E, NUM_REGS_I,
+};
 use thiserror::Error;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, trace};
 
 /// Runner error type.
 #[derive(Debug, Error)]
@@ -23,17 +28,20 @@ pub enum RunError {
     #[error("shared library not found: {0}")]
     LibraryNotFound(String),
 
+    #[error("ELF file not found: {0}")]
+    ElfNotFound(String),
+
     #[error("failed to find symbol '{0}': {1}")]
     SymbolNotFound(String, libloading::Error),
 
-    #[error("invalid state layout (size {size}, align {align})")]
-    InvalidStateLayout { size: usize, align: usize },
+    #[error("memory allocation failed: {0}")]
+    MemoryAllocationFailed(#[from] rvr_state::MemoryError),
 
-    #[error("state allocation failed")]
-    StateAllocationFailed,
+    #[error("ELF parsing failed: {0}")]
+    ElfError(#[from] rvr_elf::ElfError),
 
-    #[error("memory initialization failed: {0}")]
-    MemoryInitFailed(i32),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 
     #[error("execution error: exit code {0}")]
     ExecutionError(u8),
@@ -42,52 +50,21 @@ pub enum RunError {
     TracerSetupFailed(String),
 }
 
-/// C API function types.
-type RvStateSize = unsafe extern "C" fn() -> usize;
-type RvStateAlign = unsafe extern "C" fn() -> usize;
-type RvStateReset = unsafe extern "C" fn(*mut c_void);
-type RvInitMemory = unsafe extern "C" fn(*mut c_void) -> i32;
-type RvFreeMemory = unsafe extern "C" fn(*mut c_void);
-type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u32) -> i32;
-type RvGetInstret = unsafe extern "C" fn(*const c_void) -> u64;
-type RvGetExitCode = unsafe extern "C" fn(*const c_void) -> u8;
-type RvGetEntryPoint = unsafe extern "C" fn() -> u32;
-type RvTracerPreflightSetup = unsafe extern "C" fn(*mut c_void, *mut u8, u32, *mut c_void, u32);
-type RvTracerStatsSetup = unsafe extern "C" fn(*mut c_void, *mut u64);
+/// C API - only the execution function is required.
+type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u64) -> i32;
 
+/// Minimal API from the generated C code.
 #[derive(Clone, Copy)]
 struct RvApi {
-    state_size: RvStateSize,
-    state_align: RvStateAlign,
-    state_reset: RvStateReset,
-    init_memory: RvInitMemory,
-    free_memory: RvFreeMemory,
     execute_from: RvExecuteFrom,
-    get_instret: RvGetInstret,
-    get_exit_code: RvGetExitCode,
-    get_entry_point: RvGetEntryPoint,
-    reg_bytes: u32,
     tracer_kind: u32,
-    tracer_preflight_setup: Option<RvTracerPreflightSetup>,
-    tracer_stats_setup: Option<RvTracerStatsSetup>,
 }
 
 impl RvApi {
     unsafe fn load(lib: &Library) -> Result<Self, RunError> {
         Ok(Self {
-            state_size: load_symbol(lib, b"rv_state_size", "rv_state_size")?,
-            state_align: load_symbol(lib, b"rv_state_align", "rv_state_align")?,
-            reg_bytes: load_data_symbol(lib, b"RV_REG_BYTES").unwrap_or(0),
-            state_reset: load_symbol(lib, b"rv_state_reset", "rv_state_reset")?,
-            init_memory: load_symbol(lib, b"rv_init_memory", "rv_init_memory")?,
-            free_memory: load_symbol(lib, b"rv_free_memory", "rv_free_memory")?,
             execute_from: load_symbol(lib, b"rv_execute_from", "rv_execute_from")?,
-            get_instret: load_symbol(lib, b"rv_get_instret", "rv_get_instret")?,
-            get_exit_code: load_symbol(lib, b"rv_get_exit_code", "rv_get_exit_code")?,
-            get_entry_point: load_symbol(lib, b"rv_get_entry_point", "rv_get_entry_point")?,
             tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
-            tracer_preflight_setup: load_optional_symbol(lib, b"rv_tracer_preflight_setup"),
-            tracer_stats_setup: load_optional_symbol(lib, b"rv_tracer_stats_setup"),
         })
     }
 }
@@ -105,15 +82,11 @@ unsafe fn load_symbol<T: Copy>(
 }
 
 unsafe fn load_data_symbol(lib: &Library, symbol: &'static [u8]) -> Option<u32> {
-    let sym: libloading::Symbol<u32> = lib.get(symbol).ok()?;
-    Some(*sym)
+    let sym: libloading::Symbol<*const u32> = lib.get(symbol).ok()?;
+    Some(**sym)
 }
 
-unsafe fn load_optional_symbol<T: Copy>(lib: &Library, symbol: &'static [u8]) -> Option<T> {
-    let sym: libloading::Symbol<T> = lib.get(symbol).ok()?;
-    Some(*sym)
-}
-
+/// Tracer kind matches RV_TRACER_KIND in generated C code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TracerKind {
     None,
@@ -121,7 +94,7 @@ enum TracerKind {
     Stats,
     Ffi,
     Dynamic,
-    Custom,
+    Debug,
 }
 
 impl TracerKind {
@@ -131,7 +104,7 @@ impl TracerKind {
             2 => Self::Stats,
             3 => Self::Ffi,
             4 => Self::Dynamic,
-            255 => Self::Custom,
+            5 => Self::Debug,
             _ => Self::None,
         }
     }
@@ -141,236 +114,361 @@ const PREFLIGHT_DATA_BYTES: usize = 1 << 20;
 const PREFLIGHT_PC_ENTRIES: usize = 1 << 24;
 const STATS_ADDR_BITMAP_BYTES: usize = 1 << 29;
 
-enum PcBuffer {
-    U32(Vec<u32>),
-    U64(Vec<u64>),
+// ============================================================================
+// RunnerImpl trait - abstracts over XLEN, NUM_REGS, and tracer type
+// ============================================================================
+
+/// Trait for type-erased runner implementations.
+trait RunnerImpl {
+    /// Load ELF segments into memory.
+    fn load_segments(&mut self);
+
+    /// Reset state to initial values.
+    fn reset(&mut self);
+
+    /// Get state as void pointer for FFI.
+    fn as_void_ptr(&mut self) -> *mut c_void;
+
+    /// Get instruction count.
+    fn instret(&self) -> u64;
+
+    /// Get exit code.
+    fn exit_code(&self) -> u8;
+
+    /// Get entry point from ELF.
+    fn entry_point(&self) -> u64;
 }
 
-impl PcBuffer {
-    fn len(&self) -> usize {
-        match self {
-            Self::U32(buf) => buf.len(),
-            Self::U64(buf) => buf.len(),
-        }
-    }
+// ============================================================================
+// TypedRunner - concrete implementation parameterized by X, T, NUM_REGS
+// ============================================================================
 
-    fn as_mut_ptr(&mut self) -> *mut c_void {
-        match self {
-            Self::U32(buf) => buf.as_mut_ptr() as *mut c_void,
-            Self::U64(buf) => buf.as_mut_ptr() as *mut c_void,
-        }
-    }
+/// Typed runner for a specific XLEN, tracer, and register count.
+struct TypedRunner<X: Xlen, T: TracerState, const NUM_REGS: usize> {
+    state: RvState<X, T, NUM_REGS>,
+    memory: GuardedMemory,
+    elf_image: ElfImage<X>,
 }
 
-struct PreflightBuffers {
-    data: Vec<u8>,
-    pc: PcBuffer,
-}
-
-struct StatsBuffers {
-    addr_bitmap: Option<Vec<u64>>,
-}
-
-struct TracerRuntime {
-    kind: TracerKind,
-    reg_bytes: u32,
-    preflight_setup: Option<RvTracerPreflightSetup>,
-    stats_setup: Option<RvTracerStatsSetup>,
-    preflight: Option<PreflightBuffers>,
-    stats: Option<StatsBuffers>,
-}
-
-impl TracerRuntime {
-    fn new(api: &RvApi) -> Result<Option<Self>, RunError> {
-        let kind = TracerKind::from_raw(api.tracer_kind);
-        if kind == TracerKind::None {
-            return Ok(None);
+impl<X: Xlen, T: TracerState, const NUM_REGS: usize> TypedRunner<X, T, NUM_REGS> {
+    fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
+        let mut state = RvState::new();
+        state.set_memory(memory.as_ptr());
+        Self {
+            state,
+            memory,
+            elf_image,
         }
-
-        let reg_bytes = api.reg_bytes;
-        if reg_bytes == 0 {
-            warn!(
-                reg_bytes = reg_bytes,
-                "unsupported register size for tracer"
-            );
-            return Err(RunError::TracerSetupFailed(format!(
-                "unsupported reg size {}",
-                reg_bytes
-            )));
-        }
-        debug!(kind = ?kind, reg_bytes = reg_bytes, "initializing tracer");
-        Ok(Some(Self {
-            kind,
-            reg_bytes,
-            preflight_setup: api.tracer_preflight_setup,
-            stats_setup: api.tracer_stats_setup,
-            preflight: None,
-            stats: None,
-        }))
-    }
-
-    fn setup(&mut self, state_ptr: *mut c_void) -> Result<(), RunError> {
-        match self.kind {
-            TracerKind::Preflight => self.setup_preflight(state_ptr),
-            TracerKind::Stats => self.setup_stats(state_ptr),
-            _ => Ok(()),
-        }
-    }
-
-    fn setup_preflight(&mut self, state_ptr: *mut c_void) -> Result<(), RunError> {
-        let setup = self.preflight_setup.ok_or_else(|| {
-            RunError::TracerSetupFailed("missing rv_tracer_preflight_setup".to_string())
-        })?;
-        if self.preflight.is_none() {
-            let pc = match self.reg_bytes {
-                4 => PcBuffer::U32(vec![0u32; PREFLIGHT_PC_ENTRIES]),
-                8 => PcBuffer::U64(vec![0u64; PREFLIGHT_PC_ENTRIES]),
-                other => {
-                    return Err(RunError::TracerSetupFailed(format!(
-                        "unsupported reg size {}",
-                        other
-                    )))
-                }
-            };
-            let data = vec![0u8; PREFLIGHT_DATA_BYTES];
-            self.preflight = Some(PreflightBuffers { data, pc });
-        }
-
-        let buffers = self.preflight.as_mut().unwrap();
-        println!(
-            "trace: preflight buffers: data={} bytes, pc={} entries ({} bytes/pc)",
-            buffers.data.len(),
-            buffers.pc.len(),
-            self.reg_bytes
-        );
-        unsafe {
-            setup(
-                state_ptr,
-                buffers.data.as_mut_ptr(),
-                buffers.data.len() as u32,
-                buffers.pc.as_mut_ptr(),
-                buffers.pc.len() as u32,
-            );
-        }
-        Ok(())
-    }
-
-    fn setup_stats(&mut self, state_ptr: *mut c_void) -> Result<(), RunError> {
-        let setup = self.stats_setup.ok_or_else(|| {
-            RunError::TracerSetupFailed("missing rv_tracer_stats_setup".to_string())
-        })?;
-        if self.stats.is_none() {
-            let words = STATS_ADDR_BITMAP_BYTES / 8;
-            let mut addr_bitmap = Vec::new();
-            if addr_bitmap.try_reserve_exact(words).is_ok() {
-                addr_bitmap.resize(words, 0);
-            }
-            let addr_bitmap = if addr_bitmap.is_empty() {
-                None
-            } else {
-                Some(addr_bitmap)
-            };
-            self.stats = Some(StatsBuffers { addr_bitmap });
-        }
-
-        let buffers = self.stats.as_mut().unwrap();
-        if let Some(addr) = &buffers.addr_bitmap {
-            println!("trace: stats addr_bitmap={} bytes", addr.len() * 8);
-        } else {
-            println!("trace: stats addr_bitmap disabled");
-        }
-        let addr_ptr = buffers
-            .addr_bitmap
-            .as_mut()
-            .map(|buf| buf.as_mut_ptr())
-            .unwrap_or(std::ptr::null_mut());
-        unsafe {
-            setup(state_ptr, addr_ptr);
-        }
-        Ok(())
     }
 }
 
-struct RunState<'a> {
-    ptr: NonNull<c_void>,
-    layout: Layout,
-    api: &'a RvApi,
-    memory_initialized: bool,
-    tracer: Option<TracerRuntime>,
-}
-
-impl<'a> RunState<'a> {
-    fn new(api: &'a RvApi) -> Result<Self, RunError> {
-        let size = unsafe { (api.state_size)() };
-        let align = unsafe { (api.state_align)() };
-        let layout = Layout::from_size_align(size, align).map_err(|_| {
-            error!(size = size, align = align, "invalid state layout");
-            RunError::InvalidStateLayout { size, align }
-        })?;
-        let ptr = unsafe { alloc_zeroed(layout) } as *mut c_void;
-        let ptr = NonNull::new(ptr).ok_or_else(|| {
-            error!(size = size, "state allocation failed");
-            RunError::StateAllocationFailed
-        })?;
-        let tracer = TracerRuntime::new(api)?;
-        Ok(Self {
-            ptr,
-            layout,
-            api,
-            memory_initialized: false,
-            tracer,
-        })
-    }
-
-    fn reset(&mut self) -> Result<(), RunError> {
-        unsafe { (self.api.state_reset)(self.ptr.as_ptr()) };
-        if let Some(tracer) = &mut self.tracer {
-            tracer.setup(self.ptr.as_ptr())?;
+impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<X, T, NUM_REGS> {
+    fn load_segments(&mut self) {
+        self.memory.clear();
+        for seg in &self.elf_image.memory_segments {
+            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            unsafe { self.memory.copy_from(vaddr, &seg.data) };
         }
-        Ok(())
     }
 
-    fn init_memory(&mut self) -> Result<(), RunError> {
-        let rc = unsafe { (self.api.init_memory)(self.ptr.as_ptr()) };
-        if rc != 0 {
-            error!(rc = rc, "memory initialization failed");
-            return Err(RunError::MemoryInitFailed(rc));
-        }
-        self.memory_initialized = true;
-        Ok(())
+    fn reset(&mut self) {
+        self.state.reset();
+        self.state.set_memory(self.memory.as_ptr());
     }
 
-    fn reinit_memory(&mut self) -> Result<(), RunError> {
-        if self.memory_initialized {
-            unsafe { (self.api.free_memory)(self.ptr.as_ptr()) };
-            self.memory_initialized = false;
-        }
-        self.init_memory()
-    }
-
-    fn execute(&self, entry: u32) {
-        unsafe { (self.api.execute_from)(self.ptr.as_ptr(), entry) };
+    fn as_void_ptr(&mut self) -> *mut c_void {
+        self.state.as_void_ptr()
     }
 
     fn instret(&self) -> u64 {
-        unsafe { (self.api.get_instret)(self.ptr.as_ptr()) }
+        self.state.instret()
     }
 
     fn exit_code(&self) -> u8 {
-        unsafe { (self.api.get_exit_code)(self.ptr.as_ptr()) }
+        self.state.exit_code()
+    }
+
+    fn entry_point(&self) -> u64 {
+        X::to_u64(self.elf_image.entry_point)
     }
 }
 
-impl Drop for RunState<'_> {
-    fn drop(&mut self) {
-        unsafe {
-            if self.memory_initialized {
-                (self.api.free_memory)(self.ptr.as_ptr());
-            }
-            dealloc(self.ptr.as_ptr() as *mut u8, self.layout);
+// ============================================================================
+// TypedRunner with Preflight tracer - needs buffer setup
+// ============================================================================
+
+/// Typed runner with preflight tracer (needs buffer management).
+struct PreflightRunner<X: Xlen, const NUM_REGS: usize> {
+    state: RvState<X, PreflightTracer<X>, NUM_REGS>,
+    memory: GuardedMemory,
+    elf_image: ElfImage<X>,
+    data_buffer: Vec<u8>,
+    pc_buffer: Vec<X::Reg>,
+}
+
+impl<X: Xlen, const NUM_REGS: usize> PreflightRunner<X, NUM_REGS> {
+    fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
+        let mut state = RvState::new();
+        state.set_memory(memory.as_ptr());
+        Self {
+            state,
+            memory,
+            elf_image,
+            data_buffer: vec![0u8; PREFLIGHT_DATA_BYTES],
+            pc_buffer: vec![X::from_u64(0); PREFLIGHT_PC_ENTRIES],
         }
     }
 }
+
+impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS> {
+    fn load_segments(&mut self) {
+        self.memory.clear();
+        for seg in &self.elf_image.memory_segments {
+            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            unsafe { self.memory.copy_from(vaddr, &seg.data) };
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state.reset();
+        self.state.set_memory(self.memory.as_ptr());
+        self.state.tracer.setup(
+            self.data_buffer.as_mut_ptr(),
+            self.data_buffer.len() as u32,
+            self.pc_buffer.as_mut_ptr(),
+            self.pc_buffer.len() as u32,
+        );
+    }
+
+    fn as_void_ptr(&mut self) -> *mut c_void {
+        self.state.as_void_ptr()
+    }
+
+    fn instret(&self) -> u64 {
+        self.state.instret()
+    }
+
+    fn exit_code(&self) -> u8 {
+        self.state.exit_code()
+    }
+
+    fn entry_point(&self) -> u64 {
+        X::to_u64(self.elf_image.entry_point)
+    }
+}
+
+// ============================================================================
+// TypedRunner with Stats tracer - needs buffer setup
+// ============================================================================
+
+/// Typed runner with stats tracer (needs buffer management).
+struct StatsRunner<X: Xlen, const NUM_REGS: usize> {
+    state: RvState<X, StatsTracer, NUM_REGS>,
+    memory: GuardedMemory,
+    elf_image: ElfImage<X>,
+    addr_bitmap: Vec<u64>,
+}
+
+impl<X: Xlen, const NUM_REGS: usize> StatsRunner<X, NUM_REGS> {
+    fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
+        let words = STATS_ADDR_BITMAP_BYTES / 8;
+        let mut state = RvState::new();
+        state.set_memory(memory.as_ptr());
+        Self {
+            state,
+            memory,
+            elf_image,
+            addr_bitmap: vec![0u64; words],
+        }
+    }
+}
+
+impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for StatsRunner<X, NUM_REGS> {
+    fn load_segments(&mut self) {
+        self.memory.clear();
+        for seg in &self.elf_image.memory_segments {
+            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            unsafe { self.memory.copy_from(vaddr, &seg.data) };
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state.reset();
+        self.state.set_memory(self.memory.as_ptr());
+        self.state.tracer.setup(self.addr_bitmap.as_mut_ptr());
+    }
+
+    fn as_void_ptr(&mut self) -> *mut c_void {
+        self.state.as_void_ptr()
+    }
+
+    fn instret(&self) -> u64 {
+        self.state.instret()
+    }
+
+    fn exit_code(&self) -> u8 {
+        self.state.exit_code()
+    }
+
+    fn entry_point(&self) -> u64 {
+        X::to_u64(self.elf_image.entry_point)
+    }
+}
+
+// ============================================================================
+// TypedRunner with Debug tracer - C manages FILE*, Rust provides layout
+// ============================================================================
+
+/// Typed runner with debug tracer.
+///
+/// The debug tracer's FILE* handle is managed by C code (trace_init opens,
+/// trace_fini closes). Rust just provides the memory layout for the struct.
+struct DebugRunner<X: Xlen, const NUM_REGS: usize> {
+    state: RvState<X, DebugTracer, NUM_REGS>,
+    memory: GuardedMemory,
+    elf_image: ElfImage<X>,
+}
+
+impl<X: Xlen, const NUM_REGS: usize> DebugRunner<X, NUM_REGS> {
+    fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
+        let mut state = RvState::new();
+        state.set_memory(memory.as_ptr());
+        Self {
+            state,
+            memory,
+            elf_image,
+        }
+    }
+}
+
+impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for DebugRunner<X, NUM_REGS> {
+    fn load_segments(&mut self) {
+        self.memory.clear();
+        for seg in &self.elf_image.memory_segments {
+            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            unsafe { self.memory.copy_from(vaddr, &seg.data) };
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state.reset();
+        self.state.set_memory(self.memory.as_ptr());
+        // DebugTracer's FILE* and pcs are managed by C code (trace_init/trace_fini)
+        // We just need to ensure the memory is zeroed
+        self.state.tracer = DebugTracer::default();
+    }
+
+    fn as_void_ptr(&mut self) -> *mut c_void {
+        self.state.as_void_ptr()
+    }
+
+    fn instret(&self) -> u64 {
+        self.state.instret()
+    }
+
+    fn exit_code(&self) -> u8 {
+        self.state.exit_code()
+    }
+
+    fn entry_point(&self) -> u64 {
+        X::to_u64(self.elf_image.entry_point)
+    }
+}
+
+// ============================================================================
+// Factory functions - create the right runner based on ELF and tracer kind
+// ============================================================================
+
+/// Create runner implementation based on architecture and tracer.
+fn create_runner_impl(
+    elf_data: &[u8],
+    tracer_kind: TracerKind,
+) -> Result<Box<dyn RunnerImpl>, RunError> {
+    let memory = GuardedMemory::new(DEFAULT_MEMORY_SIZE)?;
+    let xlen = get_elf_xlen(elf_data)?;
+
+    match xlen {
+        32 => create_rv32_runner(elf_data, tracer_kind, memory),
+        64 => create_rv64_runner(elf_data, tracer_kind, memory),
+        _ => unreachable!("get_elf_xlen only returns 32 or 64"),
+    }
+}
+
+fn create_rv32_runner(
+    elf_data: &[u8],
+    tracer_kind: TracerKind,
+    memory: GuardedMemory,
+) -> Result<Box<dyn RunnerImpl>, RunError> {
+    let image = ElfImage::<Rv32>::parse(elf_data)?;
+    let is_rve = image.is_rve();
+
+    match (tracer_kind, is_rve) {
+        (TracerKind::Preflight, false) => Ok(Box::new(PreflightRunner::<Rv32, NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (TracerKind::Preflight, true) => Ok(Box::new(PreflightRunner::<Rv32, NUM_REGS_E>::new(
+            image, memory,
+        ))),
+        (TracerKind::Stats, false) => {
+            Ok(Box::new(StatsRunner::<Rv32, NUM_REGS_I>::new(image, memory)))
+        }
+        (TracerKind::Stats, true) => {
+            Ok(Box::new(StatsRunner::<Rv32, NUM_REGS_E>::new(image, memory)))
+        }
+        (TracerKind::Debug, false) => {
+            Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_I>::new(image, memory)))
+        }
+        (TracerKind::Debug, true) => {
+            Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_E>::new(image, memory)))
+        }
+        (_, false) => Ok(Box::new(TypedRunner::<Rv32, (), NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (_, true) => Ok(Box::new(TypedRunner::<Rv32, (), NUM_REGS_E>::new(
+            image, memory,
+        ))),
+    }
+}
+
+fn create_rv64_runner(
+    elf_data: &[u8],
+    tracer_kind: TracerKind,
+    memory: GuardedMemory,
+) -> Result<Box<dyn RunnerImpl>, RunError> {
+    let image = ElfImage::<Rv64>::parse(elf_data)?;
+    let is_rve = image.is_rve();
+
+    match (tracer_kind, is_rve) {
+        (TracerKind::Preflight, false) => Ok(Box::new(PreflightRunner::<Rv64, NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (TracerKind::Preflight, true) => Ok(Box::new(PreflightRunner::<Rv64, NUM_REGS_E>::new(
+            image, memory,
+        ))),
+        (TracerKind::Stats, false) => {
+            Ok(Box::new(StatsRunner::<Rv64, NUM_REGS_I>::new(image, memory)))
+        }
+        (TracerKind::Stats, true) => {
+            Ok(Box::new(StatsRunner::<Rv64, NUM_REGS_E>::new(image, memory)))
+        }
+        (TracerKind::Debug, false) => {
+            Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_I>::new(image, memory)))
+        }
+        (TracerKind::Debug, true) => {
+            Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_E>::new(image, memory)))
+        }
+        (_, false) => Ok(Box::new(TypedRunner::<Rv64, (), NUM_REGS_I>::new(
+            image, memory,
+        ))),
+        (_, true) => Ok(Box::new(TypedRunner::<Rv64, (), NUM_REGS_E>::new(
+            image, memory,
+        ))),
+    }
+}
+
+// ============================================================================
+// Public API types
+// ============================================================================
 
 /// Execution result.
 #[derive(Debug, Clone)]
@@ -442,20 +540,27 @@ pub struct RunResultWithPerf {
     pub perf: Option<PerfCounters>,
 }
 
+// ============================================================================
+// Runner - public API
+// ============================================================================
+
 /// Runner for compiled RISC-V programs.
+///
+/// State is managed entirely in Rust; only the execution loop is in C.
 pub struct Runner {
     _lib: Library,
     api: RvApi,
+    inner: Box<dyn RunnerImpl>,
 }
 
 impl Runner {
-    /// Load a compiled shared library.
-    pub fn load(lib_dir: impl AsRef<Path>) -> Result<Self, RunError> {
+    /// Load a compiled shared library and its corresponding ELF.
+    pub fn load(lib_dir: impl AsRef<Path>, elf_path: impl AsRef<Path>) -> Result<Self, RunError> {
         let lib_dir = lib_dir.as_ref();
+        let elf_path = elf_path.as_ref();
 
         // Derive library name from directory name
         let dir_name = lib_dir.file_name().and_then(|n| n.to_str()).unwrap_or("rv");
-
         let lib_path = lib_dir.join(format!("lib{}.so", dir_name));
 
         if !lib_path.exists() {
@@ -463,32 +568,48 @@ impl Runner {
             return Err(RunError::LibraryNotFound(lib_path.display().to_string()));
         }
 
+        if !elf_path.exists() {
+            error!(path = %elf_path.display(), "ELF file not found");
+            return Err(RunError::ElfNotFound(elf_path.display().to_string()));
+        }
+
+        // Load library and API
         debug!(path = %lib_path.display(), "loading shared library");
         let lib = unsafe { Library::new(&lib_path)? };
         let api = unsafe { RvApi::load(&lib)? };
+        let tracer_kind = TracerKind::from_raw(api.tracer_kind);
+
+        // Load ELF and create typed runner
+        let elf_data = std::fs::read(elf_path)?;
+        let inner = create_runner_impl(&elf_data, tracer_kind)?;
+
         trace!(
-            state_size = unsafe { (api.state_size)() },
-            state_align = unsafe { (api.state_align)() },
-            "loaded API"
+            entry_point = format!("{:#x}", inner.entry_point()),
+            tracer_kind = ?tracer_kind,
+            "loaded runner"
         );
-        Ok(Self { _lib: lib, api })
+
+        Ok(Self {
+            _lib: lib,
+            api,
+            inner,
+        })
     }
 
     /// Run the program and return the result.
-    pub fn run(&self) -> Result<RunResult, RunError> {
-        let mut state = RunState::new(&self.api)?;
-        state.init_memory()?;
-        state.reset()?;
+    pub fn run(&mut self) -> Result<RunResult, RunError> {
+        self.inner.load_segments();
+        self.inner.reset();
 
-        let entry_point = unsafe { (self.api.get_entry_point)() };
+        let entry_point = self.inner.entry_point();
         trace!(entry_point = format!("{:#x}", entry_point), "executing");
 
         let start = Instant::now();
-        state.execute(entry_point);
+        unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), entry_point) };
         let elapsed = start.elapsed();
 
-        let instret = state.instret();
-        let exit_code = state.exit_code();
+        let instret = self.inner.instret();
+        let exit_code = self.inner.exit_code();
         let time_secs = elapsed.as_secs_f64();
         let mips = (instret as f64 / time_secs) / 1_000_000.0;
 
@@ -508,21 +629,20 @@ impl Runner {
     }
 
     /// Run with reset capability for multiple runs.
-    pub fn run_multiple(&self, count: usize) -> Result<Vec<RunResult>, RunError> {
-        let mut state = RunState::new(&self.api)?;
-        let entry_point = unsafe { (self.api.get_entry_point)() };
+    pub fn run_multiple(&mut self, count: usize) -> Result<Vec<RunResult>, RunError> {
+        let entry_point = self.inner.entry_point();
         let mut results = Vec::with_capacity(count);
 
         for _ in 0..count {
-            state.reinit_memory()?;
-            state.reset()?;
+            self.inner.load_segments();
+            self.inner.reset();
 
             let start = Instant::now();
-            state.execute(entry_point);
+            unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), entry_point) };
             let elapsed = start.elapsed();
 
-            let instret = state.instret();
-            let exit_code = state.exit_code();
+            let instret = self.inner.instret();
+            let exit_code = self.inner.exit_code();
             let time_secs = elapsed.as_secs_f64();
             let mips = (instret as f64 / time_secs) / 1_000_000.0;
 
@@ -538,40 +658,33 @@ impl Runner {
     }
 
     /// Run with hardware performance counters.
-    /// Returns execution result plus perf counters if available.
-    pub fn run_with_counters(&self) -> Result<RunResultWithPerf, RunError> {
-        let mut state = RunState::new(&self.api)?;
-        state.init_memory()?;
-        state.reset()?;
+    pub fn run_with_counters(&mut self) -> Result<RunResultWithPerf, RunError> {
+        self.inner.load_segments();
+        self.inner.reset();
 
-        let entry_point = unsafe { (self.api.get_entry_point)() };
+        let entry_point = self.inner.entry_point();
         trace!(
             entry_point = format!("{:#x}", entry_point),
             "executing with perf counters"
         );
 
-        // Try to set up perf counters
         let mut perf_group = Self::setup_perf_group();
 
         let start = Instant::now();
-
-        // Enable counters, execute, disable counters
         if let Some(ref mut group) = perf_group {
             let _ = group.enable();
         }
-        state.execute(entry_point);
+        unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), entry_point) };
         if let Some(ref mut group) = perf_group {
             let _ = group.disable();
         }
-
         let elapsed = start.elapsed();
 
-        let instret = state.instret();
-        let exit_code = state.exit_code();
+        let instret = self.inner.instret();
+        let exit_code = self.inner.exit_code();
         let time_secs = elapsed.as_secs_f64();
         let mips = (instret as f64 / time_secs) / 1_000_000.0;
 
-        // Read perf counters
         let perf = perf_group.as_mut().and_then(Self::read_perf_counters);
 
         let result = RunResult {
@@ -581,18 +694,14 @@ impl Runner {
             mips,
         };
 
-        // Record metrics
         crate::metrics::record_run("unknown", &result, perf.as_ref());
 
         Ok(RunResultWithPerf { result, perf })
     }
 
     /// Run multiple times with hardware performance counters.
-    /// Returns averaged results.
-    pub fn run_multiple_with_counters(&self, count: usize) -> Result<RunResultWithPerf, RunError> {
-        let mut state = RunState::new(&self.api)?;
-        let entry_point = unsafe { (self.api.get_entry_point)() };
-
+    pub fn run_multiple_with_counters(&mut self, count: usize) -> Result<RunResultWithPerf, RunError> {
+        let entry_point = self.inner.entry_point();
         let mut perf_group = Self::setup_perf_group();
 
         let mut total_time = 0.0;
@@ -601,8 +710,8 @@ impl Runner {
         let mut last_exit_code = 0;
 
         for _ in 0..count {
-            state.reinit_memory()?;
-            state.reset()?;
+            self.inner.load_segments();
+            self.inner.reset();
 
             if let Some(ref mut group) = perf_group {
                 let _ = group.reset();
@@ -612,14 +721,14 @@ impl Runner {
             if let Some(ref mut group) = perf_group {
                 let _ = group.enable();
             }
-            state.execute(entry_point);
+            unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), entry_point) };
             if let Some(ref mut group) = perf_group {
                 let _ = group.disable();
             }
             let elapsed = start.elapsed();
 
-            last_instret = state.instret();
-            last_exit_code = state.exit_code();
+            last_instret = self.inner.instret();
+            last_exit_code = self.inner.exit_code();
             let time_secs = elapsed.as_secs_f64();
             let mips = (last_instret as f64 / time_secs) / 1_000_000.0;
 
@@ -630,7 +739,6 @@ impl Runner {
         let avg_time = total_time / count as f64;
         let avg_mips = total_mips / count as f64;
 
-        // Read final perf counters (from last run)
         let perf = perf_group.as_mut().and_then(Self::read_perf_counters);
 
         let result = RunResult {
@@ -640,17 +748,14 @@ impl Runner {
             mips: avg_mips,
         };
 
-        // Record metrics
         crate::metrics::record_run("unknown", &result, perf.as_ref());
 
         Ok(RunResultWithPerf { result, perf })
     }
 
-    /// Try to set up a perf event group. Returns None if perf is unavailable.
     fn setup_perf_group() -> Option<PerfGroup> {
         let mut group = Group::new().ok()?;
 
-        // Add counters - store the Counter objects
         let cycles = Builder::new()
             .group(&mut group)
             .kind(Hardware::CPU_CYCLES)
@@ -681,7 +786,6 @@ impl Runner {
         })
     }
 
-    /// Read perf counters from a group.
     fn read_perf_counters(perf: &mut PerfGroup) -> Option<PerfCounters> {
         let counts = perf.group.read().ok()?;
 
@@ -694,7 +798,6 @@ impl Runner {
     }
 }
 
-/// Helper struct to hold perf event group and counters.
 struct PerfGroup {
     group: Group,
     cycles: perf_event::Counter,
