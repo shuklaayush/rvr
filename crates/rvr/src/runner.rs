@@ -386,8 +386,8 @@ pub struct RunResult {
 }
 
 impl RunResult {
-    /// Print result in Mojo-compatible format (raw values, no units).
-    pub fn print_mojo_format(&self) {
+    /// Print result in raw key-value format (for scripting).
+    pub fn print_raw_format(&self) {
         println!("instret: {}", self.instret);
         println!("time: {:.6}", self.time_secs);
         println!("mips: {:.2}", self.mips);
@@ -729,7 +729,7 @@ mod tests {
             time_secs: 1.234567,
             mips: 1.0,
         };
-        result.print_mojo_format();
+        result.print_raw_format();
         result.print_json();
     }
 }

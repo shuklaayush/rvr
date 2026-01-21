@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let runner = rvr::Runner::load(&output_dir)?;
     let result = runner.run()?;
-    result.print_mojo_format();
+    result.print_raw_format();
 
     Ok(())
 }

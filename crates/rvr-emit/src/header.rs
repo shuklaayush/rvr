@@ -246,7 +246,7 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     }
 
     let mut s = format!(
-        r#"/* VM State - layout must match Mojo RvState */
+        r#"/* VM State */
 typedef struct RvState {{
     uint8_t* memory;                    /* offset {offset_memory} */
     {rtype} regs[{num_regs}];           /* offset {offset_regs} */

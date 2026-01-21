@@ -381,17 +381,17 @@ impl<X: Xlen> CEmitter<X> {
                 signed,
             } => {
                 let base = self.render_expr(base);
-                let load_fn = match (*width, *signed) {
-                    (1, true) => "trd_mem_i8",
-                    (1, false) => "trd_mem_u8",
-                    (2, true) => "trd_mem_i16",
-                    (2, false) => "trd_mem_u16",
-                    (4, true) if X::VALUE == 64 => "trd_mem_i32",
-                    (4, _) => "trd_mem_u32",
-                    (8, _) => "trd_mem_u64",
-                    _ => "trd_mem_u32",
-                };
                 if self.config.has_tracing() {
+                    let load_fn = match (*width, *signed) {
+                        (1, true) => "trd_mem_i8",
+                        (1, false) => "trd_mem_u8",
+                        (2, true) => "trd_mem_i16",
+                        (2, false) => "trd_mem_u16",
+                        (4, true) if X::VALUE == 64 => "trd_mem_i32",
+                        (4, _) => "trd_mem_u32",
+                        (8, _) => "trd_mem_u64",
+                        _ => "trd_mem_u32",
+                    };
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
                     format!(
@@ -399,6 +399,17 @@ impl<X: Xlen> CEmitter<X> {
                         load_fn, pc_lit, op_lit, base, offset
                     )
                 } else {
+                    // Use direct memory functions when tracing disabled
+                    let load_fn = match (*width, *signed) {
+                        (1, true) => "rd_mem_i8",
+                        (1, false) => "rd_mem_u8",
+                        (2, true) => "rd_mem_i16",
+                        (2, false) => "rd_mem_u16",
+                        (4, true) if X::VALUE == 64 => "rd_mem_i32",
+                        (4, _) => "rd_mem_u32",
+                        (8, _) => "rd_mem_u64",
+                        _ => "rd_mem_u32",
+                    };
                     format!("{}(memory, {}, {})", load_fn, base, offset)
                 }
             }
@@ -408,17 +419,17 @@ impl<X: Xlen> CEmitter<X> {
                 signed,
             } => {
                 let base = self.render_expr(addr);
-                let load_fn = match (*width, *signed) {
-                    (1, true) => "trd_mem_i8",
-                    (1, false) => "trd_mem_u8",
-                    (2, true) => "trd_mem_i16",
-                    (2, false) => "trd_mem_u16",
-                    (4, true) if X::VALUE == 64 => "trd_mem_i32",
-                    (4, _) => "trd_mem_u32",
-                    (8, _) => "trd_mem_u64",
-                    _ => "trd_mem_u32",
-                };
                 if self.config.has_tracing() {
+                    let load_fn = match (*width, *signed) {
+                        (1, true) => "trd_mem_i8",
+                        (1, false) => "trd_mem_u8",
+                        (2, true) => "trd_mem_i16",
+                        (2, false) => "trd_mem_u16",
+                        (4, true) if X::VALUE == 64 => "trd_mem_i32",
+                        (4, _) => "trd_mem_u32",
+                        (8, _) => "trd_mem_u64",
+                        _ => "trd_mem_u32",
+                    };
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
                     format!(
@@ -426,6 +437,17 @@ impl<X: Xlen> CEmitter<X> {
                         load_fn, pc_lit, op_lit, base
                     )
                 } else {
+                    // Use direct memory functions when tracing disabled
+                    let load_fn = match (*width, *signed) {
+                        (1, true) => "rd_mem_i8",
+                        (1, false) => "rd_mem_u8",
+                        (2, true) => "rd_mem_i16",
+                        (2, false) => "rd_mem_u16",
+                        (4, true) if X::VALUE == 64 => "rd_mem_i32",
+                        (4, _) => "rd_mem_u32",
+                        (8, _) => "rd_mem_u64",
+                        _ => "rd_mem_u32",
+                    };
                     format!("{}(memory, {}, 0)", load_fn, base)
                 }
             }
@@ -445,9 +467,10 @@ impl<X: Xlen> CEmitter<X> {
                         )
                     }
                 } else if self.config.instret_mode.counts() {
-                    format!("trd_csr(state, instret, 0x{:x})", csr)
+                    // Use direct rd_csr when tracing disabled
+                    format!("rd_csr(state, instret, 0x{:x})", csr)
                 } else {
-                    format!("trd_csr(state, 0x{:x})", csr)
+                    format!("rd_csr(state, 0x{:x})", csr)
                 }
             }
             ReadExpr::Pc => "state->pc".to_string(),
@@ -524,7 +547,7 @@ impl<X: Xlen> CEmitter<X> {
                         // Check for tohost handling on 32-bit stores
                         if self.config.tohost_enabled && *width == 4 {
                             self.render_mem_write_tohost(&base, offset, &value_str, indent);
-                        } else {
+                        } else if self.config.has_tracing() {
                             let store_fn = match width {
                                 1 => "twr_mem_u8",
                                 2 => "twr_mem_u16",
@@ -532,25 +555,31 @@ impl<X: Xlen> CEmitter<X> {
                                 8 => "twr_mem_u64",
                                 _ => "twr_mem_u32",
                             };
-                            if self.config.has_tracing() {
-                                let pc_lit = self.fmt_addr(self.current_pc);
-                                let op_lit = self.current_op;
-                                self.writeln(
-                                    indent,
-                                    &format!(
-                                        "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
-                                        store_fn, pc_lit, op_lit, base, offset, value_str
-                                    ),
-                                );
-                            } else {
-                                self.writeln(
-                                    indent,
-                                    &format!(
-                                        "{}(memory, {}, {}, {});",
-                                        store_fn, base, offset, value_str
-                                    ),
-                                );
-                            }
+                            let pc_lit = self.fmt_addr(self.current_pc);
+                            let op_lit = self.current_op;
+                            self.writeln(
+                                indent,
+                                &format!(
+                                    "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
+                                    store_fn, pc_lit, op_lit, base, offset, value_str
+                                ),
+                            );
+                        } else {
+                            // Use direct memory functions when tracing disabled
+                            let store_fn = match width {
+                                1 => "wr_mem_u8",
+                                2 => "wr_mem_u16",
+                                4 => "wr_mem_u32",
+                                8 => "wr_mem_u64",
+                                _ => "wr_mem_u32",
+                            };
+                            self.writeln(
+                                indent,
+                                &format!(
+                                    "{}(memory, {}, {}, {});",
+                                    store_fn, base, offset, value_str
+                                ),
+                            );
                         }
                     }
                     WriteTarget::Csr(csr) => {
@@ -565,9 +594,10 @@ impl<X: Xlen> CEmitter<X> {
                                 ),
                             );
                         } else {
+                            // Use direct wr_csr when tracing disabled
                             self.writeln(
                                 indent,
-                                &format!("twr_csr(state, 0x{:x}, {});", csr, value_str),
+                                &format!("wr_csr(state, 0x{:x}, {});", csr, value_str),
                             );
                         }
                     }
@@ -674,9 +704,10 @@ impl<X: Xlen> CEmitter<X> {
                 ),
             );
         } else {
+            // Use direct wr_mem_u32 when tracing disabled
             self.writeln(
                 indent + 1,
-                &format!("twr_mem_u32(memory, {}, {}, {});", base, offset, value),
+                &format!("wr_mem_u32(memory, {}, {}, {});", base, offset, value),
             );
         }
         self.writeln(indent, "}");
@@ -779,7 +810,7 @@ impl<X: Xlen> CEmitter<X> {
     fn render_terminator(&mut self, term: &Terminator<X>, fall_pc: u64) {
         match term {
             Terminator::Fall { target } => {
-                // Explicit tail call for fall-through (matches Mojo)
+                // Explicit tail call for fall-through
                 let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
                 self.render_jump_static(target_pc);
             }
@@ -919,8 +950,8 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render branch with both taken and not-taken paths.
     ///
-    /// Matches Mojo pattern: emits trace_branch_taken inside if-block,
-    /// then trace_branch_not_taken after closing brace for fall-through.
+    /// Emits trace_branch_taken inside if-block, then trace_branch_not_taken
+    /// after closing brace for fall-through.
     fn render_branch(&mut self, cond: &str, target: u64, hint: BranchHint, fall_pc: u64) {
         let cond_str = match hint {
             BranchHint::Taken => format!("likely({})", cond),
@@ -1065,7 +1096,7 @@ impl<X: Xlen> CEmitter<X> {
     fn render_exit_impl(&mut self, code: &str, indent: usize) {
         let save_to_state = self.sig.save_to_state.clone();
         self.writeln(indent, "state->has_exited = true;");
-        self.writeln(indent, &format!("state->exit_code = (uint8_t)({});", code));
+        self.writeln(indent, &format!("state->exit_code = {};", code));
         let pc_lit = self.fmt_addr(self.current_pc);
         self.writeln(indent, &format!("state->pc = {};", pc_lit));
         if !save_to_state.is_empty() {

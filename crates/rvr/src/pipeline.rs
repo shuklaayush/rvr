@@ -105,7 +105,6 @@ impl<X: Xlen> Pipeline<X> {
     /// Build CFG: creates InstructionTable → BlockTable with optimizations.
     ///
     /// Builds InstructionTable from ALL executable segments, not just the entry segment.
-    /// This matches Mojo behavior for multi-segment binaries.
     ///
     /// # Errors
     ///

@@ -1,6 +1,6 @@
 //! Function signature generation for block functions.
 //!
-//! Generates C function signatures that match Mojo ABI:
+//! Generates C function signatures with:
 //! - state pointer + memory base
 //! - optional instret counter
 //! - tracer passed variables
@@ -34,7 +34,7 @@ pub fn reg_type<X: Xlen>() -> &'static str {
 /// Function signature for block functions.
 ///
 /// Captures parameter declarations, argument lists, and save/restore code
-/// that matches the Mojo ABI for generated C code.
+/// for generated C code.
 #[derive(Clone, Debug)]
 pub struct FnSignature {
     /// C function parameter declaration.

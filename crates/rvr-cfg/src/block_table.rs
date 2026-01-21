@@ -1,6 +1,6 @@
 //! Block table for CFG analysis and block transforms.
 //!
-//! Based on Mojo's BlockTable with support for merge, tail-dup, and superblock transforms.
+//! Supports merge, tail-dup, and superblock transforms.
 
 use std::collections::HashMap;
 

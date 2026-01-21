@@ -1,7 +1,6 @@
 //! RVR - RISC-V Static Recompiler
 //!
 //! Compiles RISC-V ELF binaries to optimized C code, then to native shared libraries.
-//! Designed for integration with Mojo-based execution environments.
 //!
 //! # Quick Start
 //!
@@ -12,8 +11,8 @@
 //!
 //! # Architecture
 //!
-//! RVR generates `.so` shared libraries that can be loaded by a host runtime
-//! (typically Mojo). The generated code:
+//! RVR generates `.so` shared libraries that can be loaded by a host runtime.
+//! The generated code:
 //!
 //! - Uses `preserve_none` calling convention for minimal overhead
 //! - Passes hot registers as function arguments (configurable)
@@ -40,8 +39,7 @@
 //!
 //! ## State Structure
 //!
-//! The `RvState` struct is defined in the generated header and must match
-//! the Mojo `RvState` layout. Key fields:
+//! The `RvState` struct is defined in the generated header. Key fields:
 //!
 //! - `memory`: Pointer to guest memory (allocated by host)
 //! - `regs[32]`: General-purpose registers

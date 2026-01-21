@@ -3,7 +3,7 @@
 use rvr::{ElfImage, EmitConfig, Pipeline, Recompiler, Rv64};
 use std::path::Path;
 
-const RISCV_TESTS_DIR: &str = "/home/ayush/projects/openvm-mojo/bin/riscv/tests";
+const RISCV_TESTS_DIR: &str = "../../bin/riscv/tests";
 
 fn test_binary_path(name: &str) -> std::path::PathBuf {
     Path::new(RISCV_TESTS_DIR).join(name)

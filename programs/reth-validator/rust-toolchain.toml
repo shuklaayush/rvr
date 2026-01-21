@@ -1,8 +1,3 @@
 [toolchain]
 channel = "nightly-2025-12-05"
 components = ["rust-src"]
-# Custom JSON targets used (all with Zbb extension):
-# - riscv32imac_zbb-openvm-zkvm-elf.json (RV32 IMAC+Zbb)
-# - riscv32emc-openvm-zkvm-elf.json (RV32E EMC+Zbb)
-# - riscv64imac_zbb-openvm-zkvm-elf.json (RV64 IMAC+Zbb)
-# - riscv64emc-openvm-zkvm-elf.json (RV64E EMC+Zbb)

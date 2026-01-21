@@ -876,9 +876,10 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
                     Expr::imm(pc + X::from_u64(size as u64)),
                 ));
             }
+            // Clear low bit for 2-byte alignment
             let target = Expr::and(
                 Expr::add(base, Expr::imm(X::sign_extend_32(*imm as u32))),
-                Expr::not(Expr::imm(X::from_u64(1))),
+                Expr::imm(X::from_u64(0xfffffffe)),
             );
             (stmts, Terminator::jump_dyn(target))
         }

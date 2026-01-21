@@ -1,7 +1,6 @@
 //! Instruction table for decoded instructions.
 //!
 //! Maintains decoded instructions, sizes, and raw opcodes.
-//! Based on Mojo's InstructionTable.
 
 use rvr_isa::{DecodedInstr, ExtensionRegistry, Xlen};
 

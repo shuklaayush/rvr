@@ -17,7 +17,7 @@ pub struct Rv64;
 /// Trait for register-width-dependent operations.
 ///
 /// Uses marker types (Rv32/Rv64) with associated types instead of const generics
-/// because Rust doesn't support type-level computation like Mojo's comptime.
+/// because Rust doesn't support type-level computation with const generics.
 pub trait Xlen: Copy + Clone + Send + Sync + Default + Debug + 'static {
     /// Register type (u32 for Rv32, u64 for Rv64).
     type Reg: Copy

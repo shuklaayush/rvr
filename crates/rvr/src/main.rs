@@ -116,8 +116,8 @@ enum OutputFormat {
     /// Human-readable output (default)
     #[default]
     Text,
-    /// Mojo-compatible output format
-    Mojo,
+    /// Raw key-value output (for scripting)
+    Raw,
     /// JSON output
     Json,
 }
@@ -359,7 +359,7 @@ fn print_single_result(format: OutputFormat, result: &rvr::RunResult) {
             println!("Time: {:.6}s", result.time_secs);
             println!("Speed: {}", rvr::bench::format_speed(result.mips));
         }
-        OutputFormat::Mojo => {
+        OutputFormat::Raw => {
             println!("instret: {}", result.instret);
             println!("time: {:.6}", result.time_secs);
             println!("speed: {}", rvr::bench::format_speed_shell(result.mips));
@@ -385,7 +385,7 @@ fn print_multi_result(
             println!("Avg time: {:.6}s", avg_time);
             println!("Avg speed: {}", rvr::bench::format_speed(avg_mips));
         }
-        OutputFormat::Mojo => {
+        OutputFormat::Raw => {
             println!("instret: {}", first.instret);
             println!("time: {:.6}", avg_time);
             println!("speed: {}", rvr::bench::format_speed_shell(avg_mips));

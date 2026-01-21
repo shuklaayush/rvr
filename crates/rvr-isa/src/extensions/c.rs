@@ -1040,8 +1040,8 @@ fn lift_jal<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, T
 fn lift_jr<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::I { rs1, .. } => {
-            let target = Expr::and(Expr::read(*rs1), Expr::not(Expr::imm(X::from_u64(1))));
-            (Vec::new(), Terminator::jump_dyn(target))
+            // Don't mask - return addresses from JAL/JALR are always aligned
+            (Vec::new(), Terminator::jump_dyn(Expr::read(*rs1)))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
@@ -1063,8 +1063,8 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
                     Expr::imm(pc + X::from_u64(size as u64)),
                 ));
             }
-            let target = Expr::and(base, Expr::not(Expr::imm(X::from_u64(1))));
-            (stmts, Terminator::jump_dyn(target))
+            // Don't mask - C.JALR has imm=0 and targets are always aligned
+            (stmts, Terminator::jump_dyn(base))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }
