@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rvr_isa::{ExtensionRegistry, Xlen};
+use tracing::{debug, trace, trace_span};
 
 use crate::analysis::ControlFlowAnalyzer;
 use crate::InstructionTable;
@@ -86,6 +87,11 @@ impl<X: Xlen> BlockTable<X> {
             instruction_table,
         };
         table.build_blocks(registry);
+        debug!(
+            blocks = table.blocks.len(),
+            unresolved_jumps = table.unresolved_jumps.len(),
+            "built block table"
+        );
         table
     }
 
@@ -138,7 +144,10 @@ impl<X: Xlen> BlockTable<X> {
         self.call_return_map = analysis.call_return_map;
         self.block_to_function = analysis.block_to_function;
 
-        self.create_blocks_from_leaders(&analysis.leaders, registry);
+        {
+            let _span = trace_span!("create_blocks").entered();
+            self.create_blocks_from_leaders(&analysis.leaders, registry);
+        }
     }
 
     /// Create blocks from leader set.
@@ -312,6 +321,9 @@ impl<X: Xlen> BlockTable<X> {
 
         let absorbed_count = self.blocks.len() - merged.len();
         self.blocks = merged;
+        if absorbed_count > 0 {
+            trace!(absorbed = absorbed_count, "merge_blocks complete");
+        }
         absorbed_count
     }
 
@@ -503,6 +515,9 @@ impl<X: Xlen> BlockTable<X> {
 
         let eliminated = self.blocks.len() - new_blocks.len();
         self.blocks = new_blocks;
+        if eliminated > 0 {
+            trace!(eliminated = eliminated, "tail_duplicate complete");
+        }
         eliminated
     }
 
@@ -680,14 +695,30 @@ impl<X: Xlen> BlockTable<X> {
 
         let absorbed_count = self.blocks.len() - new_blocks.len();
         self.blocks = new_blocks;
+        if absorbed_count > 0 {
+            trace!(
+                absorbed = absorbed_count,
+                taken_inlines = self.taken_inlines.len(),
+                "form_superblocks complete"
+            );
+        }
         absorbed_count
     }
 
     /// Apply all transforms in order: merge, tail-dup, superblock.
     pub fn optimize(&mut self, registry: &ExtensionRegistry<X>) -> (usize, usize, usize) {
-        let merged = self.merge_blocks(registry);
-        let tail_duped = self.tail_duplicate(DEFAULT_TAIL_DUP_SIZE, registry);
-        let superblocked = self.form_superblocks(DEFAULT_SUPERBLOCK_DEPTH, registry);
+        let merged = {
+            let _span = trace_span!("merge_blocks").entered();
+            self.merge_blocks(registry)
+        };
+        let tail_duped = {
+            let _span = trace_span!("tail_duplicate").entered();
+            self.tail_duplicate(DEFAULT_TAIL_DUP_SIZE, registry)
+        };
+        let superblocked = {
+            let _span = trace_span!("form_superblocks").entered();
+            self.form_superblocks(DEFAULT_SUPERBLOCK_DEPTH, registry)
+        };
 
         // Fix any stale mappings from chained absorptions
         self.fix_stale_mappings();

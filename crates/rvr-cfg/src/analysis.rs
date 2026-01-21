@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use tracing::debug;
+use tracing::{debug, trace, trace_span};
 
 use rvr_isa::{
     DecodedInstr, InstrArgs, Xlen, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT,
@@ -396,10 +396,15 @@ pub struct ControlFlowAnalyzer;
 
 impl ControlFlowAnalyzer {
     pub fn analyze<X: Xlen>(instruction_table: &InstructionTable<X>) -> ControlFlowResult {
-        let (function_entries, internal_targets, return_sites) =
-            collect_potential_targets(instruction_table);
+        let (function_entries, internal_targets, return_sites) = {
+            let _span = trace_span!("collect_targets").entered();
+            collect_potential_targets(instruction_table)
+        };
 
-        let call_return_map = build_call_return_map(instruction_table);
+        let call_return_map = {
+            let _span = trace_span!("build_call_return_map").entered();
+            build_call_return_map(instruction_table)
+        };
 
         let mut sorted_function_entries: Vec<u64> = function_entries.iter().copied().collect();
         sorted_function_entries.sort_unstable();
@@ -414,23 +419,29 @@ impl ControlFlowAnalyzer {
             }
         }
 
-        let (successors, unresolved_dynamic_jumps) = worklist(
-            instruction_table,
-            &function_entries,
-            &internal_targets,
-            &return_sites,
-            &sorted_function_entries,
-            &func_internal_targets,
-            &call_return_map,
-        );
+        let (successors, unresolved_dynamic_jumps) = {
+            let _span = trace_span!("worklist").entered();
+            worklist(
+                instruction_table,
+                &function_entries,
+                &internal_targets,
+                &return_sites,
+                &sorted_function_entries,
+                &func_internal_targets,
+                &call_return_map,
+            )
+        };
 
-        let leaders = compute_leaders(
-            instruction_table,
-            &successors,
-            &function_entries,
-            &internal_targets,
-            &return_sites,
-        );
+        let leaders = {
+            let _span = trace_span!("compute_leaders").entered();
+            compute_leaders(
+                instruction_table,
+                &successors,
+                &function_entries,
+                &internal_targets,
+                &return_sites,
+            )
+        };
 
         debug!(
             functions = function_entries.len(),
@@ -446,7 +457,10 @@ impl ControlFlowAnalyzer {
             }
         }
 
-        let predecessors = build_predecessors(&successors);
+        let predecessors = {
+            let _span = trace_span!("build_predecessors").entered();
+            build_predecessors(&successors)
+        };
 
         ControlFlowResult {
             successors,
@@ -747,6 +761,8 @@ fn worklist<X: Xlen>(
         successors.entry(pc).or_default().extend(succs);
     }
 
+    trace!(iterations = idx, "worklist complete");
+
     (successors, unresolved_dynamic_jumps)
 }
 
@@ -972,13 +988,26 @@ fn compute_leaders<X: Xlen>(
 }
 
 fn build_predecessors(successors: &HashMap<u64, HashSet<u64>>) -> HashMap<u64, HashSet<u64>> {
-    let mut predecessors: HashMap<u64, HashSet<u64>> = HashMap::new();
-    for (&pc, succs) in successors {
-        for succ in succs {
-            predecessors.entry(*succ).or_default().insert(pc);
-        }
-    }
-    predecessors
+    use rayon::prelude::*;
+
+    // Build partial maps in parallel, then merge
+    successors
+        .par_iter()
+        .fold(
+            HashMap::new,
+            |mut partial: HashMap<u64, HashSet<u64>>, (&pc, succs)| {
+                for &succ in succs {
+                    partial.entry(succ).or_default().insert(pc);
+                }
+                partial
+            },
+        )
+        .reduce(HashMap::new, |mut a, b| {
+            for (succ, preds) in b {
+                a.entry(succ).or_default().extend(preds);
+            }
+            a
+        })
 }
 
 fn scan_ro_segments_for_code_pointers<X: Xlen>(
