@@ -71,8 +71,13 @@ pub struct HostResult {
 }
 
 /// Run a compiled library and return results with perf counters.
-pub fn run_bench(lib_dir: &Path, elf_path: &Path, runs: usize) -> Result<RunResultWithPerf, String> {
-    let mut runner = Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
+pub fn run_bench(
+    lib_dir: &Path,
+    elf_path: &Path,
+    runs: usize,
+) -> Result<RunResultWithPerf, String> {
+    let mut runner =
+        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
 
     if runs <= 1 {
         runner

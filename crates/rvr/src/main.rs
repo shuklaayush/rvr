@@ -6,7 +6,7 @@ use std::process::Command;
 use clap::{Parser, Subcommand, ValueEnum};
 use rvr::bench::{self, Arch, TableRow};
 use rvr::tests::{self, TestConfig};
-use rvr::{Compiler, CompileOptions, InstretMode, SyscallMode};
+use rvr::{CompileOptions, Compiler, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
 use tracing::{error, info};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -178,6 +178,10 @@ enum Commands {
         /// Enable tohost check (for riscv-tests)
         #[arg(long)]
         tohost: bool,
+
+        /// Emit #line directives with source locations (requires debug info in ELF)
+        #[arg(long)]
+        line_info: bool,
 
         /// Instruction retirement mode
         #[arg(long, value_enum, default_value = "count")]
@@ -497,6 +501,7 @@ fn run_command(cli: &Cli) -> i32 {
             output,
             addr_check,
             tohost,
+            line_info,
             instret,
             syscalls,
             tracer,
@@ -512,6 +517,7 @@ fn run_command(cli: &Cli) -> i32 {
             let options = CompileOptions::new()
                 .with_addr_check(*addr_check)
                 .with_tohost(*tohost)
+                .with_line_info(*line_info)
                 .with_instret_mode((*instret).into())
                 .with_syscall_mode((*syscalls).into())
                 .with_tracer_config(tracer_config);
@@ -576,7 +582,12 @@ fn run_command(cli: &Cli) -> i32 {
                     RethBenchCommands::BuildElf { targets } => {
                         reth_build_elf(targets);
                     }
-                    RethBenchCommands::Compile { arch, trace, fast, cc } => {
+                    RethBenchCommands::Compile {
+                        arch,
+                        trace,
+                        fast,
+                        cc,
+                    } => {
                         reth_compile(arch, *trace, *fast, cc);
                     }
                     RethBenchCommands::Run {

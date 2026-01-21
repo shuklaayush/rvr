@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use rvr_cfg::{BlockTable, InstructionTable};
-use rvr_elf::ElfImage;
+use rvr_elf::{DebugInfo, ElfImage};
 use rvr_emit::{CProject, EmitConfig, EmitInputs, MemorySegment, NUM_REGS_E, NUM_REGS_I};
 use rvr_ir::BlockIR;
 use rvr_isa::{ExtensionRegistry, Xlen};
-use tracing::{debug, info, info_span, trace_span};
+use tracing::{debug, info, info_span, trace_span, warn};
 
 use crate::{Error, Result};
 
@@ -245,6 +245,64 @@ impl<X: Xlen> Pipeline<X> {
         }
 
         debug!(blocks = self.ir_blocks.len(), "lifted to IR");
+
+        Ok(())
+    }
+
+    /// Load debug info and attach source locations to instructions.
+    ///
+    /// Must be called after `lift_to_ir()`. Uses llvm-addr2line to resolve
+    /// instruction addresses to source file:line:function.
+    ///
+    /// # Arguments
+    ///
+    /// * `elf_path` - Path to the ELF file (needed by addr2line).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `lift_to_ir` has not been called.
+    /// Logs a warning if addr2line fails but does not return an error.
+    pub fn load_debug_info(&mut self, elf_path: &str) -> Result<()> {
+        let _span = info_span!("load_debug_info").entered();
+
+        if self.ir_blocks.is_empty() {
+            return Err(Error::CfgNotBuilt("load_debug_info"));
+        }
+
+        // Collect all instruction PCs
+        let addresses: Vec<u64> = self
+            .ir_blocks
+            .values()
+            .flat_map(|block| block.instructions.iter().map(|ir| X::to_u64(ir.pc)))
+            .collect();
+
+        debug!(addresses = addresses.len(), "resolving debug info");
+
+        // Load debug info via addr2line
+        let debug_info = match DebugInfo::load(elf_path, &addresses) {
+            Ok(info) => info,
+            Err(e) => {
+                warn!(error = %e, "failed to load debug info");
+                return Ok(());
+            }
+        };
+
+        if debug_info.is_empty() {
+            debug!("no debug info found");
+            return Ok(());
+        }
+
+        info!(locations = debug_info.len(), "loaded debug info");
+
+        // Attach source locations to instructions
+        for block in self.ir_blocks.values_mut() {
+            for instr in &mut block.instructions {
+                let pc = X::to_u64(instr.pc);
+                if let Some(loc) = debug_info.get(pc) {
+                    instr.set_source_loc(loc.clone());
+                }
+            }
+        }
 
         Ok(())
     }

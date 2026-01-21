@@ -198,7 +198,7 @@
 
 // Core types - always available
 pub use rvr_elf::{get_elf_xlen, ElfImage};
-pub use rvr_emit::{Compiler, EmitConfig, InstretMode, TracerConfig};
+pub use rvr_emit::{Compiler, EmitConfig, InstretMode, SyscallMode, TracerConfig};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
 mod pipeline;
@@ -241,20 +241,9 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Syscall handling mode for ECALL instructions.
-#[derive(Clone, Copy, Debug, Default)]
-pub enum SyscallMode {
-    /// Bare-metal syscalls (exit only).
-    #[default]
-    BareMetal,
-    /// Linux-style syscalls (brk/mmap/read/write, etc).
-    Linux,
-}
-
 /// RISC-V recompiler.
 pub struct Recompiler<X: Xlen> {
     config: EmitConfig<X>,
-    syscall_mode: SyscallMode,
     quiet: bool,
     _marker: PhantomData<X>,
 }
@@ -264,7 +253,6 @@ impl<X: Xlen> Recompiler<X> {
     pub fn new(config: EmitConfig<X>) -> Self {
         Self {
             config,
-            syscall_mode: SyscallMode::BareMetal,
             quiet: false,
             _marker: PhantomData,
         }
@@ -277,7 +265,7 @@ impl<X: Xlen> Recompiler<X> {
 
     /// Set syscall handling mode.
     pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
-        self.syscall_mode = mode;
+        self.config.syscall_mode = mode;
         self
     }
 
@@ -332,7 +320,7 @@ impl<X: Xlen> Recompiler<X> {
         std::fs::create_dir_all(output_dir)?;
 
         // Build pipeline with syscall handler selection.
-        let registry = match self.syscall_mode {
+        let registry = match self.config.syscall_mode {
             SyscallMode::BareMetal => ExtensionRegistry::standard(),
             SyscallMode::Linux => {
                 let abi = if image.is_rve() {
@@ -350,6 +338,15 @@ impl<X: Xlen> Recompiler<X> {
 
         // Lift to IR
         pipeline.lift_to_ir()?;
+
+        // Load debug info for #line directives (if enabled and ELF has debug info)
+        if self.config.emit_line_info {
+            if let Some(path_str) = elf_path.to_str() {
+                if let Err(e) = pipeline.load_debug_info(path_str) {
+                    warn!(error = %e, "failed to load debug info (continuing without #line directives)");
+                }
+            }
+        }
 
         // Emit C code
         let base_name = output_dir
@@ -371,6 +368,8 @@ pub struct CompileOptions {
     pub addr_check: bool,
     /// Enable tohost check (for riscv-tests).
     pub tohost: bool,
+    /// Emit #line directives with source locations (requires debug info in ELF).
+    pub line_info: bool,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
     /// Number of parallel compile jobs (0 = auto-detect based on CPU count).
@@ -400,6 +399,12 @@ impl CompileOptions {
     /// Set tohost enabled.
     pub fn with_tohost(mut self, enabled: bool) -> Self {
         self.tohost = enabled;
+        self
+    }
+
+    /// Set line_info enabled (for #line directives).
+    pub fn with_line_info(mut self, enabled: bool) -> Self {
+        self.line_info = enabled;
         self
     }
 
@@ -443,9 +448,16 @@ impl CompileOptions {
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
         config.tohost_enabled = self.tohost;
+        config.emit_line_info = self.line_info;
         config.instret_mode = self.instret_mode;
         config.tracer_config = self.tracer_config.clone();
         config.compiler = self.compiler;
+        config.syscall_mode = self.syscall_mode;
+    }
+
+    /// Check if line info is enabled.
+    pub fn has_line_info(&self) -> bool {
+        self.line_info
     }
 }
 
@@ -468,17 +480,13 @@ pub fn compile_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config)
-                .with_syscall_mode(options.syscall_mode)
-                .with_quiet(options.quiet);
+            let recompiler = Recompiler::<Rv32>::new(config).with_quiet(options.quiet);
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config)
-                .with_syscall_mode(options.syscall_mode)
-                .with_quiet(options.quiet);
+            let recompiler = Recompiler::<Rv64>::new(config).with_quiet(options.quiet);
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
     )
@@ -503,15 +511,13 @@ pub fn lift_to_c_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let recompiler =
-                Recompiler::<Rv32>::new(config).with_syscall_mode(options.syscall_mode);
+            let recompiler = Recompiler::<Rv32>::new(config);
             recompiler.lift(elf_path, output_dir)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let recompiler =
-                Recompiler::<Rv64>::new(config).with_syscall_mode(options.syscall_mode);
+            let recompiler = Recompiler::<Rv64>::new(config);
             recompiler.lift(elf_path, output_dir)
         },
     )

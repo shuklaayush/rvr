@@ -1,0 +1,153 @@
+//! Debug info extraction using llvm-addr2line.
+//!
+//! Resolves instruction addresses to source file:line:function mappings
+//! for generating #line directives in emitted C code.
+
+use std::collections::HashMap;
+use std::io::Write;
+use std::process::Command;
+
+use rvr_ir::SourceLoc;
+use tempfile::NamedTempFile;
+
+/// Debug info for an ELF file, mapping addresses to source locations.
+#[derive(Debug, Default)]
+pub struct DebugInfo {
+    locations: HashMap<u64, SourceLoc>,
+}
+
+impl DebugInfo {
+    /// Create empty debug info.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load debug info for a set of addresses from an ELF file.
+    ///
+    /// Writes addresses to a temp file and calls llvm-addr2line via shell.
+    pub fn load(elf_path: &str, addresses: &[u64]) -> Result<Self, String> {
+        if addresses.is_empty() {
+            return Ok(Self::new());
+        }
+
+        // Write addresses to temp file (one hex address per line)
+        let mut tmp =
+            NamedTempFile::new().map_err(|e| format!("failed to create temp file: {}", e))?;
+        for addr in addresses {
+            writeln!(tmp, "0x{:x}", addr)
+                .map_err(|e| format!("failed to write temp file: {}", e))?;
+        }
+        tmp.flush()
+            .map_err(|e| format!("failed to flush temp file: {}", e))?;
+
+        // Run llvm-addr2line via shell with file redirection
+        let cmd = format!(
+            "llvm-addr2line -e {} -f -C < {}",
+            elf_path,
+            tmp.path().display()
+        );
+
+        let output = Command::new("sh")
+            .args(["-c", &cmd])
+            .output()
+            .map_err(|e| format!("failed to run llvm-addr2line: {}", e))?;
+
+        // tmp is automatically cleaned up when dropped
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("llvm-addr2line failed: {}", stderr));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut info = Self::new();
+
+        // Parse output: alternating function name / file:line pairs
+        let lines: Vec<&str> = stdout.lines().collect();
+        let mut line_idx = 0;
+        let mut addr_idx = 0;
+
+        while line_idx + 1 < lines.len() && addr_idx < addresses.len() {
+            let func_line = lines[line_idx].trim();
+            let loc_line = lines[line_idx + 1].trim();
+
+            let loc = parse_location(func_line, loc_line);
+            if loc.is_valid() {
+                info.locations.insert(addresses[addr_idx], loc);
+            }
+
+            line_idx += 2;
+            addr_idx += 1;
+        }
+
+        Ok(info)
+    }
+
+    /// Get source location for an address.
+    pub fn get(&self, address: u64) -> Option<&SourceLoc> {
+        self.locations.get(&address)
+    }
+
+    /// Number of resolved locations.
+    pub fn len(&self) -> usize {
+        self.locations.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.locations.is_empty()
+    }
+}
+
+/// Parse addr2line output into a SourceLoc.
+fn parse_location(func_line: &str, loc_line: &str) -> SourceLoc {
+    // Function name
+    let function = if func_line == "??" {
+        String::new()
+    } else {
+        func_line.to_string()
+    };
+
+    // Location: "file:line" or "file:line (discriminator N)"
+    let (file, line) = if let Some(colon_idx) = loc_line.rfind(':') {
+        let file = &loc_line[..colon_idx];
+        let line_part = &loc_line[colon_idx + 1..];
+
+        // Strip discriminator if present
+        let line_str = line_part.split_whitespace().next().unwrap_or("0");
+
+        let line = line_str.parse::<u32>().unwrap_or(0);
+        (file.to_string(), line)
+    } else {
+        (String::from("??"), 0)
+    };
+
+    SourceLoc::new(&file, line, &function)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_location_valid() {
+        let loc = parse_location("main", "/path/to/file.c:42");
+        assert!(loc.is_valid());
+        assert_eq!(loc.file, "/path/to/file.c");
+        assert_eq!(loc.line, 42);
+        assert_eq!(loc.function, "main");
+    }
+
+    #[test]
+    fn test_parse_location_with_discriminator() {
+        let loc = parse_location("foo", "/path/file.c:10 (discriminator 1)");
+        assert!(loc.is_valid());
+        assert_eq!(loc.line, 10);
+    }
+
+    #[test]
+    fn test_parse_location_unknown() {
+        let loc = parse_location("??", "??:0");
+        assert!(!loc.is_valid());
+    }
+}
