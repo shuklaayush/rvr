@@ -1,48 +1,13 @@
-//! Benchmarking utilities with optional perf integration.
+//! Benchmarking utilities.
+//!
+//! Provides functions to benchmark compiled RISC-V programs with optional
+//! hardware performance counter collection.
 
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
-use crate::{RunResult, Runner};
-
-/// System-level performance statistics from `perf stat`.
-#[derive(Debug, Clone, Default)]
-pub struct PerfStats {
-    /// CPU cycles consumed.
-    pub cycles: Option<u64>,
-    /// Instructions per cycle.
-    pub ipc: Option<f64>,
-    /// Total branches executed.
-    pub branches: Option<u64>,
-    /// Branch misses.
-    pub branch_misses: Option<u64>,
-    /// Branch miss rate as percentage.
-    pub branch_miss_rate: Option<f64>,
-}
-
-/// Result of a benchmark run, combining execution metrics with perf stats.
-#[derive(Debug, Clone)]
-pub struct BenchResult {
-    /// Core execution result.
-    pub run: RunResult,
-    /// Optional perf statistics.
-    pub perf: Option<PerfStats>,
-}
-
-impl BenchResult {
-    /// Create from a run result without perf stats.
-    pub fn from_run(run: RunResult) -> Self {
-        Self { run, perf: None }
-    }
-
-    /// Create from run result with perf stats.
-    pub fn with_perf(run: RunResult, perf: PerfStats) -> Self {
-        Self {
-            run,
-            perf: Some(perf),
-        }
-    }
-}
+use crate::{PerfCounters, RunResultWithPerf, Runner};
 
 /// RISC-V architecture variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,223 +60,57 @@ impl std::fmt::Display for Arch {
     }
 }
 
-/// Benchmark configuration.
-#[derive(Debug, Clone)]
-pub struct BenchConfig {
-    /// Architectures to benchmark.
-    pub archs: Vec<Arch>,
-    /// Number of runs for averaging.
-    pub runs: usize,
-    /// Enable tracing.
-    pub trace: bool,
-    /// Fast mode (no instret counting).
-    pub fast: bool,
-    /// Use perf for system metrics.
-    pub perf: bool,
-    /// Skip compilation (use existing .so).
-    pub no_compile: bool,
+/// Result of running the host (native) binary.
+#[derive(Debug, Clone, Default)]
+pub struct HostResult {
+    /// Execution time in seconds.
+    pub time_secs: Option<f64>,
+    /// Hardware perf counters (if available).
+    pub perf: Option<PerfCounters>,
 }
 
-impl Default for BenchConfig {
-    fn default() -> Self {
-        Self {
-            archs: Arch::ALL.to_vec(),
-            runs: 3,
-            trace: false,
-            fast: false,
-            perf: true,
-            no_compile: false,
-        }
-    }
-}
-
-/// Check if perf is available and working.
-pub fn perf_available() -> bool {
-    Command::new("perf")
-        .args(["stat", "-e", "instructions", "true"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Run a compiled library with perf stat and parse the results.
-pub fn run_with_perf(lib_dir: &Path, runs: usize) -> Result<BenchResult, String> {
-    // Get the executable path for rvr
-    let rvr_path = std::env::current_exe()
-        .map_err(|e| format!("failed to get rvr path: {}", e))?;
-
-    // Run under perf stat
-    let output = Command::new("perf")
-        .args([
-            "stat",
-            "-e", "instructions,cycles,branches,branch-misses",
-        ])
-        .arg(&rvr_path)
-        .arg("run")
-        .arg(lib_dir)
-        .arg("--format")
-        .arg("mojo")
-        .arg("--runs")
-        .arg(runs.to_string())
-        .output()
-        .map_err(|e| format!("failed to run perf: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Parse mojo format from stdout
-    let instret = parse_mojo_field(&stdout, "instret").unwrap_or(0);
-    let time_secs = parse_mojo_field_f64(&stdout, "time").unwrap_or(0.0);
-    let mips = parse_mojo_speed(&stdout).unwrap_or(0.0);
-
-    let run = RunResult {
-        exit_code: if output.status.success() { 0 } else { 1 },
-        instret,
-        time_secs,
-        mips,
-    };
-
-    // Parse perf output from stderr
-    let perf = parse_perf_output(&stderr);
-
-    Ok(BenchResult::with_perf(run, perf))
-}
-
-/// Run without perf, just using the Runner directly.
-pub fn run_without_perf(lib_dir: &Path, runs: usize) -> Result<BenchResult, String> {
+/// Run a compiled library and return results with perf counters.
+pub fn run_bench(lib_dir: &Path, runs: usize) -> Result<RunResultWithPerf, String> {
     let runner = Runner::load(lib_dir)
         .map_err(|e| format!("failed to load library: {}", e))?;
 
     if runs <= 1 {
-        let result = runner.run()
-            .map_err(|e| format!("execution failed: {}", e))?;
-        Ok(BenchResult::from_run(result))
+        runner.run_with_counters()
+            .map_err(|e| format!("execution failed: {}", e))
     } else {
-        let results = runner.run_multiple(runs)
-            .map_err(|e| format!("execution failed: {}", e))?;
-
-        let avg_time = results.iter().map(|r| r.time_secs).sum::<f64>() / runs as f64;
-        let avg_mips = results.iter().map(|r| r.mips).sum::<f64>() / runs as f64;
-        let first = &results[0];
-
-        Ok(BenchResult::from_run(RunResult {
-            exit_code: first.exit_code,
-            instret: first.instret,
-            time_secs: avg_time,
-            mips: avg_mips,
-        }))
+        runner.run_multiple_with_counters(runs)
+            .map_err(|e| format!("execution failed: {}", e))
     }
 }
 
-fn parse_mojo_field(output: &str, field: &str) -> Option<u64> {
-    for line in output.lines() {
-        if let Some(rest) = line.strip_prefix(field) {
-            if let Some(rest) = rest.strip_prefix(':') {
-                return rest.trim().parse().ok();
-            }
-        }
+/// Run host binary and time it (for baseline comparison).
+pub fn run_host(host_bin: &Path) -> Result<HostResult, String> {
+    if !host_bin.exists() {
+        return Err("host binary not found".to_string());
     }
-    None
+
+    let start = Instant::now();
+    let status = Command::new(host_bin)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("failed to run host: {}", e))?;
+
+    let elapsed = start.elapsed().as_secs_f64();
+
+    if !status.success() {
+        return Err(format!("host exited with code {:?}", status.code()));
+    }
+
+    Ok(HostResult {
+        time_secs: Some(elapsed),
+        perf: None,
+    })
 }
 
-fn parse_mojo_field_f64(output: &str, field: &str) -> Option<f64> {
-    for line in output.lines() {
-        if let Some(rest) = line.strip_prefix(field) {
-            if let Some(rest) = rest.strip_prefix(':') {
-                return rest.trim().parse().ok();
-            }
-        }
-    }
-    None
-}
-
-fn parse_mojo_speed(output: &str) -> Option<f64> {
-    for line in output.lines() {
-        if let Some(rest) = line.strip_prefix("speed:") {
-            // Format: "123.45 MIPS"
-            let rest = rest.trim();
-            if let Some(num) = rest.strip_suffix(" MIPS") {
-                return num.trim().parse().ok();
-            }
-        }
-    }
-    None
-}
-
-fn parse_perf_output(stderr: &str) -> PerfStats {
-    let mut stats = PerfStats::default();
-
-    for line in stderr.lines() {
-        let line = line.trim();
-
-        // Parse "1,234,567 instructions" or similar
-        // Note: This is host instructions, not guest instret - we skip it
-
-        // Parse cycles
-        if line.contains("cycles") && !line.contains("stalled") {
-            if let Some(num) = extract_perf_number(line) {
-                stats.cycles = Some(num);
-            }
-        }
-
-        // Parse branches (not branch-misses)
-        if line.contains("branches") && !line.contains("branch-misses") {
-            if let Some(num) = extract_perf_number(line) {
-                stats.branches = Some(num);
-            }
-        }
-
-        // Parse branch-misses
-        if line.contains("branch-misses") {
-            if let Some(num) = extract_perf_number(line) {
-                stats.branch_misses = Some(num);
-            }
-        }
-    }
-
-    // Calculate derived metrics
-    if let (Some(branches), Some(misses)) = (stats.branches, stats.branch_misses) {
-        if branches > 0 {
-            stats.branch_miss_rate = Some((misses as f64 / branches as f64) * 100.0);
-        }
-    }
-
-    // IPC from perf output (look for pattern like "(0.85 insn per cycle)")
-    for line in stderr.lines() {
-        if line.contains("insn per cycle") || line.contains("IPC") {
-            if let Some(ipc) = extract_ipc(line) {
-                stats.ipc = Some(ipc);
-                break;
-            }
-        }
-    }
-
-    // Fallback: calculate IPC if we have cycles but perf didn't report it
-    // Note: We'd need host instructions for this, which perf reports
-
-    stats
-}
-
-fn extract_perf_number(line: &str) -> Option<u64> {
-    // perf output format: "  1,234,567      instructions"
-    let first_word = line.split_whitespace().next()?;
-    let cleaned: String = first_word.chars().filter(|c| c.is_ascii_digit()).collect();
-    cleaned.parse().ok()
-}
-
-fn extract_ipc(line: &str) -> Option<f64> {
-    // Look for patterns like "(0.85 insn per cycle)" or "# 0.85 IPC"
-    for part in line.split_whitespace() {
-        if let Ok(val) = part.trim_matches(|c: char| !c.is_ascii_digit() && c != '.').parse::<f64>() {
-            if val > 0.0 && val < 100.0 {
-                return Some(val);
-            }
-        }
-    }
-    None
-}
+// ============================================================================
+// Formatting utilities
+// ============================================================================
 
 /// Format a number with SI suffix (K, M, B).
 pub fn format_num(n: u64) -> String {
@@ -326,21 +125,134 @@ pub fn format_num(n: u64) -> String {
     }
 }
 
+/// Calculate overhead ratio (vm_time / host_time).
+pub fn calc_overhead(vm_time: f64, host_time: f64) -> Option<f64> {
+    if host_time > 0.0 {
+        Some(vm_time / host_time)
+    } else {
+        None
+    }
+}
+
+/// Format overhead as "X.Xx".
+pub fn format_overhead(oh: Option<f64>) -> String {
+    oh.map(|v| format!("{:.1}x", v)).unwrap_or_else(|| "-".to_string())
+}
+
+/// Format IPC value.
+pub fn format_ipc(ipc: Option<f64>) -> String {
+    ipc.map(|v| format!("{:.2}", v)).unwrap_or_else(|| "-".to_string())
+}
+
+/// Format branch miss rate as percentage.
+pub fn format_branch_miss(rate: Option<f64>) -> String {
+    rate.map(|v| format!("{:.2}%", v)).unwrap_or_else(|| "-".to_string())
+}
+
+/// Format speed value with appropriate unit (MIPS or BIPS).
+/// Input is in MIPS (millions of instructions per second).
+pub fn format_speed(mips: f64) -> String {
+    if mips <= 0.0 {
+        "-".to_string()
+    } else if mips >= 1000.0 {
+        // BIPS = billions of instructions per second
+        format!("{:.2} BIPS", mips / 1000.0)
+    } else if mips >= 1.0 {
+        format!("{:.0} MIPS", mips)
+    } else {
+        // Sub-MIPS: show with decimals
+        format!("{:.2} MIPS", mips)
+    }
+}
+
+/// Format speed for shell parsing (underscore instead of space).
+pub fn format_speed_shell(mips: f64) -> String {
+    if mips <= 0.0 {
+        "-".to_string()
+    } else if mips >= 1000.0 {
+        format!("{:.2}_BIPS", mips / 1000.0)
+    } else if mips >= 1.0 {
+        format!("{:.0}_MIPS", mips)
+    } else {
+        format!("{:.2}_MIPS", mips)
+    }
+}
+
+// ============================================================================
+// Table output
+// ============================================================================
+
 /// Row in a benchmark results table.
 #[derive(Debug, Clone)]
 pub struct TableRow {
-    pub arch: Arch,
-    pub result: Option<BenchResult>,
+    /// Row label (arch name or "host").
+    pub label: String,
+    /// Instruction count (guest instret), None for host.
+    pub instret: Option<u64>,
+    /// Execution time in seconds.
+    pub time_secs: Option<f64>,
+    /// Overhead compared to host (vm_time / host_time).
+    pub overhead: Option<f64>,
+    /// Speed in MIPS (guest MIPS), None for host.
+    pub mips: Option<f64>,
+    /// Instructions per cycle (host IPC).
+    pub ipc: Option<f64>,
+    /// Branch miss rate as percentage.
+    pub branch_miss_rate: Option<f64>,
+    /// Error message if benchmark failed.
     pub error: Option<String>,
 }
 
 impl TableRow {
-    pub fn success(arch: Arch, result: BenchResult) -> Self {
-        Self { arch, result: Some(result), error: None }
+    /// Create a row for the host baseline.
+    pub fn host(result: &HostResult) -> Self {
+        let (ipc, branch_miss_rate) = result.perf.as_ref()
+            .map(|p| (p.ipc(), p.branch_miss_rate()))
+            .unwrap_or((None, None));
+
+        Self {
+            label: "host".to_string(),
+            instret: None,
+            time_secs: result.time_secs,
+            overhead: Some(1.0),
+            mips: None,
+            ipc,
+            branch_miss_rate,
+            error: None,
+        }
     }
 
-    pub fn error(arch: Arch, error: String) -> Self {
-        Self { arch, result: None, error: Some(error) }
+    /// Create a row for a VM architecture.
+    pub fn arch(arch: Arch, result: &RunResultWithPerf, host_time: Option<f64>) -> Self {
+        let overhead = host_time.and_then(|ht| calc_overhead(result.result.time_secs, ht));
+        let (ipc, branch_miss_rate) = result.perf.as_ref()
+            .map(|p| (p.ipc(), p.branch_miss_rate()))
+            .unwrap_or((None, None));
+
+        Self {
+            label: arch.as_str().to_string(),
+            instret: Some(result.result.instret),
+            time_secs: Some(result.result.time_secs),
+            overhead,
+            mips: Some(result.result.mips),
+            ipc,
+            branch_miss_rate,
+            error: None,
+        }
+    }
+
+    /// Create an error row.
+    pub fn error(label: &str, error: String) -> Self {
+        Self {
+            label: label.to_string(),
+            instret: None,
+            time_secs: None,
+            overhead: None,
+            mips: None,
+            ipc: None,
+            branch_miss_rate: None,
+            error: Some(error),
+        }
     }
 }
 
@@ -356,38 +268,39 @@ pub fn print_table_header(trace: bool, fast: bool, runs: usize) {
     } else {
         "Base"
     };
-    println!("Mode: **{}** | Runs: **{}**", mode, runs);
+    println!("*Mode: **{}** | Runs: **{}***", mode, runs);
     println!();
-    println!("| Arch | Instret | Time | Speed | IPC | Branch Miss |");
-    println!("|------|---------|------|-------|-----|-------------|");
+    println!(
+        "| {:<6} | {:>10} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        "Arch", "Instret", "Time", "OH", "Speed", "IPC", "Branch Miss"
+    );
+    println!(
+        "|{:-<8}|{:-<12}|{:-<10}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
+        "", "", "", "", "", "", ""
+    );
 }
 
 /// Print a table row.
 pub fn print_table_row(row: &TableRow) {
-    match &row.result {
-        Some(result) => {
-            let instret = format_num(result.run.instret);
-            let time = format!("{:.3}s", result.run.time_secs);
-            let speed = format!("{:.2} MIPS", result.run.mips);
-
-            let ipc = result.perf.as_ref()
-                .and_then(|p| p.ipc)
-                .map(|v| format!("{:.2}", v))
-                .unwrap_or_else(|| "-".to_string());
-
-            let branch_miss = result.perf.as_ref()
-                .and_then(|p| p.branch_miss_rate)
-                .map(|v| format!("{:.2}%", v))
-                .unwrap_or_else(|| "-".to_string());
-
-            println!("| {} | {} | {} | {} | {} | {} |",
-                row.arch, instret, time, speed, ipc, branch_miss);
-        }
-        None => {
-            let err = row.error.as_deref().unwrap_or("-");
-            println!("| {} | {} | - | - | - | - |", row.arch, err);
-        }
+    if row.error.is_some() {
+        println!(
+            "| {:<6} | {:>10} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+            row.label, "-", "-", "-", "-", "-", "-"
+        );
+        return;
     }
+
+    let instret = row.instret.map(format_num).unwrap_or_else(|| "-".to_string());
+    let time = row.time_secs.map(|t| format!("{:.3}s", t)).unwrap_or_else(|| "-".to_string());
+    let overhead = format_overhead(row.overhead);
+    let speed = row.mips.map(format_speed).unwrap_or_else(|| "-".to_string());
+    let ipc = format_ipc(row.ipc);
+    let branch_miss = format_branch_miss(row.branch_miss_rate);
+
+    println!(
+        "| {:<6} | {:>10} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        row.label, instret, time, overhead, speed, ipc, branch_miss
+    );
 }
 
 /// Print the full table.
@@ -422,5 +335,31 @@ mod tests {
         assert_eq!(format_num(1500), "1.50K");
         assert_eq!(format_num(1_500_000), "1.50M");
         assert_eq!(format_num(7_920_000_000), "7.92B");
+    }
+
+    #[test]
+    fn test_calc_overhead() {
+        assert_eq!(calc_overhead(2.0, 1.0), Some(2.0));
+        assert_eq!(calc_overhead(1.5, 0.5), Some(3.0));
+        assert_eq!(calc_overhead(1.0, 0.0), None);
+    }
+
+    #[test]
+    fn test_format_overhead() {
+        assert_eq!(format_overhead(Some(2.5)), "2.5x");
+        assert_eq!(format_overhead(Some(10.0)), "10.0x");
+        assert_eq!(format_overhead(None), "-");
+    }
+
+    #[test]
+    fn test_format_speed() {
+        assert_eq!(format_speed(0.0), "-");
+        assert_eq!(format_speed(-1.0), "-");
+        assert_eq!(format_speed(0.5), "0.50 MIPS");
+        assert_eq!(format_speed(100.0), "100 MIPS");
+        assert_eq!(format_speed(999.0), "999 MIPS");
+        assert_eq!(format_speed(1000.0), "1.00 BIPS");
+        assert_eq!(format_speed(3861.0), "3.86 BIPS");
+        assert_eq!(format_speed(8609.0), "8.61 BIPS");
     }
 }
