@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Compiled to: {}", lib_path.display());
 
     // Run the compiled program
-    let runner = rvr::Runner::load(&output_dir)?;
+    let mut runner = rvr::Runner::load(&output_dir, &elf_path)?;
     let result = runner.run()?;
     println!("Exit code: {}", result.exit_code);
     println!("Instructions: {}", result.instret);

@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Compiled to: {}", output_dir.display());
 
-    let runner = rvr::Runner::load(&output_dir)?;
+    let mut runner = rvr::Runner::load(&output_dir, &elf_path)?;
     let result = runner.run()?;
     result.print_raw_format();
 

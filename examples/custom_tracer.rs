@@ -181,7 +181,7 @@ static inline void trace_csr_write(Tracer* t, uint64_t pc, uint16_t op, uint16_t
         return Err("make failed".into());
     }
 
-    let runner = Runner::load(&output_dir)?;
+    let mut runner = Runner::load(&output_dir, &elf_path)?;
     let result = runner.run()?;
     println!("Exit code: {}", result.exit_code);
     println!("Instructions: {}", result.instret);

@@ -96,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("make failed".into());
     }
 
-    let runner = rvr::Runner::load(&output_dir)?;
+    let mut runner = rvr::Runner::load(&output_dir, &elf_path)?;
     let result = runner.run()?;
 
     println!("Generated C code with custom ECALL handling");
