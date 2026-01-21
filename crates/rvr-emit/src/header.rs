@@ -13,7 +13,7 @@ use rvr_ir::Xlen;
 use crate::config::{EmitConfig, InstretMode};
 use crate::inputs::EmitInputs;
 use crate::signature::{reg_type, FnSignature};
-use crate::tracer::{TracerConfig, TracerKind};
+use crate::tracer::TracerConfig;
 
 /// Number of CSRs.
 pub const NUM_CSRS: usize = 4096;
@@ -871,50 +871,25 @@ fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         (1u64 << (64 - entry.leading_zeros())) - 1
     };
 
-    let tracer_decls = match cfg.tracer_config.builtin_kind() {
-        Some(TracerKind::Preflight) => String::from(
-            "void rv_tracer_preflight_setup(RvState* state, uint8_t* data, uint32_t data_capacity, void* pc, uint32_t pc_capacity);\n",
-        ),
-        Some(TracerKind::Stats) => {
-            String::from("void rv_tracer_stats_setup(RvState* state, uint64_t* addr_bitmap);\n")
-        }
-        _ => String::new(),
-    };
+    let rtype = crate::signature::reg_type::<X>();
 
     format!(
         r#"/* Dispatch: (pc & MASK) >> 1 */
-static inline size_t dispatch_index(uint32_t pc) {{
+static inline size_t dispatch_index({rtype} pc) {{
     return (pc & {mask:#x}) >> 1;
 }}
 
 extern const rv_fn dispatch_table[];
 
-/* Runtime functions */
-int rv_execute_from(RvState* state, uint32_t start_pc);
+/* Runtime function - only this is needed from C */
+int rv_execute_from(RvState* state, {rtype} start_pc);
 
-/* C API helpers for external runners */
-size_t rv_state_size(void);
-size_t rv_state_align(void);
-extern const uint32_t RV_REG_BYTES;
+/* Metadata constant (read via dlsym) */
 extern const uint32_t RV_TRACER_KIND;
-void rv_state_reset(RvState* state);
-uint64_t rv_get_instret(const RvState* state);
-uint8_t rv_get_exit_code(const RvState* state);
-bool rv_has_exited(const RvState* state);
-uint64_t rv_get_pc(const RvState* state);
-void rv_set_pc(RvState* state, uint64_t pc);
-uint8_t* rv_get_memory(const RvState* state);
-uint64_t rv_get_memory_size(void);
-uint32_t rv_get_entry_point(void);
-{tracer_decls}
-
-/* Memory initialization (provided by memory.c) */
-int rv_init_memory(RvState* state);
-void rv_free_memory(RvState* state);
 
 "#,
+        rtype = rtype,
         mask = mask,
-        tracer_decls = tracer_decls
     )
 }
 

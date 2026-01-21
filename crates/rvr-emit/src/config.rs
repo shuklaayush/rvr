@@ -4,6 +4,7 @@
 //! instret handling, and platform-specific defaults.
 
 use std::marker::PhantomData;
+use std::str::FromStr;
 
 use rvr_ir::Xlen;
 
@@ -13,6 +14,49 @@ use crate::tracer::TracerConfig;
 pub const NUM_REGS_I: usize = 32;
 /// Number of registers for E extension.
 pub const NUM_REGS_E: usize = 16;
+
+/// C compiler to use for generated code.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Compiler {
+    /// Clang (default) - supports C23, preserve_none, musttail, thin LTO.
+    #[default]
+    Clang,
+    /// GCC - uses C2x, standard LTO.
+    Gcc,
+}
+
+impl Compiler {
+    /// Command name for this compiler.
+    pub fn command(&self) -> &'static str {
+        match self {
+            Self::Clang => "clang",
+            Self::Gcc => "gcc",
+        }
+    }
+
+    /// Check if this compiler is clang.
+    pub fn is_clang(&self) -> bool {
+        matches!(self, Self::Clang)
+    }
+}
+
+impl FromStr for Compiler {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "clang" => Ok(Self::Clang),
+            "gcc" => Ok(Self::Gcc),
+            _ => Err(format!("unknown compiler '{}', expected 'clang' or 'gcc'", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for Compiler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.command())
+    }
+}
 
 /// Register priority order for hot register selection.
 /// Higher priority registers are chosen first when slots are limited.
@@ -122,6 +166,8 @@ pub struct EmitConfig<X: Xlen> {
     pub memory_bits: u8,
     /// Tracer configuration.
     pub tracer_config: TracerConfig,
+    /// C compiler to use.
+    pub compiler: Compiler,
     _marker: PhantomData<X>,
 }
 
@@ -143,6 +189,7 @@ impl<X: Xlen> EmitConfig<X> {
             tohost_enabled: false,
             memory_bits: 32,
             tracer_config: TracerConfig::none(),
+            compiler: Compiler::default(),
             _marker: PhantomData,
         }
     }
@@ -233,6 +280,12 @@ impl<X: Xlen> EmitConfig<X> {
     /// Set tohost enabled.
     pub fn with_tohost(mut self, enabled: bool) -> Self {
         self.tohost_enabled = enabled;
+        self
+    }
+
+    /// Set C compiler.
+    pub fn with_compiler(mut self, compiler: Compiler) -> Self {
+        self.compiler = compiler;
         self
     }
 

@@ -121,9 +121,6 @@ static const Segment segments[] = {
 
     s.push_str("};\n\n");
 
-    // Memory init/free functions
-    s.push_str(&gen_memory_functions(cfg));
-
     s
 }
 
@@ -155,52 +152,6 @@ fn gen_segment_data(index: usize, seg: &MemorySegment) -> String {
 
     s.push_str("};\n\n");
     s
-}
-
-fn gen_memory_functions(cfg: &MemoryConfig) -> String {
-    format!(
-        r#"/* Guard size (>= page size and max load/store offset +/-2048) */
-constexpr size_t GUARD_SIZE = 1 << 14;
-
-int rv_init_memory(RvState* state) {{
-    size_t total_size = RV_MEMORY_SIZE + 2 * GUARD_SIZE;
-
-    /* Allocate with guard pages on each side */
-    uint8_t* region = (uint8_t*)mmap(nullptr, total_size,
-        PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (region == MAP_FAILED) {{
-        perror("mmap");
-        return 1;
-    }}
-    state->memory = region + GUARD_SIZE;
-    mprotect(state->memory, RV_MEMORY_SIZE, PROT_READ | PROT_WRITE);
-
-    /* Copy segment data */
-    for (size_t i = 0; i < sizeof(segments)/sizeof(segments[0]); i++) {{
-        if (segments[i].data != nullptr && segments[i].filesz > 0) {{
-            memcpy(state->memory + segments[i].vaddr,
-                   segments[i].data, segments[i].filesz);
-        }}
-        if (segments[i].memsz > segments[i].filesz) {{
-            memset(state->memory + segments[i].vaddr + segments[i].filesz, 0,
-                   segments[i].memsz - segments[i].filesz);
-        }}
-    }}
-
-    state->start_brk = {initial_brk};
-    state->brk = state->start_brk;
-    return 0;
-}}
-
-void rv_free_memory(RvState* state) {{
-    if (state->memory != nullptr) {{
-        munmap(state->memory - GUARD_SIZE, RV_MEMORY_SIZE + 2 * GUARD_SIZE);
-        state->memory = nullptr;
-    }}
-}}
-"#,
-        initial_brk = cfg.initial_brk,
-    )
 }
 
 /// Write binary segment files for C23 #embed directive.
@@ -279,9 +230,6 @@ static const Segment segments[] = {
 
     s.push_str("};\n\n");
 
-    // Memory init/free functions
-    s.push_str(&gen_memory_functions(cfg));
-
     s
 }
 
@@ -301,9 +249,7 @@ mod tests {
         let memory = gen_memory_file(&cfg);
 
         assert!(memory.contains("segment_0_data"));
-        assert!(memory.contains("rv_init_memory"));
-        assert!(memory.contains("rv_free_memory"));
-        assert!(memory.contains("GUARD_SIZE"));
+        assert!(memory.contains("segments[]"));
     }
 
     #[test]

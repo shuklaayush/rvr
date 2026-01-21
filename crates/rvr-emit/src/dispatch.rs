@@ -118,108 +118,14 @@ fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
             }
         }
     };
-    let tracer_helpers = match cfg.tracer_kind {
-        Some(TracerKind::Preflight) => format!(
-            r#"
-/* Tracer setup (preflight) */
-void rv_tracer_preflight_setup(RvState* state, uint8_t* data, uint32_t data_capacity, void* pc, uint32_t pc_capacity) {{
-    (void)data_capacity;
-    (void)pc_capacity;
-    if (!state) return;
-    memset(&state->tracer, 0, sizeof(Tracer));
-    state->tracer.data = data;
-    state->tracer.pc = ({rtype}*)pc;
-}}
-"#,
-            rtype = crate::signature::reg_type::<X>()
-        ),
-        Some(TracerKind::Stats) => r#"
-/* Tracer setup (stats) */
-void rv_tracer_stats_setup(RvState* state, uint64_t* addr_bitmap) {
-    if (!state) return;
-    memset(&state->tracer, 0, sizeof(Tracer));
-    state->tracer.addr_bitmap = addr_bitmap;
-}
-"#
-        .to_string(),
-        _ => String::new(),
-    };
 
     format!(
-        r#"/* C API helpers for external runners */
+        r#"/* Minimal C API - state management happens in Rust */
 
-/* Return size of RvState struct */
-size_t rv_state_size(void) {{
-    return sizeof(RvState);
-}}
-
-/* Return alignment of RvState struct */
-size_t rv_state_align(void) {{
-    return _Alignof(RvState);
-}}
-
-/* Exported metadata constants (read via dlsym) */
-const uint32_t RV_REG_BYTES = XLEN / 8;
+/* Exported metadata constant (read via dlsym) */
 const uint32_t RV_TRACER_KIND = {tracer_kind};
-
-/* Reset RvState to initial values (zero regs/csrs, set pc, clear exit) */
-void rv_state_reset(RvState* state) {{
-    if (!state) return;
-    memset(state->regs, 0, sizeof(state->regs));
-    memset(state->csrs, 0, sizeof(state->csrs));
-    state->pc = RV_ENTRY_POINT;
-    state->instret = 0;
-    state->reservation_valid = 0;
-    state->has_exited = 0;
-    state->exit_code = 0;
-    state->brk = state->start_brk;
-}}
-
-/* Get instruction count */
-uint64_t rv_get_instret(const RvState* state) {{
-    return state ? state->instret : 0;
-}}
-
-/* Get exit code */
-uint8_t rv_get_exit_code(const RvState* state) {{
-    return state ? state->exit_code : 0;
-}}
-
-/* Check if execution has exited */
-bool rv_has_exited(const RvState* state) {{
-    return state ? state->has_exited : true;
-}}
-
-/* Get current PC */
-uint64_t rv_get_pc(const RvState* state) {{
-    return state ? (uint64_t)state->pc : 0;
-}}
-
-/* Set PC */
-void rv_set_pc(RvState* state, uint64_t pc) {{
-    if (state) state->pc = ({rtype})pc;
-}}
-
-/* Get memory pointer */
-uint8_t* rv_get_memory(const RvState* state) {{
-    return state ? state->memory : nullptr;
-}}
-
-/* Get memory size */
-uint64_t rv_get_memory_size(void) {{
-    return RV_MEMORY_SIZE;
-}}
-
-/* Get entry point */
-uint32_t rv_get_entry_point(void) {{
-    return RV_ENTRY_POINT;
-}}
-
-{tracer_helpers}
 "#,
         tracer_kind = tracer_kind_val,
-        tracer_helpers = tracer_helpers,
-        rtype = crate::signature::reg_type::<X>(),
     )
 }
 
@@ -242,10 +148,12 @@ fn gen_runtime_functions<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
         ""
     };
 
+    let reg_type = crate::signature::reg_type::<X>();
+
     format!(
         r#"/* Execute from given PC. Returns: 0=continue, 1=exited, 2=suspended */
 __attribute__((hot, nonnull))
-int rv_execute_from(RvState* restrict state, uint32_t start_pc) {{
+int rv_execute_from(RvState* restrict state, {reg_type} start_pc) {{
     {trace_init}
     state->pc = start_pc;
     dispatch_table[dispatch_index(start_pc)]({args_from_state});
@@ -254,6 +162,7 @@ int rv_execute_from(RvState* restrict state, uint32_t start_pc) {{
     return 0;
 }}
 "#,
+        reg_type = reg_type,
         args_from_state = cfg.sig.args_from_state,
         suspend_check = suspend_check,
         trace_init = trace_init,
