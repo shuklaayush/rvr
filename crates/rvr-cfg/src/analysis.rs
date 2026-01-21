@@ -1,8 +1,7 @@
 //! Control flow analysis used to identify basic block leaders and targets.
 
-use std::collections::{HashMap, HashSet};
-
 use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace, trace_span};
 
 use rvr_isa::{
@@ -385,12 +384,12 @@ impl DecodedInstruction {
 }
 
 pub struct ControlFlowResult {
-    pub successors: HashMap<u64, HashSet<u64>>,
-    pub predecessors: HashMap<u64, HashSet<u64>>,
-    pub unresolved_dynamic_jumps: HashSet<u64>,
-    pub leaders: HashSet<u64>,
-    pub call_return_map: HashMap<u64, HashSet<u64>>,
-    pub block_to_function: HashMap<u64, u64>,
+    pub successors: FxHashMap<u64, FxHashSet<u64>>,
+    pub predecessors: FxHashMap<u64, FxHashSet<u64>>,
+    pub unresolved_dynamic_jumps: FxHashSet<u64>,
+    pub leaders: FxHashSet<u64>,
+    pub call_return_map: FxHashMap<u64, FxHashSet<u64>>,
+    pub block_to_function: FxHashMap<u64, u64>,
 }
 
 pub struct ControlFlowAnalyzer;
@@ -410,7 +409,7 @@ impl ControlFlowAnalyzer {
         let mut sorted_function_entries: Vec<u64> = function_entries.iter().copied().collect();
         sorted_function_entries.sort_unstable();
 
-        let mut func_internal_targets: HashMap<u64, HashSet<u64>> = HashMap::new();
+        let mut func_internal_targets: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
         for target in &internal_targets {
             if let Some(func_start) = binary_search_le(&sorted_function_entries, *target) {
                 func_internal_targets
@@ -451,7 +450,7 @@ impl ControlFlowAnalyzer {
             "CFG analysis complete"
         );
 
-        let mut block_to_function = HashMap::new();
+        let mut block_to_function = FxHashMap::default();
         for leader in &leaders {
             if let Some(func) = binary_search_le(&sorted_function_entries, *leader) {
                 block_to_function.insert(*leader, func);
@@ -476,10 +475,10 @@ impl ControlFlowAnalyzer {
 
 fn collect_potential_targets<X: Xlen>(
     instruction_table: &InstructionTable<X>,
-) -> (HashSet<u64>, HashSet<u64>, HashSet<u64>) {
-    let mut function_entries = HashSet::new();
-    let mut internal_targets = HashSet::new();
-    let mut return_sites = HashSet::new();
+) -> (FxHashSet<u64>, FxHashSet<u64>, FxHashSet<u64>) {
+    let mut function_entries = FxHashSet::default();
+    let mut internal_targets = FxHashSet::default();
+    let mut return_sites = FxHashSet::default();
 
     function_entries.insert(instruction_table.entry_point());
 
@@ -627,8 +626,8 @@ fn collect_potential_targets<X: Xlen>(
 
 fn build_call_return_map<X: Xlen>(
     instruction_table: &InstructionTable<X>,
-) -> HashMap<u64, HashSet<u64>> {
-    let mut call_return_map: HashMap<u64, HashSet<u64>> = HashMap::new();
+) -> FxHashMap<u64, FxHashSet<u64>> {
+    let mut call_return_map: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
     let mut pc = instruction_table.base_address();
     let end = instruction_table.end_address();
 
@@ -668,18 +667,19 @@ fn build_call_return_map<X: Xlen>(
 
 fn worklist<X: Xlen>(
     instruction_table: &InstructionTable<X>,
-    function_entries: &HashSet<u64>,
-    internal_targets: &HashSet<u64>,
-    return_sites: &HashSet<u64>,
+    function_entries: &FxHashSet<u64>,
+    internal_targets: &FxHashSet<u64>,
+    return_sites: &FxHashSet<u64>,
     sorted_function_entries: &[u64],
-    func_internal_targets: &HashMap<u64, HashSet<u64>>,
-    call_return_map: &HashMap<u64, HashSet<u64>>,
-) -> (HashMap<u64, HashSet<u64>>, HashSet<u64>) {
-    let mut states: HashMap<u64, RegisterState> = HashMap::new();
+    func_internal_targets: &FxHashMap<u64, FxHashSet<u64>>,
+    call_return_map: &FxHashMap<u64, FxHashSet<u64>>,
+) -> (FxHashMap<u64, FxHashSet<u64>>, FxHashSet<u64>) {
+    // Use FxHash variants for faster integer-key hashing
+    let mut states: FxHashMap<u64, RegisterState> = FxHashMap::default();
     let mut worklist = Vec::new();
-    let mut in_worklist = HashSet::new();
-    let mut successors: HashMap<u64, HashSet<u64>> = HashMap::new();
-    let mut unresolved_dynamic_jumps = HashSet::new();
+    let mut in_worklist: FxHashSet<u64> = FxHashSet::default();
+    let mut successors: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
+    let mut unresolved_dynamic_jumps: FxHashSet<u64> = FxHashSet::default();
 
     let entry = instruction_table.entry_point();
     states.insert(entry, RegisterState::new());
@@ -775,14 +775,14 @@ fn get_successors<X: Xlen>(
     size: u64,
     decoded: &DecodedInstruction,
     state: &RegisterState,
-    function_entries: &HashSet<u64>,
-    return_sites: &HashSet<u64>,
+    function_entries: &FxHashSet<u64>,
+    return_sites: &FxHashSet<u64>,
     sorted_function_entries: &[u64],
-    func_internal_targets: &HashMap<u64, HashSet<u64>>,
-    call_return_map: &HashMap<u64, HashSet<u64>>,
-    unresolved_dynamic_jumps: &mut HashSet<u64>,
-) -> HashSet<u64> {
-    let mut result = HashSet::new();
+    func_internal_targets: &FxHashMap<u64, FxHashSet<u64>>,
+    call_return_map: &FxHashMap<u64, FxHashSet<u64>>,
+    unresolved_dynamic_jumps: &mut FxHashSet<u64>,
+) -> FxHashSet<u64> {
+    let mut result = FxHashSet::default();
 
     match decoded.kind {
         InstrKind::Jal => {
@@ -957,12 +957,12 @@ fn transfer<X: Xlen>(
 
 fn compute_leaders<X: Xlen>(
     instruction_table: &InstructionTable<X>,
-    successors: &HashMap<u64, HashSet<u64>>,
-    function_entries: &HashSet<u64>,
-    internal_targets: &HashSet<u64>,
-    return_sites: &HashSet<u64>,
-) -> HashSet<u64> {
-    let mut leaders = HashSet::new();
+    successors: &FxHashMap<u64, FxHashSet<u64>>,
+    function_entries: &FxHashSet<u64>,
+    internal_targets: &FxHashSet<u64>,
+    return_sites: &FxHashSet<u64>,
+) -> FxHashSet<u64> {
+    let mut leaders = FxHashSet::default();
     leaders.insert(instruction_table.entry_point());
     leaders.extend(function_entries.iter().copied());
     leaders.extend(internal_targets.iter().copied());
@@ -988,20 +988,22 @@ fn compute_leaders<X: Xlen>(
     leaders
 }
 
-fn build_predecessors(successors: &HashMap<u64, HashSet<u64>>) -> HashMap<u64, HashSet<u64>> {
+fn build_predecessors(
+    successors: &FxHashMap<u64, FxHashSet<u64>>,
+) -> FxHashMap<u64, FxHashSet<u64>> {
     // Build partial maps in parallel, then merge
     successors
         .par_iter()
         .fold(
-            HashMap::new,
-            |mut partial: HashMap<u64, HashSet<u64>>, (&pc, succs)| {
+            FxHashMap::default,
+            |mut partial: FxHashMap<u64, FxHashSet<u64>>, (&pc, succs)| {
                 for &succ in succs {
                     partial.entry(succ).or_default().insert(pc);
                 }
                 partial
             },
         )
-        .reduce(HashMap::new, |mut a, b| {
+        .reduce(FxHashMap::default, |mut a, b| {
             for (succ, preds) in b {
                 a.entry(succ).or_default().extend(preds);
             }
@@ -1011,7 +1013,7 @@ fn build_predecessors(successors: &HashMap<u64, HashSet<u64>>) -> HashMap<u64, H
 
 fn scan_ro_segments_for_code_pointers<X: Xlen>(
     instruction_table: &InstructionTable<X>,
-    internal_targets: &mut HashSet<u64>,
+    internal_targets: &mut FxHashSet<u64>,
 ) {
     let width = if X::VALUE == 64 { 8 } else { 4 };
     for segment in instruction_table.ro_segments() {

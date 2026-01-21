@@ -49,16 +49,8 @@ pub fn init() {
         Unit::Count,
         "Total host branch mispredictions"
     );
-    describe_counter!(
-        "rvr_tests_passed_total",
-        Unit::Count,
-        "Total tests passed"
-    );
-    describe_counter!(
-        "rvr_tests_failed_total",
-        Unit::Count,
-        "Total tests failed"
-    );
+    describe_counter!("rvr_tests_passed_total", Unit::Count, "Total tests passed");
+    describe_counter!("rvr_tests_failed_total", Unit::Count, "Total tests failed");
     describe_counter!(
         "rvr_tests_skipped_total",
         Unit::Count,
@@ -288,7 +280,9 @@ fn key_to_string(key: &Key) -> String {
     if labels.len() == 0 {
         name.to_string()
     } else {
-        let label_str: Vec<String> = labels.map(|l| format!("{}={}", l.key(), l.value())).collect();
+        let label_str: Vec<String> = labels
+            .map(|l| format!("{}={}", l.key(), l.value()))
+            .collect();
         format!("{}{{{}}}", name, label_str.join(","))
     }
 }
@@ -458,15 +452,9 @@ mod tests {
             storage: counters,
         };
         metrics::CounterFn::increment(&counter, 5);
-        assert_eq!(
-            counter.storage.values.read().get("test_counter"),
-            Some(&5)
-        );
+        assert_eq!(counter.storage.values.read().get("test_counter"), Some(&5));
         metrics::CounterFn::absolute(&counter, 10);
-        assert_eq!(
-            counter.storage.values.read().get("test_counter"),
-            Some(&10)
-        );
+        assert_eq!(counter.storage.values.read().get("test_counter"), Some(&10));
 
         // Test gauge
         let gauge = CliGauge {
@@ -474,9 +462,6 @@ mod tests {
             storage: gauges,
         };
         metrics::GaugeFn::set(&gauge, 3.14);
-        assert_eq!(
-            gauge.storage.values.read().get("test_gauge"),
-            Some(&3.14)
-        );
+        assert_eq!(gauge.storage.values.read().get("test_gauge"), Some(&3.14));
     }
 }

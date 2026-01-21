@@ -2,8 +2,9 @@
 //!
 //! Based on Mojo's BlockTable with support for merge, tail-dup, and superblock transforms.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, trace, trace_span};
 
@@ -50,15 +51,15 @@ pub struct BlockTable<X: Xlen> {
     /// Taken path inlines: branch_pc -> (inline_start, inline_end).
     pub taken_inlines: HashMap<u64, (u64, u64)>,
     /// Predecessors map: PC -> set of predecessor PCs.
-    pub predecessors: HashMap<u64, HashSet<u64>>,
+    pub predecessors: FxHashMap<u64, FxHashSet<u64>>,
     /// Successors map: PC -> set of successor PCs.
-    pub successors: HashMap<u64, HashSet<u64>>,
+    pub successors: FxHashMap<u64, FxHashSet<u64>>,
     /// Unresolved dynamic jumps.
-    pub unresolved_jumps: HashSet<u64>,
+    pub unresolved_jumps: FxHashSet<u64>,
     /// Call return map: callee -> set of return addresses.
-    pub call_return_map: HashMap<u64, HashSet<u64>>,
+    pub call_return_map: FxHashMap<u64, FxHashSet<u64>>,
     /// Block to function mapping: block_start -> function_entry.
-    pub block_to_function: HashMap<u64, u64>,
+    pub block_to_function: FxHashMap<u64, u64>,
     /// Reference to instruction table.
     instruction_table: InstructionTable<X>,
 }
@@ -79,11 +80,11 @@ impl<X: Xlen> BlockTable<X> {
             absorbed_to_merged: HashMap::new(),
             block_continuations: HashMap::new(),
             taken_inlines: HashMap::new(),
-            predecessors: HashMap::new(),
-            successors: HashMap::new(),
-            unresolved_jumps: HashSet::new(),
-            call_return_map: HashMap::new(),
-            block_to_function: HashMap::new(),
+            predecessors: FxHashMap::default(),
+            successors: FxHashMap::default(),
+            unresolved_jumps: FxHashSet::default(),
+            call_return_map: FxHashMap::default(),
+            block_to_function: FxHashMap::default(),
             instruction_table,
         };
         table.build_blocks(registry);
@@ -102,11 +103,11 @@ impl<X: Xlen> BlockTable<X> {
             absorbed_to_merged: HashMap::new(),
             block_continuations: HashMap::new(),
             taken_inlines: HashMap::new(),
-            predecessors: HashMap::new(),
-            successors: HashMap::new(),
-            unresolved_jumps: HashSet::new(),
-            call_return_map: HashMap::new(),
-            block_to_function: HashMap::new(),
+            predecessors: FxHashMap::default(),
+            successors: FxHashMap::default(),
+            unresolved_jumps: FxHashSet::default(),
+            call_return_map: FxHashMap::default(),
+            block_to_function: FxHashMap::default(),
             instruction_table,
         };
         table.build_linear_blocks();
@@ -153,7 +154,7 @@ impl<X: Xlen> BlockTable<X> {
     /// Create blocks from leader set.
     fn create_blocks_from_leaders(
         &mut self,
-        leaders: &HashSet<u64>,
+        leaders: &FxHashSet<u64>,
         registry: &ExtensionRegistry<X>,
     ) {
         // Sort leaders
@@ -260,7 +261,7 @@ impl<X: Xlen> BlockTable<X> {
             .collect();
 
         // Find absorbable blocks
-        let mut absorbed = HashSet::new();
+        let mut absorbed = FxHashSet::default();
         for block in &self.blocks {
             if absorbed.contains(&block.start) {
                 continue;
@@ -382,7 +383,7 @@ impl<X: Xlen> BlockTable<X> {
             self.blocks.iter().map(|b| (b.last_pc, b.start)).collect();
 
         // Find blocks eligible for tail duplication
-        let mut to_duplicate = HashSet::new();
+        let mut to_duplicate = FxHashSet::default();
 
         for block in &self.blocks {
             // Skip entry point
@@ -540,11 +541,11 @@ impl<X: Xlen> BlockTable<X> {
             .collect();
 
         // Build set of blocks that are already merge targets
-        let merge_targets: HashSet<u64> = self.absorbed_to_merged.values().copied().collect();
+        let merge_targets: FxHashSet<u64> = self.absorbed_to_merged.values().copied().collect();
 
         // Find superblock chains
-        let mut absorbed = HashSet::new();
-        let mut superblock_heads = HashSet::new();
+        let mut absorbed = FxHashSet::default();
+        let mut superblock_heads = FxHashSet::default();
         let mut superblock_chains: HashMap<u64, Vec<u64>> = HashMap::new();
 
         for block in &self.blocks {
@@ -681,7 +682,6 @@ impl<X: Xlen> BlockTable<X> {
                     .entry(*head_start)
                     .or_default()
                     .push((absorbed_block.start, absorbed_block.end));
-
             }
         }
 
@@ -733,7 +733,7 @@ impl<X: Xlen> BlockTable<X> {
     /// chains to ensure all mappings point to actually remaining blocks.
     fn fix_stale_mappings(&mut self) {
         // Build set of remaining block starts
-        let remaining: HashSet<u64> = self.blocks.iter().map(|b| b.start).collect();
+        let remaining: FxHashSet<u64> = self.blocks.iter().map(|b| b.start).collect();
 
         // For each absorbed block, follow chain to find final target
         let mut to_update = Vec::new();
@@ -748,7 +748,7 @@ impl<X: Xlen> BlockTable<X> {
             // Follow chain
             let mut current = target_pc;
             let mut found = false;
-            let mut visited = HashSet::new();
+            let mut visited = FxHashSet::default();
             visited.insert(absorbed_pc);
 
             while !visited.contains(&current) {

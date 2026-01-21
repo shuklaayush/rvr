@@ -595,12 +595,10 @@ fn compile_c_to_shared(
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
 
-    let status = cmd
-        .status()
-        .map_err(|e| {
-            error!(error = %e, "failed to run make");
-            Error::CompilationFailed(format!("Failed to run make: {}", e))
-        })?;
+    let status = cmd.status().map_err(|e| {
+        error!(error = %e, "failed to run make");
+        Error::CompilationFailed(format!("Failed to run make: {}", e))
+    })?;
 
     if !status.success() {
         let code = status.code().unwrap_or(-1);

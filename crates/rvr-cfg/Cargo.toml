@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 thiserror.workspace = true
 rayon.workspace = true
+rustc-hash.workspace = true
 tracing.workspace = true
 rvr-isa.workspace = true
 rvr-ir.workspace = true

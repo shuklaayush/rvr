@@ -566,7 +566,12 @@ fn run_command(cli: &Cli) -> i32 {
                     RethBenchCommands::Compile { arch, trace, fast } => {
                         reth_compile(arch, *trace, *fast);
                     }
-                    RethBenchCommands::Run { arch, runs, trace, fast } => {
+                    RethBenchCommands::Run {
+                        arch,
+                        runs,
+                        trace,
+                        fast,
+                    } => {
                         reth_run(arch, *runs, *trace, *fast);
                     }
                 },
@@ -579,7 +584,11 @@ fn run_command(cli: &Cli) -> i32 {
                     RiscvTestCommands::Build { dir } => {
                         riscv_tests_build(dir.clone());
                     }
-                    RiscvTestCommands::Run { filter, verbose, timeout } => {
+                    RiscvTestCommands::Run {
+                        filter,
+                        verbose,
+                        timeout,
+                    } => {
                         return riscv_tests_run(filter.clone(), *verbose, *timeout);
                     }
                 },
@@ -710,7 +719,10 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
             .join(format!("reth-{}", suffix));
 
         let row = if !out_dir.exists() {
-            TableRow::error(arch.as_str(), "not compiled (run `rvr bench reth compile` first)".to_string())
+            TableRow::error(
+                arch.as_str(),
+                "not compiled (run `rvr bench reth compile` first)".to_string(),
+            )
         } else {
             match bench::run_bench(&out_dir, runs) {
                 Ok(result) => TableRow::arch(*arch, &result, host_time),
@@ -722,13 +734,11 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
     }
 
     // Sort by overhead (least first), errors go last
-    rows.sort_by(|a, b| {
-        match (a.overhead, b.overhead) {
-            (Some(oa), Some(ob)) => oa.partial_cmp(&ob).unwrap_or(std::cmp::Ordering::Equal),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
+    rows.sort_by(|a, b| match (a.overhead, b.overhead) {
+        (Some(oa), Some(ob)) => oa.partial_cmp(&ob).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
     });
 
     // Print header and sorted rows
@@ -755,7 +765,10 @@ fn riscv_tests_build(dir: Option<PathBuf>) {
     let test_src_dir = dir.unwrap_or_else(|| project_dir.join("programs/riscv-tests"));
 
     if !test_src_dir.exists() {
-        eprintln!("Error: test source directory not found: {}", test_src_dir.display());
+        eprintln!(
+            "Error: test source directory not found: {}",
+            test_src_dir.display()
+        );
         eprintln!("Clone riscv-tests repository to programs/riscv-tests");
         std::process::exit(1);
     }

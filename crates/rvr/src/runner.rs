@@ -189,7 +189,10 @@ impl TracerRuntime {
 
         let reg_bytes = api.reg_bytes;
         if reg_bytes == 0 {
-            warn!(reg_bytes = reg_bytes, "unsupported register size for tracer");
+            warn!(
+                reg_bytes = reg_bytes,
+                "unsupported register size for tracer"
+            );
             return Err(RunError::TracerSetupFailed(format!(
                 "unsupported reg size {}",
                 reg_bytes
@@ -542,7 +545,10 @@ impl Runner {
         state.reset()?;
 
         let entry_point = unsafe { (self.api.get_entry_point)() };
-        trace!(entry_point = format!("{:#x}", entry_point), "executing with perf counters");
+        trace!(
+            entry_point = format!("{:#x}", entry_point),
+            "executing with perf counters"
+        );
 
         // Try to set up perf counters
         let mut perf_group = Self::setup_perf_group();
@@ -645,10 +651,26 @@ impl Runner {
         let mut group = Group::new().ok()?;
 
         // Add counters - store the Counter objects
-        let cycles = Builder::new().group(&mut group).kind(Hardware::CPU_CYCLES).build().ok()?;
-        let instructions = Builder::new().group(&mut group).kind(Hardware::INSTRUCTIONS).build().ok()?;
-        let branches = Builder::new().group(&mut group).kind(Hardware::BRANCH_INSTRUCTIONS).build().ok()?;
-        let branch_misses = Builder::new().group(&mut group).kind(Hardware::BRANCH_MISSES).build().ok()?;
+        let cycles = Builder::new()
+            .group(&mut group)
+            .kind(Hardware::CPU_CYCLES)
+            .build()
+            .ok()?;
+        let instructions = Builder::new()
+            .group(&mut group)
+            .kind(Hardware::INSTRUCTIONS)
+            .build()
+            .ok()?;
+        let branches = Builder::new()
+            .group(&mut group)
+            .kind(Hardware::BRANCH_INSTRUCTIONS)
+            .build()
+            .ok()?;
+        let branch_misses = Builder::new()
+            .group(&mut group)
+            .kind(Hardware::BRANCH_MISSES)
+            .build()
+            .ok()?;
 
         Some(PerfGroup {
             group,

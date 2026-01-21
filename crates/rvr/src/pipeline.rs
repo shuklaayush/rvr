@@ -150,7 +150,11 @@ impl<X: Xlen> Pipeline<X> {
             .max()
             .unwrap();
 
-        debug!(base_address = format!("{:#x}", base_address), end_address = format!("{:#x}", end_address), "address range");
+        debug!(
+            base_address = format!("{:#x}", base_address),
+            end_address = format!("{:#x}", end_address),
+            "address range"
+        );
 
         // Create InstructionTable spanning all executable segments
         let mut instr_table = InstructionTable::new(base_address, end_address, entry_pc);

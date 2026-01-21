@@ -37,8 +37,9 @@ impl Arch {
     pub fn parse_list(s: &str) -> Result<Vec<Self>, String> {
         s.split(',')
             .map(|part| {
-                Self::parse(part.trim())
-                    .ok_or_else(|| format!("unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e", part))
+                Self::parse(part.trim()).ok_or_else(|| {
+                    format!("unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e", part)
+                })
             })
             .collect()
     }
@@ -71,14 +72,15 @@ pub struct HostResult {
 
 /// Run a compiled library and return results with perf counters.
 pub fn run_bench(lib_dir: &Path, runs: usize) -> Result<RunResultWithPerf, String> {
-    let runner = Runner::load(lib_dir)
-        .map_err(|e| format!("failed to load library: {}", e))?;
+    let runner = Runner::load(lib_dir).map_err(|e| format!("failed to load library: {}", e))?;
 
     if runs <= 1 {
-        runner.run_with_counters()
+        runner
+            .run_with_counters()
             .map_err(|e| format!("execution failed: {}", e))
     } else {
-        runner.run_multiple_with_counters(runs)
+        runner
+            .run_multiple_with_counters(runs)
             .map_err(|e| format!("execution failed: {}", e))
     }
 }
@@ -136,17 +138,20 @@ pub fn calc_overhead(vm_time: f64, host_time: f64) -> Option<f64> {
 
 /// Format overhead as "X.Xx".
 pub fn format_overhead(oh: Option<f64>) -> String {
-    oh.map(|v| format!("{:.1}x", v)).unwrap_or_else(|| "-".to_string())
+    oh.map(|v| format!("{:.1}x", v))
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Format IPC value.
 pub fn format_ipc(ipc: Option<f64>) -> String {
-    ipc.map(|v| format!("{:.2}", v)).unwrap_or_else(|| "-".to_string())
+    ipc.map(|v| format!("{:.2}", v))
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Format branch miss rate as percentage.
 pub fn format_branch_miss(rate: Option<f64>) -> String {
-    rate.map(|v| format!("{:.2}%", v)).unwrap_or_else(|| "-".to_string())
+    rate.map(|v| format!("{:.2}%", v))
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Format speed value with appropriate unit (MIPS or BIPS).
@@ -206,7 +211,9 @@ pub struct TableRow {
 impl TableRow {
     /// Create a row for the host baseline.
     pub fn host(result: &HostResult) -> Self {
-        let (ipc, branch_miss_rate) = result.perf.as_ref()
+        let (ipc, branch_miss_rate) = result
+            .perf
+            .as_ref()
             .map(|p| (p.ipc(), p.branch_miss_rate()))
             .unwrap_or((None, None));
 
@@ -225,7 +232,9 @@ impl TableRow {
     /// Create a row for a VM architecture.
     pub fn arch(arch: Arch, result: &RunResultWithPerf, host_time: Option<f64>) -> Self {
         let overhead = host_time.and_then(|ht| calc_overhead(result.result.time_secs, ht));
-        let (ipc, branch_miss_rate) = result.perf.as_ref()
+        let (ipc, branch_miss_rate) = result
+            .perf
+            .as_ref()
             .map(|p| (p.ipc(), p.branch_miss_rate()))
             .unwrap_or((None, None));
 
@@ -290,10 +299,19 @@ pub fn print_table_row(row: &TableRow) {
         return;
     }
 
-    let instret = row.instret.map(format_num).unwrap_or_else(|| "-".to_string());
-    let time = row.time_secs.map(|t| format!("{:.3}s", t)).unwrap_or_else(|| "-".to_string());
+    let instret = row
+        .instret
+        .map(format_num)
+        .unwrap_or_else(|| "-".to_string());
+    let time = row
+        .time_secs
+        .map(|t| format!("{:.3}s", t))
+        .unwrap_or_else(|| "-".to_string());
     let overhead = format_overhead(row.overhead);
-    let speed = row.mips.map(format_speed).unwrap_or_else(|| "-".to_string());
+    let speed = row
+        .mips
+        .map(format_speed)
+        .unwrap_or_else(|| "-".to_string());
     let ipc = format_ipc(row.ipc);
     let branch_miss = format_branch_miss(row.branch_miss_rate);
 

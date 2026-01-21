@@ -213,9 +213,28 @@ impl<X: Xlen> CEmitter<X> {
                     BinaryOp::Or => format!("({} | {})", l, r),
                     BinaryOp::Xor => format!("({} ^ {})", l, r),
                     // Mask shift amount per RISC-V spec: lower 5 bits (RV32) or 6 bits (RV64)
-                    BinaryOp::Sll => format!("({} << ({} & 0x{:x}ULL))", l, r, X::VALUE - 1),
-                    BinaryOp::Srl => format!("({} >> ({} & 0x{:x}ULL))", l, r, X::VALUE - 1),
-                    BinaryOp::Sra => format!("(({})(({}){}  >> ({} & 0x{:x}ULL)))", self.reg_type, self.signed_type, l, r, X::VALUE - 1),
+                    // Only mask register operands; immediates are already validated
+                    BinaryOp::Sll => {
+                        if matches!(right.as_ref(), Expr::Imm(_)) {
+                            format!("({} << {})", l, r)
+                        } else {
+                            format!("({} << ({} & 0x{:x}ULL))", l, r, X::VALUE - 1)
+                        }
+                    }
+                    BinaryOp::Srl => {
+                        if matches!(right.as_ref(), Expr::Imm(_)) {
+                            format!("({} >> {})", l, r)
+                        } else {
+                            format!("({} >> ({} & 0x{:x}ULL))", l, r, X::VALUE - 1)
+                        }
+                    }
+                    BinaryOp::Sra => {
+                        if matches!(right.as_ref(), Expr::Imm(_)) {
+                            format!("(({})(({}){}  >> {}))", self.reg_type, self.signed_type, l, r)
+                        } else {
+                            format!("(({})(({}){}  >> ({} & 0x{:x}ULL)))", self.reg_type, self.signed_type, l, r, X::VALUE - 1)
+                        }
+                    }
                     BinaryOp::Eq => format!("{} == {}", l, r),
                     BinaryOp::Ne => format!("{} != {}", l, r),
                     BinaryOp::Lt => format!("({}){} < ({}){}", self.signed_type, l, self.signed_type, r),
@@ -257,9 +276,27 @@ impl<X: Xlen> CEmitter<X> {
                     BinaryOp::DivUW => format!("rv_divuw((uint32_t){}, (uint32_t){})", l, r),
                     BinaryOp::RemW => format!("rv_remw((int32_t){}, (int32_t){})", l, r),
                     BinaryOp::RemUW => format!("rv_remuw((uint32_t){}, (uint32_t){})", l, r),
-                    BinaryOp::SllW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << ({} & 0x1f)))", l, r),
-                    BinaryOp::SrlW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> ({} & 0x1f)))", l, r),
-                    BinaryOp::SraW => format!("((uint64_t)(int64_t)((int32_t){} >> ({} & 0x1f)))", l, r),
+                    BinaryOp::SllW => {
+                        if matches!(right.as_ref(), Expr::Imm(_)) {
+                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << {}))", l, r)
+                        } else {
+                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << ({} & 0x1f)))", l, r)
+                        }
+                    }
+                    BinaryOp::SrlW => {
+                        if matches!(right.as_ref(), Expr::Imm(_)) {
+                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> {}))", l, r)
+                        } else {
+                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> ({} & 0x1f)))", l, r)
+                        }
+                    }
+                    BinaryOp::SraW => {
+                        if matches!(right.as_ref(), Expr::Imm(_)) {
+                            format!("((uint64_t)(int64_t)((int32_t){} >> {}))", l, r)
+                        } else {
+                            format!("((uint64_t)(int64_t)((int32_t){} >> ({} & 0x1f)))", l, r)
+                        }
+                    }
                     BinaryOp::MulH => {
                         if X::VALUE == 64 {
                             format!("rv_mulh64({}, {})", l, r)

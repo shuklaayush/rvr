@@ -246,9 +246,7 @@ pub fn run_test(elf_path: &Path, timeout: Duration) -> TestResult {
     let out_dir = temp_dir.path().join("out");
 
     // Compile with tohost enabled
-    let options = CompileOptions::new()
-        .with_tohost(true)
-        .with_quiet(true);
+    let options = CompileOptions::new().with_tohost(true).with_quiet(true);
 
     if let Err(e) = compile_with_options(elf_path, &out_dir, options) {
         return TestResult::fail(name, format!("compile failed: {}", e));
@@ -317,7 +315,11 @@ pub fn print_result(result: &TestResult, index: usize, total: usize, verbose: bo
             if verbose {
                 println!(
                     "[{}/{}] {}PASS{} {}",
-                    index, total, colors::GREEN, colors::RESET, result.name
+                    index,
+                    total,
+                    colors::GREEN,
+                    colors::RESET,
+                    result.name
                 );
             }
         }
@@ -325,14 +327,23 @@ pub fn print_result(result: &TestResult, index: usize, total: usize, verbose: bo
             let error = result.error.as_deref().unwrap_or("unknown");
             println!(
                 "[{}/{}] {}FAIL{} {} ({})",
-                index, total, colors::RED, colors::RESET, result.name, error
+                index,
+                total,
+                colors::RED,
+                colors::RESET,
+                result.name,
+                error
             );
         }
         TestStatus::Skip => {
             if verbose {
                 println!(
                     "[{}/{}] {}SKIP{} {}",
-                    index, total, colors::YELLOW, colors::RESET, result.name
+                    index,
+                    total,
+                    colors::YELLOW,
+                    colors::RESET,
+                    result.name
                 );
             }
         }
@@ -343,9 +354,19 @@ pub fn print_result(result: &TestResult, index: usize, total: usize, verbose: bo
 pub fn print_summary(summary: &TestSummary) {
     println!();
     println!("================================");
-    println!("{}PASSED{}: {}", colors::GREEN, colors::RESET, summary.passed);
+    println!(
+        "{}PASSED{}: {}",
+        colors::GREEN,
+        colors::RESET,
+        summary.passed
+    );
     println!("{}FAILED{}: {}", colors::RED, colors::RESET, summary.failed);
-    println!("{}SKIPPED{}: {}", colors::YELLOW, colors::RESET, summary.skipped);
+    println!(
+        "{}SKIPPED{}: {}",
+        colors::YELLOW,
+        colors::RESET,
+        summary.skipped
+    );
     println!();
 
     if !summary.failures.is_empty() {
