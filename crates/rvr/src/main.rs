@@ -399,12 +399,6 @@ fn print_multi_result(
     }
 }
 
-fn exit_if_failed(code: u8) {
-    if code != 0 {
-        std::process::exit(code as i32);
-    }
-}
-
 fn main() {
     let cli = Cli::parse();
 
@@ -783,14 +777,14 @@ fn riscv_tests_build(dir: Option<PathBuf>) {
 }
 
 /// Run riscv-tests suite.
-fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) {
+fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
     let test_dir = project_dir.join("bin/riscv/tests");
 
     if !test_dir.exists() {
         eprintln!("Error: test directory not found: {}", test_dir.display());
         eprintln!("Place riscv-tests ELF binaries in bin/riscv/tests/");
-        std::process::exit(1);
+        return 1;
     }
 
     let config = TestConfig::default()
@@ -806,7 +800,9 @@ fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) {
     let summary = tests::run_all(&config);
     tests::print_summary(&summary);
 
-    if !summary.all_passed() {
-        std::process::exit(1);
+    if summary.all_passed() {
+        0
+    } else {
+        1
     }
 }
