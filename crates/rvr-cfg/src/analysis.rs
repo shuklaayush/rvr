@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
 use tracing::{debug, trace, trace_span};
 
 use rvr_isa::{
@@ -988,8 +989,6 @@ fn compute_leaders<X: Xlen>(
 }
 
 fn build_predecessors(successors: &HashMap<u64, HashSet<u64>>) -> HashMap<u64, HashSet<u64>> {
-    use rayon::prelude::*;
-
     // Build partial maps in parallel, then merge
     successors
         .par_iter()
