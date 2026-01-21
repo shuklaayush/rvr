@@ -66,13 +66,7 @@ impl<X: Xlen> TracerState for PreflightTracer<X> {
 
 impl<X: Xlen> PreflightTracer<X> {
     /// Setup with provided buffers.
-    pub fn setup(
-        &mut self,
-        data: *mut u8,
-        data_capacity: u32,
-        pc: *mut X::Reg,
-        pc_capacity: u32,
-    ) {
+    pub fn setup(&mut self, data: *mut u8, data_capacity: u32, pc: *mut X::Reg, pc_capacity: u32) {
         self.data = data;
         self.data_idx = 0;
         self.data_capacity = data_capacity;
@@ -143,9 +137,12 @@ impl FfiTracer {
 pub struct DynamicTracer<X: Xlen> {
     pub context: *mut std::ffi::c_void,
     pub trace_pc: Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16)>,
-    pub trace_mem_read: Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16, X::Reg, u64)>,
-    pub trace_mem_write: Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16, X::Reg, u64)>,
-    pub trace_reg_write: Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16, u8, X::Reg)>,
+    pub trace_mem_read:
+        Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16, X::Reg, u64)>,
+    pub trace_mem_write:
+        Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16, X::Reg, u64)>,
+    pub trace_reg_write:
+        Option<unsafe extern "C" fn(*mut std::ffi::c_void, X::Reg, u16, u8, X::Reg)>,
 }
 
 impl<X: Xlen> TracerState for DynamicTracer<X> {

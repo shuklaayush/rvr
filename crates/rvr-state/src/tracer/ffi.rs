@@ -317,9 +317,7 @@ pub unsafe extern "C" fn trace_branch_taken(
     target: u64,
 ) {
     if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_branch_taken(pc, op, target);
+        (*tracer).as_tracer_mut().trace_branch_taken(pc, op, target);
     }
 }
 
@@ -348,9 +346,7 @@ pub unsafe extern "C" fn trace_csr_read(
     value: u64,
 ) {
     if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_csr_read(pc, op, csr, value);
+        (*tracer).as_tracer_mut().trace_csr_read(pc, op, csr, value);
     }
 }
 
