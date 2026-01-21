@@ -11,6 +11,7 @@ use rvr_ir::{
     BinaryOp, BlockIR, BranchHint, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp,
     WriteTarget, Xlen,
 };
+use rvr_isa::op_mnemonic;
 
 /// HTIF tohost address (matches riscv-tests expectation).
 const TOHOST_ADDR: u64 = 0x80001000;
@@ -92,6 +93,11 @@ impl<X: Xlen> CEmitter<X> {
         } else {
             format!("0x{:08x}u", addr)
         }
+    }
+
+    /// Format PC for comments (no suffix, lowercase hex).
+    fn fmt_pc_comment(&self, pc: u64) -> String {
+        format!("0x{:x}", pc)
     }
 
     /// Write indented line.
@@ -212,29 +218,10 @@ impl<X: Xlen> CEmitter<X> {
                     BinaryOp::And => format!("({} & {})", l, r),
                     BinaryOp::Or => format!("({} | {})", l, r),
                     BinaryOp::Xor => format!("({} ^ {})", l, r),
-                    // Mask shift amount per RISC-V spec: lower 5 bits (RV32) or 6 bits (RV64)
-                    // Only mask register operands; immediates are already validated
-                    BinaryOp::Sll => {
-                        if matches!(right.as_ref(), Expr::Imm(_)) {
-                            format!("({} << {})", l, r)
-                        } else {
-                            format!("({} << ({} & 0x{:x}ULL))", l, r, X::VALUE - 1)
-                        }
-                    }
-                    BinaryOp::Srl => {
-                        if matches!(right.as_ref(), Expr::Imm(_)) {
-                            format!("({} >> {})", l, r)
-                        } else {
-                            format!("({} >> ({} & 0x{:x}ULL))", l, r, X::VALUE - 1)
-                        }
-                    }
-                    BinaryOp::Sra => {
-                        if matches!(right.as_ref(), Expr::Imm(_)) {
-                            format!("(({})(({}){}  >> {}))", self.reg_type, self.signed_type, l, r)
-                        } else {
-                            format!("(({})(({}){}  >> ({} & 0x{:x}ULL)))", self.reg_type, self.signed_type, l, r, X::VALUE - 1)
-                        }
-                    }
+                    // IR is responsible for masking shift amount per RISC-V spec
+                    BinaryOp::Sll => format!("({} << {})", l, r),
+                    BinaryOp::Srl => format!("({} >> {})", l, r),
+                    BinaryOp::Sra => format!("(({})(({}){}  >> {}))", self.reg_type, self.signed_type, l, r),
                     BinaryOp::Eq => format!("{} == {}", l, r),
                     BinaryOp::Ne => format!("{} != {}", l, r),
                     BinaryOp::Lt => format!("({}){} < ({}){}", self.signed_type, l, self.signed_type, r),
@@ -276,27 +263,10 @@ impl<X: Xlen> CEmitter<X> {
                     BinaryOp::DivUW => format!("rv_divuw((uint32_t){}, (uint32_t){})", l, r),
                     BinaryOp::RemW => format!("rv_remw((int32_t){}, (int32_t){})", l, r),
                     BinaryOp::RemUW => format!("rv_remuw((uint32_t){}, (uint32_t){})", l, r),
-                    BinaryOp::SllW => {
-                        if matches!(right.as_ref(), Expr::Imm(_)) {
-                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << {}))", l, r)
-                        } else {
-                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << ({} & 0x1f)))", l, r)
-                        }
-                    }
-                    BinaryOp::SrlW => {
-                        if matches!(right.as_ref(), Expr::Imm(_)) {
-                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> {}))", l, r)
-                        } else {
-                            format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> ({} & 0x1f)))", l, r)
-                        }
-                    }
-                    BinaryOp::SraW => {
-                        if matches!(right.as_ref(), Expr::Imm(_)) {
-                            format!("((uint64_t)(int64_t)((int32_t){} >> {}))", l, r)
-                        } else {
-                            format!("((uint64_t)(int64_t)((int32_t){} >> ({} & 0x1f)))", l, r)
-                        }
-                    }
+                    // IR is responsible for masking shift amount per RISC-V spec
+                    BinaryOp::SllW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << {}))", l, r),
+                    BinaryOp::SrlW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> {}))", l, r),
+                    BinaryOp::SraW => format!("((uint64_t)(int64_t)((int32_t){} >> {}))", l, r),
                     BinaryOp::MulH => {
                         if X::VALUE == 64 {
                             format!("rv_mulh64({}, {})", l, r)
@@ -354,7 +324,12 @@ impl<X: Xlen> CEmitter<X> {
         match expr {
             ReadExpr::Reg(reg) => {
                 if *reg == 0 {
-                    "0".to_string()
+                    // Use explicit ULL suffix for RV64 consistency
+                    if X::VALUE == 64 {
+                        "0x0ULL".to_string()
+                    } else {
+                        "0".to_string()
+                    }
                 } else if self.config.has_tracing() {
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
@@ -715,9 +690,27 @@ impl<X: Xlen> CEmitter<X> {
 
     // ============= Block rendering =============
 
-    /// Render block header.
-    pub fn render_block_header(&mut self, start_pc: u64, _end_pc: u64) {
+    /// Render block header with optional block comment.
+    pub fn render_block_header(&mut self, start_pc: u64, end_pc: u64) {
+        self.render_block_header_with_count(start_pc, end_pc, 0);
+    }
+
+    /// Render block header with instruction count in comment.
+    pub fn render_block_header_with_count(
+        &mut self,
+        start_pc: u64,
+        end_pc: u64,
+        instr_count: usize,
+    ) {
         let pc_str = self.fmt_pc(start_pc);
+        if self.config.emit_comments && instr_count > 0 {
+            let start_comment = self.fmt_pc_comment(start_pc);
+            let end_comment = self.fmt_pc_comment(end_pc.saturating_sub(1));
+            self.write(&format!(
+                "// Block: {}-{} ({} instrs)\n",
+                start_comment, end_comment, instr_count
+            ));
+        }
         self.write(&format!(
             "__attribute__((preserve_none, nonnull(1))) void B_{}({}) {{\n",
             pc_str, self.sig.params
@@ -759,10 +752,31 @@ impl<X: Xlen> CEmitter<X> {
         self.current_pc = X::to_u64(ir.pc);
         self.current_op = ir.op;
 
-        // Optional: emit comment
+        // Optional: emit comment with PC and instruction mnemonic
         if self.config.emit_comments {
-            let pc_hex = self.fmt_addr(self.current_pc);
-            self.writeln(indent, &format!("// PC: {}", pc_hex));
+            let pc_hex = self.fmt_pc_comment(self.current_pc);
+            let mnemonic = op_mnemonic(ir.op).to_uppercase();
+
+            // Include function name if available
+            let comment = if let Some(ref loc) = ir.source_loc {
+                if !loc.function.is_empty() {
+                    format!("// PC: {} {}  @ {}", pc_hex, mnemonic, loc.function)
+                } else {
+                    format!("// PC: {} {}", pc_hex, mnemonic)
+                }
+            } else {
+                format!("// PC: {} {}", pc_hex, mnemonic)
+            };
+            self.writeln(indent, &comment);
+        }
+
+        // Emit #line directive for source-level debugging
+        if self.config.emit_line_info {
+            if let Some(ref loc) = ir.source_loc {
+                if loc.is_valid() {
+                    self.writeln(indent, &format!("#line {} \"{}\"", loc.line, loc.file));
+                }
+            }
         }
 
         self.emit_trace_pc();
@@ -1160,7 +1174,7 @@ impl<X: Xlen> CEmitter<X> {
         let start_pc = X::to_u64(block.start_pc);
         let end_pc = X::to_u64(block.end_pc);
 
-        self.render_block_header(start_pc, end_pc);
+        self.render_block_header_with_count(start_pc, end_pc, block.instructions.len());
         self.render_block_trace(start_pc);
 
         let num_instrs = block.instructions.len();

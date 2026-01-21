@@ -931,7 +931,10 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))),
+                    op(
+                        Expr::read(*rs1),
+                        Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -968,7 +971,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::imm(X::sign_extend_32(*imm as u32)),
+                    Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
                 )]
             } else {
                 Vec::new()
@@ -998,7 +1001,10 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
 fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
-            let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
+            let addr = Expr::add(
+                Expr::read(*rs1),
+                Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+            );
             (
                 vec![Stmt::write_mem(addr, Expr::read(*rs2), width)],
                 Terminator::Fall { target: None },

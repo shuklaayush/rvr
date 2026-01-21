@@ -656,12 +656,12 @@ fn lift_base<X: Xlen>(
     match opid {
         OP_ADD => lift_r(args, |a, b| Expr::add(a, b)),
         OP_SUB => lift_r(args, |a, b| Expr::sub(a, b)),
-        OP_SLL => lift_r(args, |a, b| Expr::sll(a, b)),
+        OP_SLL => lift_shift(args, |a, b| Expr::sll(a, b)),
         OP_SLT => lift_r(args, |a, b| Expr::slt(a, b)),
         OP_SLTU => lift_r(args, |a, b| Expr::sltu(a, b)),
         OP_XOR => lift_r(args, |a, b| Expr::xor(a, b)),
-        OP_SRL => lift_r(args, |a, b| Expr::srl(a, b)),
-        OP_SRA => lift_r(args, |a, b| Expr::sra(a, b)),
+        OP_SRL => lift_shift(args, |a, b| Expr::srl(a, b)),
+        OP_SRA => lift_shift(args, |a, b| Expr::sra(a, b)),
         OP_OR => lift_r(args, |a, b| Expr::or(a, b)),
         OP_AND => lift_r(args, |a, b| Expr::and(a, b)),
 
@@ -677,9 +677,9 @@ fn lift_base<X: Xlen>(
 
         OP_ADDW => lift_r(args, |a, b| Expr::addw(a, b)),
         OP_SUBW => lift_r(args, |a, b| Expr::subw(a, b)),
-        OP_SLLW => lift_r(args, |a, b| Expr::sllw(a, b)),
-        OP_SRLW => lift_r(args, |a, b| Expr::srlw(a, b)),
-        OP_SRAW => lift_r(args, |a, b| Expr::sraw(a, b)),
+        OP_SLLW => lift_shiftw(args, |a, b| Expr::sllw(a, b)),
+        OP_SRLW => lift_shiftw(args, |a, b| Expr::srlw(a, b)),
+        OP_SRAW => lift_shiftw(args, |a, b| Expr::sraw(a, b)),
         OP_ADDIW => lift_i(args, |a, b| Expr::addw(a, b)),
         OP_SLLIW => lift_shamt(args, |a, b| Expr::sllw(a, b)),
         OP_SRLIW => lift_shamt(args, |a, b| Expr::srlw(a, b)),
@@ -739,6 +739,46 @@ where
     }
 }
 
+/// Lift R-type shift: masks rs2 by XLEN-1 per RISC-V spec.
+fn lift_shift<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
+    match args {
+        InstrArgs::R { rd, rs1, rs2 } => {
+            let mask = X::from_u64(X::VALUE as u64 - 1);
+            let masked_shamt = Expr::and(Expr::read(*rs2), Expr::imm(mask));
+            let stmts = if *rd != 0 {
+                vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), masked_shamt))]
+            } else {
+                Vec::new()
+            };
+            (stmts, Terminator::Fall { target: None })
+        }
+        _ => (Vec::new(), Terminator::trap("invalid args")),
+    }
+}
+
+/// Lift R-type 32-bit shift (RV64 only): masks rs2 by 0x1f per RISC-V spec.
+fn lift_shiftw<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
+where
+    F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
+{
+    match args {
+        InstrArgs::R { rd, rs1, rs2 } => {
+            let mask = X::from_u64(0x1f);
+            let masked_shamt = Expr::and(Expr::read(*rs2), Expr::imm(mask));
+            let stmts = if *rd != 0 {
+                vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), masked_shamt))]
+            } else {
+                Vec::new()
+            };
+            (stmts, Terminator::Fall { target: None })
+        }
+        _ => (Vec::new(), Terminator::trap("invalid args")),
+    }
+}
+
 fn lift_i<X: Xlen, F>(args: &InstrArgs, op: F) -> (Vec<Stmt<X>>, Terminator<X>)
 where
     F: FnOnce(Expr<X>, Expr<X>) -> Expr<X>,
@@ -748,7 +788,10 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32))),
+                    op(
+                        Expr::read(*rs1),
+                        Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -785,7 +828,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::imm(X::sign_extend_32(*imm as u32)),
+                    Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
                 )]
             } else {
                 Vec::new()
@@ -802,7 +845,10 @@ fn lift_auipc<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminato
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::add(Expr::imm(pc), Expr::imm(X::sign_extend_32(*imm as u32))),
+                    Expr::add(
+                        Expr::imm(pc),
+                        Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -832,7 +878,10 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
 fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
-            let addr = Expr::add(Expr::read(*rs1), Expr::imm(X::sign_extend_32(*imm as u32)));
+            let addr = Expr::add(
+                Expr::read(*rs1),
+                Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+            );
             (
                 vec![Stmt::write_mem(addr, Expr::read(*rs2), width)],
                 Terminator::Fall { target: None },
@@ -878,7 +927,10 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
             }
             // Clear low bit for 2-byte alignment (use !1 to get correct mask for XLEN)
             let target = Expr::and(
-                Expr::add(base, Expr::imm(X::sign_extend_32(*imm as u32))),
+                Expr::add(
+                    base,
+                    Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+                ),
                 Expr::imm(X::from_u64(!1u64)),
             );
             (stmts, Terminator::jump_dyn(target))

@@ -74,7 +74,36 @@ pub use zicsr::{
 };
 pub use zifencei::OP_FENCE_I;
 
+use crate::{
+    EXT_A, EXT_C, EXT_I, EXT_M, EXT_ZBA, EXT_ZBB, EXT_ZBKB, EXT_ZBS, EXT_ZICOND, EXT_ZICSR,
+    EXT_ZIFENCEI,
+};
 use std::collections::HashMap;
+
+/// Get instruction mnemonic from packed OpId (ext << 8 | idx).
+///
+/// Returns uppercase mnemonic for use in comments.
+pub fn op_mnemonic(packed: u16) -> &'static str {
+    let ext = (packed >> 8) as u8;
+    let opid = OpId {
+        ext,
+        idx: packed as u8,
+    };
+    match ext {
+        EXT_I => base_mnemonic(opid),
+        EXT_M => m_mnemonic(opid),
+        EXT_A => a_mnemonic(opid),
+        EXT_C => c_mnemonic(opid),
+        EXT_ZICSR => zicsr_mnemonic(opid),
+        EXT_ZIFENCEI => "fence.i",
+        EXT_ZBA => zba_mnemonic(opid).unwrap_or("???"),
+        EXT_ZBB => zbb_mnemonic(opid).unwrap_or("???"),
+        EXT_ZBS => zbs_mnemonic(opid).unwrap_or("???"),
+        EXT_ZBKB => zbkb_mnemonic(opid).unwrap_or("???"),
+        EXT_ZICOND => zicond_mnemonic(opid).unwrap_or("???"),
+        _ => "???",
+    }
+}
 
 use crate::syscalls::{BareMetalHandler, SyscallHandler};
 use crate::{DecodedInstr, OpId, OpInfo};
