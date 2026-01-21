@@ -9,7 +9,10 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use libloading::Library;
+use perf_event::events::Hardware;
+use perf_event::{Builder, Group};
 use thiserror::Error;
+use tracing::{debug, error, trace, warn};
 
 /// Runner error type.
 #[derive(Debug, Error)]
@@ -94,9 +97,10 @@ unsafe fn load_symbol<T: Copy>(
     symbol: &'static [u8],
     label: &'static str,
 ) -> Result<T, RunError> {
-    let sym: libloading::Symbol<T> = lib
-        .get(symbol)
-        .map_err(|e| RunError::SymbolNotFound(label.to_string(), e))?;
+    let sym: libloading::Symbol<T> = lib.get(symbol).map_err(|e| {
+        error!(symbol = label, "symbol not found in library");
+        RunError::SymbolNotFound(label.to_string(), e)
+    })?;
     Ok(*sym)
 }
 
@@ -185,11 +189,13 @@ impl TracerRuntime {
 
         let reg_bytes = api.reg_bytes;
         if reg_bytes == 0 {
+            warn!(reg_bytes = reg_bytes, "unsupported register size for tracer");
             return Err(RunError::TracerSetupFailed(format!(
                 "unsupported reg size {}",
                 reg_bytes
             )));
         }
+        debug!(kind = ?kind, reg_bytes = reg_bytes, "initializing tracer");
         Ok(Some(Self {
             kind,
             reg_bytes,
@@ -294,10 +300,15 @@ impl<'a> RunState<'a> {
     fn new(api: &'a RvApi) -> Result<Self, RunError> {
         let size = unsafe { (api.state_size)() };
         let align = unsafe { (api.state_align)() };
-        let layout = Layout::from_size_align(size, align)
-            .map_err(|_| RunError::InvalidStateLayout { size, align })?;
+        let layout = Layout::from_size_align(size, align).map_err(|_| {
+            error!(size = size, align = align, "invalid state layout");
+            RunError::InvalidStateLayout { size, align }
+        })?;
         let ptr = unsafe { alloc_zeroed(layout) } as *mut c_void;
-        let ptr = NonNull::new(ptr).ok_or(RunError::StateAllocationFailed)?;
+        let ptr = NonNull::new(ptr).ok_or_else(|| {
+            error!(size = size, "state allocation failed");
+            RunError::StateAllocationFailed
+        })?;
         let tracer = TracerRuntime::new(api)?;
         Ok(Self {
             ptr,
@@ -319,6 +330,7 @@ impl<'a> RunState<'a> {
     fn init_memory(&mut self) -> Result<(), RunError> {
         let rc = unsafe { (self.api.init_memory)(self.ptr.as_ptr()) };
         if rc != 0 {
+            error!(rc = rc, "memory initialization failed");
             return Err(RunError::MemoryInitFailed(rc));
         }
         self.memory_initialized = true;
@@ -371,11 +383,11 @@ pub struct RunResult {
 }
 
 impl RunResult {
-    /// Print result in Mojo-compatible format.
+    /// Print result in Mojo-compatible format (raw values, no units).
     pub fn print_mojo_format(&self) {
         println!("instret: {}", self.instret);
         println!("time: {:.6}", self.time_secs);
-        println!("speed: {:.2} MIPS", self.mips);
+        println!("mips: {:.2}", self.mips);
     }
 
     /// Print result in JSON format.
@@ -385,6 +397,46 @@ impl RunResult {
             self.instret, self.time_secs, self.mips, self.exit_code
         );
     }
+}
+
+/// Hardware performance counters from perf.
+#[derive(Debug, Clone, Default)]
+pub struct PerfCounters {
+    /// Host CPU cycles.
+    pub cycles: Option<u64>,
+    /// Host instructions executed.
+    pub instructions: Option<u64>,
+    /// Branch instructions.
+    pub branches: Option<u64>,
+    /// Branch misses.
+    pub branch_misses: Option<u64>,
+}
+
+impl PerfCounters {
+    /// Calculate instructions per cycle.
+    pub fn ipc(&self) -> Option<f64> {
+        match (self.instructions, self.cycles) {
+            (Some(i), Some(c)) if c > 0 => Some(i as f64 / c as f64),
+            _ => None,
+        }
+    }
+
+    /// Calculate branch miss rate as percentage.
+    pub fn branch_miss_rate(&self) -> Option<f64> {
+        match (self.branch_misses, self.branches) {
+            (Some(m), Some(b)) if b > 0 => Some((m as f64 / b as f64) * 100.0),
+            _ => None,
+        }
+    }
+}
+
+/// Execution result with hardware performance counters.
+#[derive(Debug, Clone)]
+pub struct RunResultWithPerf {
+    /// Core execution result.
+    pub result: RunResult,
+    /// Hardware performance counters (if available).
+    pub perf: Option<PerfCounters>,
 }
 
 /// Runner for compiled RISC-V programs.
@@ -404,11 +456,18 @@ impl Runner {
         let lib_path = lib_dir.join(format!("lib{}.so", dir_name));
 
         if !lib_path.exists() {
+            error!(path = %lib_path.display(), "shared library not found");
             return Err(RunError::LibraryNotFound(lib_path.display().to_string()));
         }
 
+        debug!(path = %lib_path.display(), "loading shared library");
         let lib = unsafe { Library::new(&lib_path)? };
         let api = unsafe { RvApi::load(&lib)? };
+        trace!(
+            state_size = unsafe { (api.state_size)() },
+            state_align = unsafe { (api.state_align)() },
+            "loaded API"
+        );
         Ok(Self { _lib: lib, api })
     }
 
@@ -419,6 +478,7 @@ impl Runner {
         state.reset()?;
 
         let entry_point = unsafe { (self.api.get_entry_point)() };
+        trace!(entry_point = format!("{:#x}", entry_point), "executing");
 
         let start = Instant::now();
         state.execute(entry_point);
@@ -428,6 +488,13 @@ impl Runner {
         let exit_code = state.exit_code();
         let time_secs = elapsed.as_secs_f64();
         let mips = (instret as f64 / time_secs) / 1_000_000.0;
+
+        trace!(
+            instret = instret,
+            exit_code = exit_code,
+            time_secs = format!("{:.6}", time_secs),
+            "execution complete"
+        );
 
         Ok(RunResult {
             exit_code,
@@ -465,6 +532,166 @@ impl Runner {
         }
 
         Ok(results)
+    }
+
+    /// Run with hardware performance counters.
+    /// Returns execution result plus perf counters if available.
+    pub fn run_with_counters(&self) -> Result<RunResultWithPerf, RunError> {
+        let mut state = RunState::new(&self.api)?;
+        state.init_memory()?;
+        state.reset()?;
+
+        let entry_point = unsafe { (self.api.get_entry_point)() };
+        trace!(entry_point = format!("{:#x}", entry_point), "executing with perf counters");
+
+        // Try to set up perf counters
+        let mut perf_group = Self::setup_perf_group();
+
+        let start = Instant::now();
+
+        // Enable counters, execute, disable counters
+        if let Some(ref mut group) = perf_group {
+            let _ = group.enable();
+        }
+        state.execute(entry_point);
+        if let Some(ref mut group) = perf_group {
+            let _ = group.disable();
+        }
+
+        let elapsed = start.elapsed();
+
+        let instret = state.instret();
+        let exit_code = state.exit_code();
+        let time_secs = elapsed.as_secs_f64();
+        let mips = (instret as f64 / time_secs) / 1_000_000.0;
+
+        // Read perf counters
+        let perf = perf_group.as_mut().and_then(Self::read_perf_counters);
+
+        let result = RunResult {
+            exit_code,
+            instret,
+            time_secs,
+            mips,
+        };
+
+        // Record metrics
+        crate::metrics::record_run("unknown", &result, perf.as_ref());
+
+        Ok(RunResultWithPerf { result, perf })
+    }
+
+    /// Run multiple times with hardware performance counters.
+    /// Returns averaged results.
+    pub fn run_multiple_with_counters(&self, count: usize) -> Result<RunResultWithPerf, RunError> {
+        let mut state = RunState::new(&self.api)?;
+        let entry_point = unsafe { (self.api.get_entry_point)() };
+
+        let mut perf_group = Self::setup_perf_group();
+
+        let mut total_time = 0.0;
+        let mut total_mips = 0.0;
+        let mut last_instret = 0;
+        let mut last_exit_code = 0;
+
+        for _ in 0..count {
+            state.reinit_memory()?;
+            state.reset()?;
+
+            if let Some(ref mut group) = perf_group {
+                let _ = group.reset();
+            }
+
+            let start = Instant::now();
+            if let Some(ref mut group) = perf_group {
+                let _ = group.enable();
+            }
+            state.execute(entry_point);
+            if let Some(ref mut group) = perf_group {
+                let _ = group.disable();
+            }
+            let elapsed = start.elapsed();
+
+            last_instret = state.instret();
+            last_exit_code = state.exit_code();
+            let time_secs = elapsed.as_secs_f64();
+            let mips = (last_instret as f64 / time_secs) / 1_000_000.0;
+
+            total_time += time_secs;
+            total_mips += mips;
+        }
+
+        let avg_time = total_time / count as f64;
+        let avg_mips = total_mips / count as f64;
+
+        // Read final perf counters (from last run)
+        let perf = perf_group.as_mut().and_then(Self::read_perf_counters);
+
+        let result = RunResult {
+            exit_code: last_exit_code,
+            instret: last_instret,
+            time_secs: avg_time,
+            mips: avg_mips,
+        };
+
+        // Record metrics
+        crate::metrics::record_run("unknown", &result, perf.as_ref());
+
+        Ok(RunResultWithPerf { result, perf })
+    }
+
+    /// Try to set up a perf event group. Returns None if perf is unavailable.
+    fn setup_perf_group() -> Option<PerfGroup> {
+        let mut group = Group::new().ok()?;
+
+        // Add counters - store the Counter objects
+        let cycles = Builder::new().group(&mut group).kind(Hardware::CPU_CYCLES).build().ok()?;
+        let instructions = Builder::new().group(&mut group).kind(Hardware::INSTRUCTIONS).build().ok()?;
+        let branches = Builder::new().group(&mut group).kind(Hardware::BRANCH_INSTRUCTIONS).build().ok()?;
+        let branch_misses = Builder::new().group(&mut group).kind(Hardware::BRANCH_MISSES).build().ok()?;
+
+        Some(PerfGroup {
+            group,
+            cycles,
+            instructions,
+            branches,
+            branch_misses,
+        })
+    }
+
+    /// Read perf counters from a group.
+    fn read_perf_counters(perf: &mut PerfGroup) -> Option<PerfCounters> {
+        let counts = perf.group.read().ok()?;
+
+        Some(PerfCounters {
+            cycles: counts.get(&perf.cycles).copied(),
+            instructions: counts.get(&perf.instructions).copied(),
+            branches: counts.get(&perf.branches).copied(),
+            branch_misses: counts.get(&perf.branch_misses).copied(),
+        })
+    }
+}
+
+/// Helper struct to hold perf event group and counters.
+struct PerfGroup {
+    group: Group,
+    cycles: perf_event::Counter,
+    instructions: perf_event::Counter,
+    branches: perf_event::Counter,
+    branch_misses: perf_event::Counter,
+}
+
+impl PerfGroup {
+    fn enable(&mut self) -> std::io::Result<()> {
+        self.group.enable()
+    }
+
+    fn disable(&mut self) -> std::io::Result<()> {
+        self.group.disable()
+    }
+
+    fn reset(&mut self) -> std::io::Result<()> {
+        self.group.reset()
     }
 }
 
