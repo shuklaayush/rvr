@@ -199,6 +199,10 @@ pub struct TableRow {
     pub label: String,
     /// Instruction count (guest instret), None for host.
     pub instret: Option<u64>,
+    /// Host instructions executed.
+    pub host_instrs: Option<u64>,
+    /// Host instructions per guest instruction.
+    pub instrs_per_guest: Option<f64>,
     /// Execution time in seconds.
     pub time_secs: Option<f64>,
     /// Overhead compared to host (vm_time / host_time).
@@ -216,15 +220,17 @@ pub struct TableRow {
 impl TableRow {
     /// Create a row for the host baseline.
     pub fn host(result: &HostResult) -> Self {
-        let (ipc, branch_miss_rate) = result
+        let (ipc, branch_miss_rate, host_instrs) = result
             .perf
             .as_ref()
-            .map(|p| (p.ipc(), p.branch_miss_rate()))
-            .unwrap_or((None, None));
+            .map(|p| (p.ipc(), p.branch_miss_rate(), p.instructions))
+            .unwrap_or((None, None, None));
 
         Self {
             label: "host".to_string(),
             instret: None,
+            host_instrs,
+            instrs_per_guest: None,
             time_secs: result.time_secs,
             overhead: Some(1.0),
             mips: None,
@@ -237,15 +243,20 @@ impl TableRow {
     /// Create a row for a VM architecture.
     pub fn arch(arch: Arch, result: &RunResultWithPerf, host_time: Option<f64>) -> Self {
         let overhead = host_time.and_then(|ht| calc_overhead(result.result.time_secs, ht));
-        let (ipc, branch_miss_rate) = result
+        let (ipc, branch_miss_rate, host_instrs) = result
             .perf
             .as_ref()
-            .map(|p| (p.ipc(), p.branch_miss_rate()))
-            .unwrap_or((None, None));
+            .map(|p| (p.ipc(), p.branch_miss_rate(), p.instructions))
+            .unwrap_or((None, None, None));
+
+        // Calculate host instructions per guest instruction
+        let instrs_per_guest = host_instrs.map(|hi| hi as f64 / result.result.instret as f64);
 
         Self {
             label: arch.as_str().to_string(),
             instret: Some(result.result.instret),
+            host_instrs,
+            instrs_per_guest,
             time_secs: Some(result.result.time_secs),
             overhead,
             mips: Some(result.result.mips),
@@ -260,6 +271,8 @@ impl TableRow {
         Self {
             label: label.to_string(),
             instret: None,
+            host_instrs: None,
+            instrs_per_guest: None,
             time_secs: None,
             overhead: None,
             mips: None,
@@ -268,6 +281,12 @@ impl TableRow {
             error: Some(error),
         }
     }
+}
+
+/// Format host instructions per guest instruction.
+pub fn format_instrs_per_guest(ipg: Option<f64>) -> String {
+    ipg.map(|v| format!("{:.1}x", v))
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Print markdown table header.
@@ -285,12 +304,12 @@ pub fn print_table_header(trace: bool, fast: bool, runs: usize) {
     println!("*Mode: **{}** | Runs: **{}***", mode, runs);
     println!();
     println!(
-        "| {:<6} | {:>10} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
-        "Arch", "Instret", "Time", "OH", "Speed", "IPC", "Branch Miss"
+        "| {:<6} | {:>10} | {:>10} | {:>9} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        "Arch", "Instret", "Host Ops", "Ops/Guest", "Time", "OH", "Speed", "IPC", "Branch Miss"
     );
     println!(
-        "|{:-<8}|{:-<12}|{:-<10}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
-        "", "", "", "", "", "", ""
+        "|{:-<8}|{:-<12}|{:-<12}|{:-<11}|{:-<10}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
+        "", "", "", "", "", "", "", "", ""
     );
 }
 
@@ -298,8 +317,8 @@ pub fn print_table_header(trace: bool, fast: bool, runs: usize) {
 pub fn print_table_row(row: &TableRow) {
     if row.error.is_some() {
         println!(
-            "| {:<6} | {:>10} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
-            row.label, "-", "-", "-", "-", "-", "-"
+            "| {:<6} | {:>10} | {:>10} | {:>9} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+            row.label, "-", "-", "-", "-", "-", "-", "-", "-"
         );
         return;
     }
@@ -308,6 +327,11 @@ pub fn print_table_row(row: &TableRow) {
         .instret
         .map(format_num)
         .unwrap_or_else(|| "-".to_string());
+    let host_instrs = row
+        .host_instrs
+        .map(format_num)
+        .unwrap_or_else(|| "-".to_string());
+    let instrs_per_guest = format_instrs_per_guest(row.instrs_per_guest);
     let time = row
         .time_secs
         .map(|t| format!("{:.3}s", t))
@@ -321,8 +345,8 @@ pub fn print_table_row(row: &TableRow) {
     let branch_miss = format_branch_miss(row.branch_miss_rate);
 
     println!(
-        "| {:<6} | {:>10} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
-        row.label, instret, time, overhead, speed, ipc, branch_miss
+        "| {:<6} | {:>10} | {:>10} | {:>9} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        row.label, instret, host_instrs, instrs_per_guest, time, overhead, speed, ipc, branch_miss
     );
 }
 
