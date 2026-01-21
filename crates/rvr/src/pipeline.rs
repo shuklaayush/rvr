@@ -8,7 +8,7 @@ use rvr_elf::ElfImage;
 use rvr_emit::{CProject, EmitConfig, EmitInputs, MemorySegment, NUM_REGS_E, NUM_REGS_I};
 use rvr_ir::BlockIR;
 use rvr_isa::{ExtensionRegistry, Xlen};
-use tracing::{debug, info, info_span};
+use tracing::{debug, info, info_span, trace_span};
 
 use crate::{Error, Result};
 
@@ -29,6 +29,7 @@ pub struct Pipeline<X: Xlen> {
 impl<X: Xlen> Pipeline<X> {
     fn adjust_config_for_image(image: &ElfImage<X>, config: &mut EmitConfig<X>) {
         if image.is_rve() {
+            debug!(num_regs = NUM_REGS_E, "RVE mode detected");
             config.num_regs = NUM_REGS_E;
             config.hot_regs.retain(|&r| (r as usize) < NUM_REGS_E);
         } else {
@@ -39,6 +40,11 @@ impl<X: Xlen> Pipeline<X> {
     /// Create a new pipeline with standard extensions.
     pub fn new(image: ElfImage<X>, config: EmitConfig<X>) -> Self {
         let mut config = config;
+        debug!(
+            entry_point = format!("{:#x}", X::to_u64(image.entry_point)),
+            segments = image.memory_segments.len(),
+            "loaded ELF"
+        );
         Self::adjust_config_for_image(&image, &mut config);
         Self {
             image,
@@ -56,6 +62,11 @@ impl<X: Xlen> Pipeline<X> {
         registry: ExtensionRegistry<X>,
     ) -> Self {
         let mut config = config;
+        debug!(
+            entry_point = format!("{:#x}", X::to_u64(image.entry_point)),
+            segments = image.memory_segments.len(),
+            "loaded ELF"
+        );
         Self::adjust_config_for_image(&image, &mut config);
         Self {
             image,
@@ -144,10 +155,13 @@ impl<X: Xlen> Pipeline<X> {
         // Create InstructionTable spanning all executable segments
         let mut instr_table = InstructionTable::new(base_address, end_address, entry_pc);
 
-        // Populate each executable segment
-        for seg in &exec_segments {
-            let seg_start = X::to_u64(seg.virtual_start);
-            instr_table.populate_segment(&seg.data, seg_start, &self.registry);
+        // Populate each executable segment (instruction decoding)
+        {
+            let _span = trace_span!("decode_instructions").entered();
+            for seg in &exec_segments {
+                let seg_start = X::to_u64(seg.virtual_start);
+                instr_table.populate_segment(&seg.data, seg_start, &self.registry);
+            }
         }
 
         // Add read-only segments for constant propagation
@@ -162,11 +176,17 @@ impl<X: Xlen> Pipeline<X> {
         let num_instructions = instr_table.valid_indices().count();
 
         // Create BlockTable with CFG analysis
-        let mut block_table = BlockTable::from_instruction_table(instr_table, &self.registry);
+        let mut block_table = {
+            let _span = trace_span!("cfg_analysis").entered();
+            BlockTable::from_instruction_table(instr_table, &self.registry)
+        };
         let blocks_before = block_table.len();
 
         // Apply block transforms (merge, tail-dup, superblock)
-        let (absorbed, tail_duplicated, superblocked) = block_table.optimize(&self.registry);
+        let (absorbed, tail_duplicated, superblocked) = {
+            let _span = trace_span!("block_transforms").entered();
+            block_table.optimize(&self.registry)
+        };
 
         let num_blocks = block_table.len();
         let insns_per_block = if num_blocks > 0 {
