@@ -71,14 +71,14 @@ mod tests {
     #[test]
     fn test_unit_is_zst() {
         assert_eq!(size_of::<()>(), 0);
-        assert!(!<() as SuspenderState>::HAS_FIELDS);
+        const { assert!(!<() as SuspenderState>::HAS_FIELDS) };
     }
 
     #[test]
     fn test_instret_suspender_layout() {
         // 8 (u64) = 8 bytes
         assert_eq!(size_of::<InstretSuspender>(), 8);
-        assert!(InstretSuspender::HAS_FIELDS);
+        const { assert!(InstretSuspender::HAS_FIELDS) };
     }
 
     #[test]
