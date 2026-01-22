@@ -465,7 +465,7 @@ impl<X: Xlen> CProject<X> {
             "-DNDEBUG",
         ];
 
-        let mut ldflags = Vec::new();
+        let mut ldflags: Vec<String> = Vec::new();
 
         if is_clang {
             cflags.push("-std=c23");
@@ -474,15 +474,17 @@ impl<X: Xlen> CProject<X> {
                 cflags.push("-flto=thin");
                 cflags.push("-fno-plt");
                 cflags.push("-fno-semantic-interposition");
-                ldflags.push("-flto=thin");
-                ldflags.push("-fuse-ld=lld");
+                ldflags.push("-flto=thin".to_string());
+                if let Some(linker) = compiler.linker() {
+                    ldflags.push(format!("-fuse-ld={}", linker));
+                }
             }
         } else {
             // GCC
             cflags.push("-std=c2x");
             if self.enable_lto {
                 cflags.push("-flto");
-                ldflags.push("-flto");
+                ldflags.push("-flto".to_string());
             }
         }
 

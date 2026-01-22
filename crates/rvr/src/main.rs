@@ -158,6 +158,10 @@ enum Commands {
         #[arg(long)]
         cc: Option<String>,
 
+        /// Linker to use (e.g., lld, lld-20). Auto-derived from --cc if not specified.
+        #[arg(long)]
+        linker: Option<String>,
+
         #[command(flatten)]
         tracer: TracerArgs,
     },
@@ -303,6 +307,10 @@ enum RethBenchCommands {
         /// C compiler command (e.g., clang, clang-20, gcc-13)
         #[arg(long, default_value = "clang")]
         cc: String,
+
+        /// Linker to use (e.g., lld, lld-20). Auto-derived from --cc if not specified.
+        #[arg(long)]
+        linker: Option<String>,
     },
     /// Run benchmarks (assumes already compiled)
     Run {
@@ -471,6 +479,7 @@ fn run_command(cli: &Cli) -> i32 {
             syscalls,
             jobs,
             cc,
+            linker,
             tracer,
         } => {
             info!(input = %input.display(), output = %output.display(), "compiling");
@@ -489,10 +498,13 @@ fn run_command(cli: &Cli) -> i32 {
                 .with_tracer_config(tracer_config)
                 .with_jobs(*jobs);
             let options = if let Some(cc) = cc {
-                let compiler: Compiler = cc.parse().unwrap_or_else(|e| {
+                let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
                     error!(error = %e, "invalid compiler");
                     std::process::exit(1);
                 });
+                if let Some(ld) = linker {
+                    compiler = compiler.with_linker(ld);
+                }
                 options.with_compiler(compiler)
             } else {
                 options
@@ -599,8 +611,9 @@ fn run_command(cli: &Cli) -> i32 {
                         trace,
                         fast,
                         cc,
+                        linker,
                     } => {
-                        reth_compile(arch, *trace, *fast, cc);
+                        reth_compile(arch, *trace, *fast, cc, linker.as_deref());
                     }
                     RethBenchCommands::Run {
                         arch,
@@ -701,7 +714,7 @@ fn reth_build(arch_str: &str, no_host: bool) {
 }
 
 /// Compile reth-validator ELFs to native code for all specified architectures.
-fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str) {
+fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str, linker: Option<&str>) {
     let archs = match Arch::parse_list(arch_str) {
         Ok(a) => a,
         Err(e) => {
@@ -727,10 +740,13 @@ fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str) {
             .join(arch.as_str())
             .join(format!("reth-{}", suffix));
 
-        let compiler: Compiler = cc.parse().unwrap_or_else(|e| {
+        let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         });
+        if let Some(ld) = linker {
+            compiler = compiler.with_linker(ld);
+        }
 
         eprintln!("Compiling {} ({}) -> {}", arch, compiler, out_dir.display());
 

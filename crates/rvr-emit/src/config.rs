@@ -21,9 +21,13 @@ pub const NUM_REGS_E: usize = 16;
 /// Clang vs GCC is auto-detected from the command name to determine flags:
 /// - Clang: C23, thin LTO, preserve_none, musttail
 /// - GCC: C2x, standard LTO
+///
+/// For clang, the linker (lld) version is auto-derived from the compiler
+/// command (e.g., "clang-20" → "lld-20"). Use `with_linker()` to override.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Compiler {
     command: String,
+    linker: Option<String>,
 }
 
 impl Compiler {
@@ -31,6 +35,7 @@ impl Compiler {
     pub fn new(command: impl Into<String>) -> Self {
         Self {
             command: command.into(),
+            linker: None,
         }
     }
 
@@ -44,6 +49,12 @@ impl Compiler {
         Self::new("gcc")
     }
 
+    /// Set explicit linker command (overrides auto-derivation).
+    pub fn with_linker(mut self, linker: impl Into<String>) -> Self {
+        self.linker = Some(linker.into());
+        self
+    }
+
     /// Command to invoke.
     pub fn command(&self) -> &str {
         &self.command
@@ -54,6 +65,34 @@ impl Compiler {
     /// Returns true if the command contains "clang".
     pub fn is_clang(&self) -> bool {
         self.command.contains("clang")
+    }
+
+    /// Get the linker to use with `-fuse-ld=`.
+    ///
+    /// For clang, returns the linker (explicit or auto-derived from compiler version).
+    /// For gcc, returns None (uses system default linker).
+    ///
+    /// Auto-derivation extracts version suffix from compiler command:
+    /// - "clang" → "lld"
+    /// - "clang-20" → "lld-20"
+    /// - "/opt/llvm/bin/clang-18" → "lld-18"
+    pub fn linker(&self) -> Option<String> {
+        if !self.is_clang() {
+            return None;
+        }
+
+        if let Some(ref linker) = self.linker {
+            return Some(linker.clone());
+        }
+
+        // Auto-derive from compiler command
+        // Extract the basename first (handle paths like /opt/llvm/bin/clang-20)
+        let basename = self.command.rsplit('/').next().unwrap_or(&self.command);
+
+        // Extract version suffix: "clang-20" → "-20", "clang" → ""
+        let suffix = basename.strip_prefix("clang").unwrap_or("");
+
+        Some(format!("lld{}", suffix))
     }
 }
 
@@ -405,5 +444,31 @@ mod tests {
         assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer), 8);
         assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer), 9);
         assert_eq!(compute_num_hot_regs(10, InstretMode::Suspend, &tracer), 8);
+    }
+
+    #[test]
+    fn test_compiler_linker_derivation() {
+        // Basic clang -> lld
+        let c = Compiler::new("clang");
+        assert_eq!(c.linker(), Some("lld".to_string()));
+
+        // Versioned clang-20 -> lld-20
+        let c = Compiler::new("clang-20");
+        assert_eq!(c.linker(), Some("lld-20".to_string()));
+
+        // Path with version
+        let c = Compiler::new("/opt/llvm/bin/clang-18");
+        assert_eq!(c.linker(), Some("lld-18".to_string()));
+
+        // GCC has no lld
+        let c = Compiler::new("gcc");
+        assert_eq!(c.linker(), None);
+
+        let c = Compiler::new("gcc-13");
+        assert_eq!(c.linker(), None);
+
+        // Explicit linker override
+        let c = Compiler::new("clang-20").with_linker("lld-19");
+        assert_eq!(c.linker(), Some("lld-19".to_string()));
     }
 }
