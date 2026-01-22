@@ -33,7 +33,7 @@ RUSTFLAGS64E = -Clink-arg=-Tlink.x -Clink-arg=--gc-sections -Ctarget-cpu=generic
 
 BINARY = reth-validator
 
-all: rv32 rv32e rv64 rv64e
+all: rv32i rv32e rv64i rv64e
 
 $(OUTPUT_DIR32):
 	mkdir -p $(OUTPUT_DIR32)
@@ -48,7 +48,7 @@ $(OUTPUT_DIR64E):
 	mkdir -p $(OUTPUT_DIR64E)
 
 # Force relink if linker script is newer than cargo's output
-rv32: | $(OUTPUT_DIR32)
+rv32i: | $(OUTPUT_DIR32)
 	@test ! -f target/rv32i/release/$(BINARY) -o $(LINKER_SCRIPT) -nt target/rv32i/release/$(BINARY) && rm -f target/rv32i/release/$(BINARY) || true
 	RUSTFLAGS="$(RUSTFLAGS32)" cargo +$(NIGHTLY) build --release --target $(TARGET32) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
 	cp target/rv32i/release/$(BINARY) $(OUTPUT_DIR32)/$(BINARY)
@@ -58,7 +58,7 @@ rv32e: | $(OUTPUT_DIR32E)
 	RUSTFLAGS="$(RUSTFLAGS32E)" cargo +$(NIGHTLY) build --release --target $(TARGET32E) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
 	cp target/rv32e/release/$(BINARY) $(OUTPUT_DIR32E)/$(BINARY)
 
-rv64: | $(OUTPUT_DIR64)
+rv64i: | $(OUTPUT_DIR64)
 	@test ! -f target/rv64i/release/$(BINARY) -o $(LINKER_SCRIPT) -nt target/rv64i/release/$(BINARY) && rm -f target/rv64i/release/$(BINARY) || true
 	RUSTFLAGS="$(RUSTFLAGS64)" cargo +$(NIGHTLY) build --release --target $(TARGET64) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
 	cp target/rv64i/release/$(BINARY) $(OUTPUT_DIR64)/$(BINARY)
@@ -85,9 +85,9 @@ clean-all:
 help:
 	@echo "Usage:"
 	@echo "  make        - Build all targets"
-	@echo "  make rv32   - Build RV32I (32 regs)"
+	@echo "  make rv32i  - Build RV32I (32 regs)"
 	@echo "  make rv32e  - Build RV32E (16 regs)"
-	@echo "  make rv64   - Build RV64I (32 regs)"
+	@echo "  make rv64i  - Build RV64I (32 regs)"
 	@echo "  make rv64e  - Build RV64E (16 regs)"
 	@echo "  make host   - Build for host (native baseline)"
 	@echo "  make clean  - Clean build artifacts"
@@ -98,4 +98,4 @@ help:
 	@echo "  bin/reth/rv64i/reth-validator"
 	@echo "  bin/reth/rv64e/reth-validator"
 
-.PHONY: all rv32 rv32e rv64 rv64e host clean clean-all help
+.PHONY: all rv32i rv32e rv64i rv64e host clean clean-all help

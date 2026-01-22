@@ -18,9 +18,9 @@ make all
 Build specific targets:
 
 ```bash
-make rv32   # RV32I (32 registers)
+make rv32i  # RV32I (32 registers)
 make rv32e  # RV32E (16 registers)
-make rv64   # RV64I (32 registers)
+make rv64i  # RV64I (32 registers)
 make rv64e  # RV64E (16 registers)
 make host   # Native baseline
 ```
@@ -35,7 +35,7 @@ Output binaries are placed in:
 
 1. Build the guest program:
    ```bash
-   make rv64  # or any other target
+   make rv64i  # or any other target
    ```
 
 2. Compile to native with RVR:

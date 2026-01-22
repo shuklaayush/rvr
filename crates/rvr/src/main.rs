@@ -268,11 +268,15 @@ enum RiscvTestCommands {
 
 #[derive(Subcommand)]
 enum RethBenchCommands {
-    /// Build RISC-V ELF binaries from source (via make)
-    BuildElf {
-        /// Targets to build (rv32, rv32e, rv64, rv64e, host, all)
-        #[arg(default_value = "all")]
-        targets: Vec<String>,
+    /// Build RISC-V ELF binaries and host binary from source
+    Build {
+        /// Architectures to build (comma-separated: rv32i,rv32e,rv64i,rv64e)
+        #[arg(short, long, default_value = "rv32i,rv32e,rv64i,rv64e")]
+        arch: String,
+
+        /// Skip building host binary
+        #[arg(long)]
+        no_host: bool,
     },
     /// Compile ELF binaries to native code (via rvr)
     Compile {
@@ -579,8 +583,8 @@ fn run_command(cli: &Cli) -> i32 {
         Commands::Bench { command } => {
             match command {
                 BenchCommands::Reth { command } => match command {
-                    RethBenchCommands::BuildElf { targets } => {
-                        reth_build_elf(targets);
+                    RethBenchCommands::Build { arch, no_host } => {
+                        reth_build(arch, *no_host);
                     }
                     RethBenchCommands::Compile {
                         arch,
@@ -622,8 +626,8 @@ fn run_command(cli: &Cli) -> i32 {
     }
 }
 
-/// Build RISC-V ELF binaries from source using make.
-fn reth_build_elf(targets: &[String]) {
+/// Build RISC-V ELF binaries and host binary from source.
+fn reth_build(arch_str: &str, no_host: bool) {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
     let reth_dir = project_dir.join("programs/reth-validator");
 
@@ -632,33 +636,56 @@ fn reth_build_elf(targets: &[String]) {
         std::process::exit(1);
     }
 
-    // Default to "all" if no targets specified
-    let targets: Vec<&str> = if targets.is_empty() {
-        vec!["all"]
-    } else {
-        targets.iter().map(|s| s.as_str()).collect()
-    };
+    let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
 
-    eprintln!("Building reth-validator RISC-V ELFs...");
-    eprintln!("Targets: {}", targets.join(" "));
-    eprintln!();
+    // Build host binary first (unless --no-host)
+    if !no_host {
+        eprintln!("Building host binary...");
+        let status = Command::new("cargo")
+            .arg("build")
+            .arg("--release")
+            .arg("--manifest-path")
+            .arg(reth_dir.join("Cargo.toml"))
+            .status()
+            .expect("failed to run cargo");
+
+        if !status.success() {
+            eprintln!("Host build failed");
+            std::process::exit(1);
+        }
+    }
+
+    // Build RISC-V ELFs via make
+    eprintln!("Building RISC-V ELFs: {}", archs.join(", "));
 
     let status = Command::new("make")
         .arg("-C")
         .arg(&reth_dir)
-        .args(&targets)
+        .args(&archs)
         .status()
         .expect("failed to run make");
 
     if !status.success() {
-        eprintln!("Build failed");
+        eprintln!("ELF build failed");
         std::process::exit(1);
     }
 
     // List output binaries
     eprintln!();
     eprintln!("Build complete. Output binaries:");
-    for arch in &["rv32i", "rv32e", "rv64i", "rv64e"] {
+
+    // Host binary
+    if !no_host {
+        let host_bin = reth_dir.join("target/release/reth-validator");
+        if host_bin.exists() {
+            if let Ok(meta) = std::fs::metadata(&host_bin) {
+                eprintln!("  {} ({} bytes)", host_bin.display(), meta.len());
+            }
+        }
+    }
+
+    // RISC-V ELFs
+    for arch in &archs {
         let bin_path = project_dir.join(format!("bin/reth/{}/reth-validator", arch));
         if bin_path.exists() {
             if let Ok(meta) = std::fs::metadata(&bin_path) {
@@ -731,15 +758,23 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
 
     let project_dir = std::env::current_dir().expect("failed to get current directory");
 
-    // Run host binary first to get baseline
+    // Run host binary first to get baseline (optional - may not exist on all platforms)
     let host_bin = project_dir.join("programs/reth-validator/target/release/reth-validator");
-    let host_result = bench::run_host(&host_bin, runs).unwrap_or_default();
-    let host_time = host_result.time_secs;
+    let (host_result, host_time) = match bench::run_host(&host_bin, runs) {
+        Ok(result) => {
+            let time = result.time_secs;
+            (Some(result), time)
+        }
+        Err(_) => (None, None),
+    };
 
     let suffix = get_bench_suffix(trace, fast);
 
-    // Collect all rows
-    let mut rows: Vec<TableRow> = vec![TableRow::host(&host_result)];
+    // Collect all rows (host row only if we have host results)
+    let mut rows: Vec<TableRow> = Vec::new();
+    if let Some(ref result) = host_result {
+        rows.push(TableRow::host(result));
+    }
 
     let bin_dir = project_dir.join("bin/reth");
 
@@ -765,9 +800,9 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
         rows.push(row);
     }
 
-    // Sort by overhead (least first), errors go last
-    rows.sort_by(|a, b| match (a.overhead, b.overhead) {
-        (Some(oa), Some(ob)) => oa.partial_cmp(&ob).unwrap_or(std::cmp::Ordering::Equal),
+    // Sort by time (fastest first), errors go last
+    rows.sort_by(|a, b| match (a.time_secs, b.time_secs) {
+        (Some(ta), Some(tb)) => ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
