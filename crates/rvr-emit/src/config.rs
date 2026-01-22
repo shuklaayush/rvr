@@ -16,27 +16,50 @@ pub const NUM_REGS_I: usize = 32;
 pub const NUM_REGS_E: usize = 16;
 
 /// C compiler to use for generated code.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Compiler {
-    /// Clang (default) - supports C23, preserve_none, musttail, thin LTO.
-    #[default]
-    Clang,
-    /// GCC - uses C2x, standard LTO.
-    Gcc,
+///
+/// Accepts any compiler command (e.g., "clang", "clang-20", "gcc-13").
+/// Clang vs GCC is auto-detected from the command name to determine flags:
+/// - Clang: C23, thin LTO, preserve_none, musttail
+/// - GCC: C2x, standard LTO
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Compiler {
+    command: String,
 }
 
 impl Compiler {
-    /// Command name for this compiler.
-    pub fn command(&self) -> &'static str {
-        match self {
-            Self::Clang => "clang",
-            Self::Gcc => "gcc",
+    /// Create a compiler with the given command.
+    pub fn new(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
         }
     }
 
-    /// Check if this compiler is clang.
+    /// Default clang compiler.
+    pub fn clang() -> Self {
+        Self::new("clang")
+    }
+
+    /// Default gcc compiler.
+    pub fn gcc() -> Self {
+        Self::new("gcc")
+    }
+
+    /// Command to invoke.
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    /// Check if this is a clang-based compiler (for flag selection).
+    ///
+    /// Returns true if the command contains "clang".
     pub fn is_clang(&self) -> bool {
-        matches!(self, Self::Clang)
+        self.command.contains("clang")
+    }
+}
+
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::clang()
     }
 }
 
@@ -44,20 +67,16 @@ impl FromStr for Compiler {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "clang" => Ok(Self::Clang),
-            "gcc" => Ok(Self::Gcc),
-            _ => Err(format!(
-                "unknown compiler '{}', expected 'clang' or 'gcc'",
-                s
-            )),
+        if s.is_empty() {
+            return Err("compiler command cannot be empty".to_string());
         }
+        Ok(Self::new(s))
     }
 }
 
 impl std::fmt::Display for Compiler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.command())
+        write!(f, "{}", self.command)
     }
 }
 

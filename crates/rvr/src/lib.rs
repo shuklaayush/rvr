@@ -452,7 +452,7 @@ impl CompileOptions {
         config.emit_line_info = self.line_info;
         config.instret_mode = self.instret_mode;
         config.tracer_config = self.tracer_config.clone();
-        config.compiler = self.compiler;
+        config.compiler = self.compiler.clone();
         config.syscall_mode = self.syscall_mode;
     }
 

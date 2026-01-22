@@ -154,7 +154,7 @@ enum Commands {
         #[arg(short = 'j', long, default_value = "0")]
         jobs: usize,
 
-        /// C compiler to use (e.g. clang or gcc)
+        /// C compiler command (e.g., clang, clang-20, gcc-13)
         #[arg(long)]
         cc: Option<String>,
 
@@ -300,7 +300,7 @@ enum RethBenchCommands {
         #[arg(short, long)]
         fast: bool,
 
-        /// C compiler to use (clang or gcc)
+        /// C compiler command (e.g., clang, clang-20, gcc-13)
         #[arg(long, default_value = "clang")]
         cc: String,
     },
