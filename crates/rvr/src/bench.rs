@@ -7,9 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
-use perf_event::events::Hardware;
-use perf_event::{Builder, Counter};
-
+use crate::perf::HostPerfCounters;
 use crate::{PerfCounters, RunResultWithPerf, Runner};
 
 /// RISC-V architecture variant.
@@ -73,105 +71,6 @@ pub struct HostResult {
     pub perf: Option<PerfCounters>,
 }
 
-/// Individual perf counters for host binary execution.
-/// Uses inherit(true) to track child processes.
-/// Note: We use individual counters instead of a group because
-/// inherit doesn't work properly with perf groups.
-struct HostPerfCounters {
-    cycles: Counter,
-    instructions: Counter,
-    branches: Counter,
-    branch_misses: Counter,
-}
-
-impl HostPerfCounters {
-    fn setup() -> Option<Self> {
-        // Use inherit(true) to track forked child processes
-        // Don't use groups since inherit doesn't work with groups
-        let cycles = Builder::new()
-            .kind(Hardware::CPU_CYCLES)
-            .inherit(true)
-            .build()
-            .ok()?;
-        let instructions = Builder::new()
-            .kind(Hardware::INSTRUCTIONS)
-            .inherit(true)
-            .build()
-            .ok()?;
-        let branches = Builder::new()
-            .kind(Hardware::BRANCH_INSTRUCTIONS)
-            .inherit(true)
-            .build()
-            .ok()?;
-        let branch_misses = Builder::new()
-            .kind(Hardware::BRANCH_MISSES)
-            .inherit(true)
-            .build()
-            .ok()?;
-
-        Some(Self {
-            cycles,
-            instructions,
-            branches,
-            branch_misses,
-        })
-    }
-
-    fn enable(&mut self) -> std::io::Result<()> {
-        self.cycles.enable()?;
-        self.instructions.enable()?;
-        self.branches.enable()?;
-        self.branch_misses.enable()?;
-        Ok(())
-    }
-
-    fn disable(&mut self) -> std::io::Result<()> {
-        self.cycles.disable()?;
-        self.instructions.disable()?;
-        self.branches.disable()?;
-        self.branch_misses.disable()?;
-        Ok(())
-    }
-
-    fn read(&mut self) -> PerfCounters {
-        PerfCounters {
-            cycles: self.cycles.read().ok(),
-            instructions: self.instructions.read().ok(),
-            branches: self.branches.read().ok(),
-            branch_misses: self.branch_misses.read().ok(),
-        }
-    }
-
-    /// Read counters and return delta since last snapshot.
-    /// This works around the issue that reset() doesn't properly
-    /// clear accumulated child process counts with inherit=true.
-    fn read_delta(&mut self, prev: &PerfCounters) -> PerfCounters {
-        let curr = self.read();
-        PerfCounters {
-            cycles: match (curr.cycles, prev.cycles) {
-                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
-                (Some(c), None) => Some(c),
-                _ => None,
-            },
-            instructions: match (curr.instructions, prev.instructions) {
-                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
-                (Some(c), None) => Some(c),
-                _ => None,
-            },
-            branches: match (curr.branches, prev.branches) {
-                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
-                (Some(c), None) => Some(c),
-                _ => None,
-            },
-            branch_misses: match (curr.branch_misses, prev.branch_misses) {
-                (Some(c), Some(p)) => Some(c.saturating_sub(p)),
-                (Some(c), None) => Some(c),
-                _ => None,
-            },
-        }
-    }
-}
-
 /// Run a compiled library and return results with perf counters.
 pub fn run_bench(
     lib_dir: &Path,
@@ -200,7 +99,7 @@ pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
     }
 
     let runs = runs.max(1);
-    let mut perf_counters = HostPerfCounters::setup();
+    let mut perf_counters = HostPerfCounters::new();
     let mut total_time = 0.0;
     let mut total_cycles = 0u64;
     let mut total_instructions = 0u64;

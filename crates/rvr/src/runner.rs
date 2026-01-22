@@ -8,8 +8,6 @@ use std::path::Path;
 use std::time::Instant;
 
 use libloading::os::unix::{Library, Symbol, RTLD_NOW};
-use perf_event::events::Hardware;
-use perf_event::{Builder, Group};
 use rvr_elf::{get_elf_xlen, ElfImage};
 use rvr_ir::{Rv32, Rv64, Xlen};
 use rvr_state::{
@@ -670,7 +668,7 @@ impl Runner {
             "executing with perf counters"
         );
 
-        let mut perf_group = Self::setup_perf_group();
+        let mut perf_group = crate::perf::PerfGroup::new();
 
         let start = Instant::now();
         if let Some(ref mut group) = perf_group {
@@ -687,7 +685,7 @@ impl Runner {
         let time_secs = elapsed.as_secs_f64();
         let mips = (instret as f64 / time_secs) / 1_000_000.0;
 
-        let perf = perf_group.as_mut().and_then(Self::read_perf_counters);
+        let perf = perf_group.as_mut().and_then(|g| g.read());
 
         let result = RunResult {
             exit_code,
@@ -707,7 +705,7 @@ impl Runner {
         count: usize,
     ) -> Result<RunResultWithPerf, RunError> {
         let entry_point = self.inner.entry_point();
-        let mut perf_group = Self::setup_perf_group();
+        let mut perf_group = crate::perf::PerfGroup::new();
 
         let mut total_time = 0.0;
         let mut total_mips = 0.0;
@@ -744,7 +742,7 @@ impl Runner {
         let avg_time = total_time / count as f64;
         let avg_mips = total_mips / count as f64;
 
-        let perf = perf_group.as_mut().and_then(Self::read_perf_counters);
+        let perf = perf_group.as_mut().and_then(|g| g.read());
 
         let result = RunResult {
             exit_code: last_exit_code,
@@ -756,72 +754,6 @@ impl Runner {
         crate::metrics::record_run("unknown", &result, perf.as_ref());
 
         Ok(RunResultWithPerf { result, perf })
-    }
-
-    fn setup_perf_group() -> Option<PerfGroup> {
-        let mut group = Group::new().ok()?;
-
-        let cycles = Builder::new()
-            .group(&mut group)
-            .kind(Hardware::CPU_CYCLES)
-            .build()
-            .ok()?;
-        let instructions = Builder::new()
-            .group(&mut group)
-            .kind(Hardware::INSTRUCTIONS)
-            .build()
-            .ok()?;
-        let branches = Builder::new()
-            .group(&mut group)
-            .kind(Hardware::BRANCH_INSTRUCTIONS)
-            .build()
-            .ok()?;
-        let branch_misses = Builder::new()
-            .group(&mut group)
-            .kind(Hardware::BRANCH_MISSES)
-            .build()
-            .ok()?;
-
-        Some(PerfGroup {
-            group,
-            cycles,
-            instructions,
-            branches,
-            branch_misses,
-        })
-    }
-
-    fn read_perf_counters(perf: &mut PerfGroup) -> Option<PerfCounters> {
-        let counts = perf.group.read().ok()?;
-
-        Some(PerfCounters {
-            cycles: counts.get(&perf.cycles).copied(),
-            instructions: counts.get(&perf.instructions).copied(),
-            branches: counts.get(&perf.branches).copied(),
-            branch_misses: counts.get(&perf.branch_misses).copied(),
-        })
-    }
-}
-
-struct PerfGroup {
-    group: Group,
-    cycles: perf_event::Counter,
-    instructions: perf_event::Counter,
-    branches: perf_event::Counter,
-    branch_misses: perf_event::Counter,
-}
-
-impl PerfGroup {
-    fn enable(&mut self) -> std::io::Result<()> {
-        self.group.enable()
-    }
-
-    fn disable(&mut self) -> std::io::Result<()> {
-        self.group.disable()
-    }
-
-    fn reset(&mut self) -> std::io::Result<()> {
-        self.group.reset()
     }
 }
 

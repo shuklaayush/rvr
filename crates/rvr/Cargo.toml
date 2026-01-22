@@ -15,7 +15,6 @@ num_cpus.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tempfile.workspace = true
-perf-event.workspace = true
 metrics.workspace = true
 parking_lot.workspace = true
 rvr-elf.workspace = true
@@ -24,6 +23,9 @@ rvr-ir.workspace = true
 rvr-cfg.workspace = true
 rvr-emit.workspace = true
 rvr-state.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event.workspace = true
 
 [lib]
 name = "rvr"

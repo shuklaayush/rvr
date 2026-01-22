@@ -201,6 +201,7 @@ pub use rvr_elf::{get_elf_xlen, ElfImage};
 pub use rvr_emit::{Compiler, EmitConfig, InstretMode, SyscallMode, TracerConfig};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
+mod perf;
 mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
 

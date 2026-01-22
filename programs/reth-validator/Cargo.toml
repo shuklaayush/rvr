@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 sparsestate = { git = "https://github.com/eth-act/zkvm-ethereum-mpt.git", default-features = false }
 
-ere-io-serde = { git = "https://github.com/eth-applied-research-group/ere", default-features = false }
+ere-io = { git = "https://github.com/eth-applied-research-group/ere", default-features = false }
 
 # reth
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", rev = "2f94b4b8739b7d7dd83d5ca3567d73d7059120de" , default-features = false }

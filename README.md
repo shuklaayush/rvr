@@ -47,6 +47,7 @@ rvr test riscv run              # all tests
 rvr test riscv run --filter rv64ui  # filtered
 
 # Reth benchmark
+rvr bench reth build-elf
 rvr bench reth compile --arch rv64i
 rvr bench reth run --arch rv64i
 ```
