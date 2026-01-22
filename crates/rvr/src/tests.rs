@@ -400,6 +400,343 @@ pub fn run_all(config: &TestConfig) -> TestSummary {
     summary
 }
 
+// ============================================================================
+// Test Building
+// ============================================================================
+
+use std::process::Command;
+
+/// RISC-V test category (maps to riscv-tests subdirectories).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TestCategory {
+    // RV32 categories
+    Rv32ui,
+    Rv32uc,
+    Rv32um,
+    Rv32ua,
+    Rv32mi,
+    Rv32si,
+    Rv32uzba,
+    Rv32uzbb,
+    Rv32uzbs,
+    // RV64 categories
+    Rv64ui,
+    Rv64uc,
+    Rv64um,
+    Rv64ua,
+    Rv64mi,
+    Rv64si,
+    Rv64uzba,
+    Rv64uzbb,
+    Rv64uzbs,
+}
+
+impl TestCategory {
+    /// All supported test categories.
+    pub const ALL: &'static [TestCategory] = &[
+        Self::Rv32ui,
+        Self::Rv32uc,
+        Self::Rv32um,
+        Self::Rv32ua,
+        Self::Rv32mi,
+        Self::Rv32si,
+        Self::Rv32uzba,
+        Self::Rv32uzbb,
+        Self::Rv32uzbs,
+        Self::Rv64ui,
+        Self::Rv64uc,
+        Self::Rv64um,
+        Self::Rv64ua,
+        Self::Rv64mi,
+        Self::Rv64si,
+        Self::Rv64uzba,
+        Self::Rv64uzbb,
+        Self::Rv64uzbs,
+    ];
+
+    /// Parse from string (e.g., "rv32ui").
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "rv32ui" => Some(Self::Rv32ui),
+            "rv32uc" => Some(Self::Rv32uc),
+            "rv32um" => Some(Self::Rv32um),
+            "rv32ua" => Some(Self::Rv32ua),
+            "rv32mi" => Some(Self::Rv32mi),
+            "rv32si" => Some(Self::Rv32si),
+            "rv32uzba" => Some(Self::Rv32uzba),
+            "rv32uzbb" => Some(Self::Rv32uzbb),
+            "rv32uzbs" => Some(Self::Rv32uzbs),
+            "rv64ui" => Some(Self::Rv64ui),
+            "rv64uc" => Some(Self::Rv64uc),
+            "rv64um" => Some(Self::Rv64um),
+            "rv64ua" => Some(Self::Rv64ua),
+            "rv64mi" => Some(Self::Rv64mi),
+            "rv64si" => Some(Self::Rv64si),
+            "rv64uzba" => Some(Self::Rv64uzba),
+            "rv64uzbb" => Some(Self::Rv64uzbb),
+            "rv64uzbs" => Some(Self::Rv64uzbs),
+            _ => None,
+        }
+    }
+
+    /// Parse comma-separated list of categories (or "all").
+    pub fn parse_list(s: &str) -> Result<Vec<Self>, String> {
+        if s.eq_ignore_ascii_case("all") {
+            return Ok(Self::ALL.to_vec());
+        }
+        s.split(',')
+            .map(|part| {
+                Self::parse(part.trim()).ok_or_else(|| {
+                    format!(
+                        "unknown category '{}', expected one of: {}",
+                        part,
+                        Self::ALL
+                            .iter()
+                            .map(|c| c.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Get string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rv32ui => "rv32ui",
+            Self::Rv32uc => "rv32uc",
+            Self::Rv32um => "rv32um",
+            Self::Rv32ua => "rv32ua",
+            Self::Rv32mi => "rv32mi",
+            Self::Rv32si => "rv32si",
+            Self::Rv32uzba => "rv32uzba",
+            Self::Rv32uzbb => "rv32uzbb",
+            Self::Rv32uzbs => "rv32uzbs",
+            Self::Rv64ui => "rv64ui",
+            Self::Rv64uc => "rv64uc",
+            Self::Rv64um => "rv64um",
+            Self::Rv64ua => "rv64ua",
+            Self::Rv64mi => "rv64mi",
+            Self::Rv64si => "rv64si",
+            Self::Rv64uzba => "rv64uzba",
+            Self::Rv64uzbb => "rv64uzbb",
+            Self::Rv64uzbs => "rv64uzbs",
+        }
+    }
+
+    /// Get -march and -mabi flags for this category.
+    pub fn march_mabi(&self) -> (&'static str, &'static str) {
+        match self {
+            // RV32 base
+            Self::Rv32ui
+            | Self::Rv32uc
+            | Self::Rv32um
+            | Self::Rv32ua
+            | Self::Rv32mi
+            | Self::Rv32si => ("rv32g", "ilp32"),
+            // RV32 extensions
+            Self::Rv32uzba => ("rv32g_zba", "ilp32"),
+            Self::Rv32uzbb => ("rv32g_zbb", "ilp32"),
+            Self::Rv32uzbs => ("rv32g_zbs", "ilp32"),
+            // RV64 base
+            Self::Rv64ui
+            | Self::Rv64uc
+            | Self::Rv64um
+            | Self::Rv64ua
+            | Self::Rv64mi
+            | Self::Rv64si => ("rv64g", "lp64d"),
+            // RV64 extensions
+            Self::Rv64uzba => ("rv64g_zba", "lp64d"),
+            Self::Rv64uzbb => ("rv64g_zbb", "lp64d"),
+            Self::Rv64uzbs => ("rv64g_zbs", "lp64d"),
+        }
+    }
+}
+
+impl std::fmt::Display for TestCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Configuration for building tests.
+#[derive(Debug, Clone)]
+pub struct BuildConfig {
+    /// Test source directory (contains isa/ subdirectory).
+    pub src_dir: PathBuf,
+    /// Output directory for built binaries.
+    pub out_dir: PathBuf,
+    /// Toolchain prefix (e.g., "riscv64-unknown-elf-").
+    pub toolchain: String,
+    /// Categories to build.
+    pub categories: Vec<TestCategory>,
+}
+
+impl BuildConfig {
+    /// Create a new build config with defaults.
+    pub fn new(categories: Vec<TestCategory>) -> Self {
+        Self {
+            src_dir: PathBuf::from("tests/riscv-tests/isa"),
+            out_dir: PathBuf::from("bin/riscv/tests"),
+            toolchain: String::new(), // Will be auto-detected
+            categories,
+        }
+    }
+
+    /// Set the source directory.
+    pub fn with_src_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.src_dir = dir.into();
+        self
+    }
+
+    /// Set the output directory.
+    pub fn with_out_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.out_dir = dir.into();
+        self
+    }
+
+    /// Set the toolchain prefix.
+    pub fn with_toolchain(mut self, toolchain: impl Into<String>) -> Self {
+        self.toolchain = toolchain.into();
+        self
+    }
+}
+
+/// Find RISC-V GCC toolchain prefix.
+pub fn find_toolchain() -> Option<String> {
+    const PREFIXES: &[&str] = &[
+        "riscv64-unknown-elf-",
+        "riscv32-unknown-elf-",
+        "riscv64-linux-gnu-",
+        "riscv32-linux-gnu-",
+    ];
+
+    for prefix in PREFIXES {
+        let gcc = format!("{}gcc", prefix);
+        if Command::new("which")
+            .arg(&gcc)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Some(prefix.to_string());
+        }
+    }
+    None
+}
+
+/// Result of building a category.
+#[derive(Debug)]
+pub struct BuildResult {
+    pub category: TestCategory,
+    pub built: usize,
+    pub failed: usize,
+}
+
+/// Build tests for a single category.
+pub fn build_category(category: TestCategory, config: &BuildConfig) -> Result<BuildResult, String> {
+    let cat_name = category.as_str();
+    let src_dir = config.src_dir.join(cat_name);
+    let out_dir = config.out_dir.join(cat_name);
+
+    if !src_dir.exists() {
+        return Err(format!("source directory not found: {}", src_dir.display()));
+    }
+
+    fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
+
+    let (march, mabi) = category.march_mabi();
+    let gcc = format!("{}gcc", config.toolchain);
+
+    // Include paths relative to src_dir
+    let env_p = config.src_dir.join("../env/p");
+    let macros = config.src_dir.join("macros/scalar");
+    let link_ld = config.src_dir.join("../env/p/link.ld");
+
+    let mut built = 0;
+    let mut failed = 0;
+
+    // Find all .S files
+    let entries = fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("S") {
+            continue;
+        }
+
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let out_name = format!("{}-p-{}", cat_name, stem);
+        let out_path = out_dir.join(&out_name);
+
+        let status = Command::new(&gcc)
+            .arg(format!("-march={}", march))
+            .arg(format!("-mabi={}", mabi))
+            .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
+            .args(["-nostdlib", "-nostartfiles"])
+            .arg(format!("-I{}", env_p.display()))
+            .arg(format!("-I{}", macros.display()))
+            .arg(format!("-T{}", link_ld.display()))
+            .arg(&path)
+            .arg("-o")
+            .arg(&out_path)
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => built += 1,
+            _ => failed += 1,
+        }
+    }
+
+    Ok(BuildResult {
+        category,
+        built,
+        failed,
+    })
+}
+
+/// Build all specified test categories.
+pub fn build_tests(config: &BuildConfig) -> Result<Vec<BuildResult>, String> {
+    // Validate source directory
+    if !config.src_dir.exists() {
+        return Err(format!(
+            "source directory not found: {}\nMake sure riscv-tests submodule is initialized",
+            config.src_dir.display()
+        ));
+    }
+
+    let mut results = Vec::new();
+
+    for &category in &config.categories {
+        match build_category(category, config) {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                eprintln!("  {}: {}", category, e);
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Print build results summary.
+pub fn print_build_summary(results: &[BuildResult]) {
+    let total_built: usize = results.iter().map(|r| r.built).sum();
+    let total_failed: usize = results.iter().map(|r| r.failed).sum();
+
+    println!();
+    println!(
+        "Build complete: {} tests built, {} failed",
+        total_built, total_failed
+    );
+}
+
 #[cfg(test)]
 mod test_tests {
     use super::*;

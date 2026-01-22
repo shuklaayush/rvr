@@ -43,7 +43,8 @@ rvr compile program.elf -o output/ --tracer-header my_tracer.h
 rvr lift program.elf -o output/
 
 # Run riscv-tests
-rvr test riscv run              # all tests
+rvr test riscv build                # build from source (requires riscv toolchain)
+rvr test riscv run                  # run all tests
 rvr test riscv run --filter rv64ui  # filtered
 
 # Reth benchmark

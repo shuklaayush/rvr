@@ -246,9 +246,17 @@ enum TestCommands {
 enum RiscvTestCommands {
     /// Build riscv-tests from source (requires riscv toolchain)
     Build {
-        /// Test directory containing Makefile
+        /// Test categories to build (comma-separated, or "all")
+        #[arg(short, long, default_value = "all")]
+        category: String,
+
+        /// Output directory for built binaries
         #[arg(short, long)]
-        dir: Option<PathBuf>,
+        output: Option<PathBuf>,
+
+        /// Toolchain prefix (e.g., riscv64-unknown-elf-)
+        #[arg(long)]
+        toolchain: Option<String>,
     },
     /// Run riscv-tests
     Run {
@@ -606,23 +614,20 @@ fn run_command(cli: &Cli) -> i32 {
             }
             0
         }
-        Commands::Test { command } => {
-            match command {
-                TestCommands::Riscv { command } => match command {
-                    RiscvTestCommands::Build { dir } => {
-                        riscv_tests_build(dir.clone());
-                    }
-                    RiscvTestCommands::Run {
-                        filter,
-                        verbose,
-                        timeout,
-                    } => {
-                        return riscv_tests_run(filter.clone(), *verbose, *timeout);
-                    }
-                },
-            }
-            0
-        }
+        Commands::Test { command } => match command {
+            TestCommands::Riscv { command } => match command {
+                RiscvTestCommands::Build {
+                    category,
+                    output,
+                    toolchain,
+                } => riscv_tests_build(category, output.clone(), toolchain.clone()),
+                RiscvTestCommands::Run {
+                    filter,
+                    verbose,
+                    timeout,
+                } => riscv_tests_run(filter.clone(), *verbose, *timeout),
+            },
+        },
     }
 }
 
@@ -827,33 +832,73 @@ fn get_bench_suffix(trace: bool, fast: bool) -> &'static str {
 }
 
 /// Build riscv-tests from source.
-fn riscv_tests_build(dir: Option<PathBuf>) {
+fn riscv_tests_build(
+    category_str: &str,
+    output: Option<PathBuf>,
+    toolchain: Option<String>,
+) -> i32 {
+    use rvr::tests::{BuildConfig, TestCategory};
+
+    // Parse categories
+    let categories = match TestCategory::parse_list(category_str) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    // Find toolchain
+    let toolchain = match toolchain.or_else(rvr::tests::find_toolchain) {
+        Some(t) => t,
+        None => {
+            eprintln!("Error: RISC-V toolchain not found");
+            eprintln!("Install riscv64-unknown-elf-gcc or specify --toolchain");
+            return 1;
+        }
+    };
+
     let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let test_src_dir = dir.unwrap_or_else(|| project_dir.join("programs/riscv-tests"));
 
-    if !test_src_dir.exists() {
-        eprintln!(
-            "Error: test source directory not found: {}",
-            test_src_dir.display()
-        );
-        eprintln!("Clone riscv-tests repository to programs/riscv-tests");
-        std::process::exit(1);
+    let mut config = BuildConfig::new(categories)
+        .with_src_dir(project_dir.join("tests/riscv-tests/isa"))
+        .with_toolchain(&toolchain);
+
+    if let Some(out) = output {
+        config = config.with_out_dir(out);
+    } else {
+        config = config.with_out_dir(project_dir.join("bin/riscv/tests"));
     }
 
-    eprintln!("Building riscv-tests from {}...", test_src_dir.display());
+    eprintln!("Using toolchain: {}gcc", toolchain);
+    eprintln!("Source: {}", config.src_dir.display());
+    eprintln!("Output: {}", config.out_dir.display());
+    eprintln!();
 
-    let status = Command::new("make")
-        .arg("-C")
-        .arg(&test_src_dir)
-        .status()
-        .expect("failed to run make");
+    eprintln!("Building {} categories...", config.categories.len());
 
-    if !status.success() {
-        eprintln!("Build failed");
-        std::process::exit(1);
+    let results = match rvr::tests::build_tests(&config) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
+
+    // Print per-category results
+    for result in &results {
+        if result.failed > 0 {
+            eprintln!(
+                "  {}: {} built, {} failed",
+                result.category, result.built, result.failed
+            );
+        } else {
+            eprintln!("  {}: {} tests", result.category, result.built);
+        }
     }
 
-    eprintln!("Build complete.");
+    rvr::tests::print_build_summary(&results);
+    0
 }
 
 /// Run riscv-tests suite.
