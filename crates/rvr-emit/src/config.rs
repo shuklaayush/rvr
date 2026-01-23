@@ -206,6 +206,15 @@ impl InstretMode {
     pub fn suspends(&self) -> bool {
         *self == Self::Suspend
     }
+
+    /// Convert to C constant value for RV_INSTRET_MODE export.
+    pub fn as_c_mode(&self) -> u32 {
+        match self {
+            Self::Off => 0,
+            Self::Count => 1,
+            Self::Suspend => 2,
+        }
+    }
 }
 
 /// Syscall handling mode for ECALL instructions.

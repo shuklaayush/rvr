@@ -125,6 +125,7 @@ fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     };
 
     let export_functions_val: u32 = if cfg.export_functions { 1 } else { 0 };
+    let instret_mode_val: u32 = cfg.instret_mode.as_c_mode();
 
     format!(
         r#"/* Minimal C API - state management happens in Rust */
@@ -132,9 +133,11 @@ fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
 /* Exported metadata constants (read via dlsym) */
 const uint32_t RV_TRACER_KIND = {tracer_kind};
 const uint32_t RV_EXPORT_FUNCTIONS = {export_functions};
+const uint32_t RV_INSTRET_MODE = {instret_mode};
 "#,
         tracer_kind = tracer_kind_val,
         export_functions = export_functions_val,
+        instret_mode = instret_mode_val,
     )
 }
 

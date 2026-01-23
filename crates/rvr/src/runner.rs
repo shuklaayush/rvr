@@ -57,6 +57,7 @@ struct RvApi {
     execute_from: RvExecuteFrom,
     tracer_kind: u32,
     export_functions: bool,
+    instret_mode: u32,
 }
 
 impl RvApi {
@@ -66,8 +67,14 @@ impl RvApi {
                 execute_from: load_symbol(lib, b"rv_execute_from", "rv_execute_from")?,
                 tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
                 export_functions: load_data_symbol(lib, b"RV_EXPORT_FUNCTIONS").unwrap_or(0) != 0,
+                instret_mode: load_data_symbol(lib, b"RV_INSTRET_MODE").unwrap_or(1), // Default to Count
             })
         }
+    }
+
+    /// Check if the library supports suspend mode (for single-stepping).
+    fn supports_suspend(&self) -> bool {
+        self.instret_mode == 2 // Suspend mode
     }
 }
 
@@ -973,6 +980,11 @@ impl Runner {
     /// Get the memory size in bytes.
     pub fn memory_size(&self) -> usize {
         self.inner.memory_size()
+    }
+
+    /// Check if the library was compiled with suspend mode (for single-stepping).
+    pub fn supports_suspend(&self) -> bool {
+        self.api.supports_suspend()
     }
 
     /// Execute from a specific address.
