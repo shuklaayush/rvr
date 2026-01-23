@@ -2,7 +2,7 @@
 
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tracing::{debug, trace, trace_span};
+use tracing::{debug, trace, trace_span, warn};
 
 use rvr_isa::{
     DecodedInstr, InstrArgs, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT, OP_BLTU,
@@ -448,6 +448,20 @@ impl ControlFlowAnalyzer {
             unresolved = unresolved_dynamic_jumps.len(),
             "CFG analysis complete"
         );
+
+        // Warn about unresolved dynamic jumps - these can cause runtime failures
+        if !unresolved_dynamic_jumps.is_empty() {
+            warn!(
+                count = unresolved_dynamic_jumps.len(),
+                "unresolved indirect jumps detected - jump table targets may be missing"
+            );
+            for &pc in unresolved_dynamic_jumps.iter().take(10) {
+                debug!(pc = format!("{:#x}", pc), "unresolved jump at");
+            }
+            if unresolved_dynamic_jumps.len() > 10 {
+                debug!("... and {} more", unresolved_dynamic_jumps.len() - 10);
+            }
+        }
 
         let mut block_to_function = FxHashMap::default();
         for leader in &leaders {
@@ -1014,13 +1028,32 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
     instruction_table: &InstructionTable<X>,
     internal_targets: &mut FxHashSet<u64>,
 ) {
-    let width = if X::VALUE == 64 { 8 } else { 4 };
+    // Scan for both 4-byte and 8-byte code pointers.
+    // Even on RV64, compilers often emit 32-bit jump table entries when
+    // addresses fit in 32 bits (common for position-dependent executables).
     for segment in instruction_table.ro_segments() {
         let data = &segment.data;
+
+        // Scan for 4-byte pointers (at 4-byte alignment)
         let mut offset = 0usize;
-        while offset + width <= data.len() {
-            let val = if width == 8 {
-                u64::from_le_bytes([
+        while offset + 4 <= data.len() {
+            let val = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as u64;
+            if instruction_table.is_valid_pc(val) {
+                internal_targets.insert(val);
+            }
+            offset += 4;
+        }
+
+        // For 64-bit, also scan for 8-byte pointers (at 8-byte alignment)
+        if X::VALUE == 64 {
+            let mut offset = 0usize;
+            while offset + 8 <= data.len() {
+                let val = u64::from_le_bytes([
                     data[offset],
                     data[offset + 1],
                     data[offset + 2],
@@ -1029,19 +1062,13 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
                     data[offset + 5],
                     data[offset + 6],
                     data[offset + 7],
-                ])
-            } else {
-                u32::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]) as u64
-            };
-            if instruction_table.is_valid_pc(val) {
-                internal_targets.insert(val);
+                ]);
+                // Only add if the high bits are non-zero (otherwise already caught by 4-byte scan)
+                if val > u32::MAX as u64 && instruction_table.is_valid_pc(val) {
+                    internal_targets.insert(val);
+                }
+                offset += 8;
             }
-            offset += width;
         }
     }
 }
