@@ -147,6 +147,10 @@ pub enum Commands {
         /// Build in release mode (default: true)
         #[arg(long, default_value = "true")]
         release: bool,
+
+        /// Show the exact cargo command being run
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// Run benchmarks
     Bench {
@@ -221,6 +225,10 @@ pub enum BenchCommands {
         /// Include host binary comparison (if available)
         #[arg(long)]
         compare_host: bool,
+
+        /// Force recompilation (delete and rebuild .so files)
+        #[arg(long)]
+        force: bool,
     },
 }
 

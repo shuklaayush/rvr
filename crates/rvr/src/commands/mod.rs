@@ -54,6 +54,7 @@ pub fn run_command(cli: &Cli) -> i32 {
             toolchain,
             features,
             release,
+            verbose,
         } => build::build_rust_project(
             path,
             target,
@@ -62,6 +63,8 @@ pub fn run_command(cli: &Cli) -> i32 {
             toolchain,
             features.as_deref(),
             *release,
+            *verbose,
+            false, // not quiet
         ),
         Commands::Bench { command } => match command {
             BenchCommands::List => {
@@ -84,7 +87,8 @@ pub fn run_command(cli: &Cli) -> i32 {
                 runs,
                 fast,
                 compare_host,
-            } => bench::bench_run(name.as_deref(), arch.as_deref(), *runs, *fast, *compare_host),
+                force,
+            } => bench::bench_run(name.as_deref(), arch.as_deref(), *runs, *fast, *compare_host, *force),
         },
         Commands::Test { command } => match command {
             TestCommands::Riscv { command } => match command {

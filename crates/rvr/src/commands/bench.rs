@@ -1,7 +1,7 @@
 //! Benchmark commands and registry.
 
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use rvr::bench::{self, Arch};
 use rvr::polkavm;
@@ -9,6 +9,16 @@ use rvr::{CompileOptions, Compiler, InstretMode};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
+use crate::terminal::{self, Spinner};
+
+/// Helper to run a command silently and return success/failure.
+fn run_silent(cmd: &mut Command) -> bool {
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
 /// Find the project root directory (git root or cwd).
 fn find_project_root() -> PathBuf {
@@ -155,8 +165,8 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
         Some(n) => match find_benchmark(n) {
             Some(b) => vec![b],
             None => {
-                eprintln!("Error: unknown benchmark '{}'", n);
-                eprintln!("Run 'rvr bench list' to see available benchmarks");
+                terminal::error(&format!("Unknown benchmark '{}'", n));
+                terminal::info("Run 'rvr bench list' to see available benchmarks");
                 return EXIT_FAILURE;
             }
         },
@@ -169,39 +179,54 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
 
         match benchmark.source {
             BenchmarkSource::Rust { path } => {
-                eprintln!("Building {} from {}", benchmark.name, path);
-
                 // Build host binary first (unless --no-host)
                 if !no_host && benchmark.host_binary.is_some() {
-                    eprintln!("  Building host binary...");
-                    let status = Command::new("cargo")
-                        .arg("build")
+                    let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
+                    let mut cmd = Command::new("cargo");
+                    cmd.arg("build")
                         .arg("--release")
                         .arg("--manifest-path")
-                        .arg(project_dir.join(path).join("Cargo.toml"))
-                        .status()
-                        .expect("failed to run cargo");
+                        .arg(project_dir.join(path).join("Cargo.toml"));
 
-                    if !status.success() {
-                        eprintln!("  Host build failed");
+                    if run_silent(&mut cmd) {
+                        spinner.finish_with_success(&format!("{} (host)", benchmark.name));
+                    } else {
+                        spinner.finish_with_failure(&format!("{} (host) build failed", benchmark.name));
                         return EXIT_FAILURE;
                     }
                 }
 
                 // Build RISC-V ELFs using rvr build
-                let project_path = project_dir.join(path);
-                let result = build_rust_project(
-                    &project_path,
-                    arch_str,
-                    None, // Use default output (bin/{arch}/)
-                    Some(benchmark.name), // Use benchmark name as output name
-                    "nightly",
-                    None,
-                    true,
-                );
+                let archs = match Arch::parse_list(arch_str) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        terminal::error(&e);
+                        return EXIT_FAILURE;
+                    }
+                };
 
-                if result != EXIT_SUCCESS {
-                    return result;
+                for a in &archs {
+                    let spinner = Spinner::new(format!("Building {} ({})", benchmark.name, a.as_str()));
+                    let project_path = project_dir.join(path);
+                    let result = build_rust_project(
+                        &project_path,
+                        a.as_str(),
+                        None,
+                        Some(benchmark.name),
+                        "nightly",
+                        None,
+                        true,
+                        false,
+                        true, // quiet mode
+                    );
+
+                    if result == EXIT_SUCCESS {
+                        let output_path = project_dir.join("bin").join(a.as_str()).join(benchmark.name);
+                        spinner.finish_with_success(&format!("{} ({}) → {}", benchmark.name, a.as_str(), output_path.display()));
+                    } else {
+                        spinner.finish_with_failure(&format!("{} ({}) build failed", benchmark.name, a.as_str()));
+                        return result;
+                    }
                 }
             }
             BenchmarkSource::Polkavm => {
@@ -209,17 +234,19 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 let archs = match Arch::parse_list(arch_str) {
                     Ok(a) => a,
                     Err(e) => {
-                        eprintln!("Error: {}", e);
+                        terminal::error(&e);
                         return EXIT_FAILURE;
                     }
                 };
 
                 for a in archs {
-                    eprintln!("Building {} (polkavm) for {}", benchmark.name, a.as_str());
+                    let spinner = Spinner::new(format!("Building {} ({}, polkavm)", benchmark.name, a.as_str()));
                     match polkavm::build_benchmark(&project_dir, benchmark.name, a.as_str()) {
-                        Ok(path) => eprintln!("  -> {}", path.display()),
+                        Ok(path) => {
+                            spinner.finish_with_success(&format!("{} ({}) → {}", benchmark.name, a.as_str(), path.display()));
+                        }
                         Err(e) => {
-                            eprintln!("  Error: {}", e);
+                            spinner.finish_with_failure(&format!("{} ({}): {}", benchmark.name, a.as_str(), e));
                             return EXIT_FAILURE;
                         }
                     }
@@ -228,8 +255,7 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
         }
     }
 
-    eprintln!();
-    eprintln!("Build complete.");
+    terminal::success("Build complete");
     EXIT_SUCCESS
 }
 
@@ -248,7 +274,7 @@ pub fn bench_compile(
         Some(n) => match find_benchmark(n) {
             Some(b) => vec![b],
             None => {
-                eprintln!("Error: unknown benchmark '{}'", n);
+                terminal::error(&format!("Unknown benchmark '{}'", n));
                 return EXIT_FAILURE;
             }
         },
@@ -258,7 +284,7 @@ pub fn bench_compile(
     let suffix = if fast { "fast" } else { "base" };
 
     let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
-        eprintln!("Error: {}", e);
+        terminal::error(&format!("{}", e));
         std::process::exit(EXIT_FAILURE);
     });
     if let Some(ld) = linker {
@@ -270,7 +296,7 @@ pub fn bench_compile(
         let archs = match Arch::parse_list(arch_str) {
             Ok(a) => a,
             Err(e) => {
-                eprintln!("Error: {}", e);
+                terminal::error(&e);
                 return EXIT_FAILURE;
             }
         };
@@ -280,10 +306,7 @@ pub fn bench_compile(
             let elf_path = project_dir.join("bin").join(a.as_str()).join(benchmark.name);
 
             if !elf_path.exists() {
-                eprintln!(
-                    "Warning: {} not found, skipping",
-                    elf_path.display()
-                );
+                terminal::warning(&format!("{} not found, skipping", elf_path.display()));
                 continue;
             }
 
@@ -293,28 +316,25 @@ pub fn bench_compile(
                 .join(a.as_str())
                 .join(suffix);
 
-            eprintln!(
-                "Compiling {} ({}) -> {}",
-                benchmark.name,
-                a.as_str(),
-                out_dir.display()
-            );
+            let spinner = Spinner::new(format!("Compiling {} ({})", benchmark.name, a.as_str()));
 
             let mut options = CompileOptions::new()
                 .with_compiler(compiler.clone())
-                .with_export_functions(benchmark.uses_exports);
+                .with_export_functions(benchmark.uses_exports)
+                .with_quiet(true);
             if fast {
                 options = options.with_instret_mode(InstretMode::Off);
             }
 
             if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
-                eprintln!("Error compiling {}: {}", a, e);
+                spinner.finish_with_failure(&format!("compile failed: {}", e));
                 return EXIT_FAILURE;
             }
+            spinner.finish_with_success(&format!("{} ({}) → {}", benchmark.name, a.as_str(), out_dir.display()));
         }
     }
 
-    eprintln!("Compile complete.");
+    terminal::success("Compile complete");
     EXIT_SUCCESS
 }
 
@@ -325,6 +345,7 @@ pub fn bench_run(
     runs: usize,
     fast: bool,
     compare_host: bool,
+    force: bool,
 ) -> i32 {
     let project_dir = find_project_root();
 
@@ -333,7 +354,7 @@ pub fn bench_run(
         Some(n) => match find_benchmark(n) {
             Some(b) => vec![b],
             None => {
-                eprintln!("Error: unknown benchmark '{}'", n);
+                terminal::error(&format!("Unknown benchmark '{}'", n));
                 return EXIT_FAILURE;
             }
         },
@@ -350,7 +371,7 @@ pub fn bench_run(
         let archs = match Arch::parse_list(arch_str) {
             Ok(a) => a,
             Err(e) => {
-                eprintln!("Error: {}", e);
+                terminal::error(&e);
                 return EXIT_FAILURE;
             }
         };
@@ -369,12 +390,15 @@ pub fn bench_run(
                     if let Some(host_path) = benchmark.host_binary {
                         let host_bin = project_dir.join(host_path);
                         if host_bin.exists() {
+                            let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                             match bench::run_host(&host_bin, runs) {
                                 Ok(result) => {
+                                    spinner.finish_and_clear();
                                     host_time = result.time_secs;
                                     rows.push(bench::TableRow::host("host", &result));
                                 }
                                 Err(e) => {
+                                    spinner.finish_with_failure(&e);
                                     rows.push(bench::TableRow::error("host", e));
                                 }
                             }
@@ -385,15 +409,19 @@ pub fn bench_run(
                     // Build and run polkavm benchmark on host
                     let host_lib = project_dir.join("bin/host").join(format!("{}.so", benchmark.name));
                     if !host_lib.exists() {
-                        eprintln!("Building {} for host...", benchmark.name);
+                        let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
                         if let Err(e) = polkavm::build_host_benchmark(&project_dir, benchmark.name) {
-                            eprintln!("  {}", e);
+                            spinner.finish_with_failure(&format!("build failed: {}", e));
                             rows.push(bench::TableRow::error("host", "build failed".to_string()));
+                        } else {
+                            spinner.finish_and_clear();
                         }
                     }
                     if host_lib.exists() {
+                        let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                         match polkavm::run_host_benchmark(&host_lib, runs) {
                             Ok(result) => {
+                                spinner.finish_and_clear();
                                 host_time = Some(result.time_secs);
                                 // Create a HostResult-like row
                                 let host_result = bench::HostResult {
@@ -403,6 +431,7 @@ pub fn bench_run(
                                 rows.push(bench::TableRow::host("host", &host_result));
                             }
                             Err(e) => {
+                                spinner.finish_with_failure(&e);
                                 rows.push(bench::TableRow::error("host", e));
                             }
                         }
@@ -422,6 +451,7 @@ pub fn bench_run(
                 runs,
                 &compiler,
                 host_time,
+                force,
             ) {
                 rows.push(row);
             }
@@ -453,6 +483,20 @@ pub fn bench_run(
     EXIT_SUCCESS
 }
 
+/// Check if the library needs recompilation (ELF newer than .so).
+fn needs_recompile(elf_path: &std::path::Path, lib_path: &std::path::Path) -> bool {
+    if !lib_path.exists() {
+        return true;
+    }
+    // Check if ELF is newer than the compiled library
+    let elf_time = elf_path.metadata().and_then(|m| m.modified()).ok();
+    let lib_time = lib_path.metadata().and_then(|m| m.modified()).ok();
+    match (elf_time, lib_time) {
+        (Some(elf), Some(lib)) => elf > lib,
+        _ => true, // If we can't determine, recompile to be safe
+    }
+}
+
 /// Run benchmark for a single architecture, returning a table row.
 fn run_single_arch(
     benchmark: &BenchmarkInfo,
@@ -463,6 +507,7 @@ fn run_single_arch(
     runs: usize,
     compiler: &Compiler,
     host_time: Option<f64>,
+    force: bool,
 ) -> Option<bench::TableRow> {
     // ELF path: bin/{arch}/{name}
     let elf_path = project_dir.join("bin").join(arch.as_str()).join(benchmark.name);
@@ -479,7 +524,7 @@ fn run_single_arch(
         match &benchmark.source {
             BenchmarkSource::Rust { path } => {
                 // Auto-build for Rust sources
-                eprintln!("Building {} for {}...", benchmark.name, arch.as_str());
+                let spinner = Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
                 let project_path = project_dir.join(path);
                 let result = build_rust_project(
                     &project_path,
@@ -489,35 +534,51 @@ fn run_single_arch(
                     "nightly",
                     None,
                     true,
+                    false,
+                    true, // quiet mode - spinner handles output
                 );
                 if result != EXIT_SUCCESS {
+                    spinner.finish_with_failure("build failed");
                     return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
                 }
+                spinner.finish_and_clear();
             }
             BenchmarkSource::Polkavm => {
                 // Auto-build using polkavm module
-                eprintln!("Building {} for {}...", benchmark.name, arch.as_str());
+                let spinner = Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
                 if let Err(e) = polkavm::build_benchmark(project_dir, benchmark.name, arch.as_str()) {
-                    eprintln!("  {}", e);
+                    spinner.finish_with_failure(&format!("build failed: {}", e));
                     return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
                 }
+                spinner.finish_and_clear();
             }
         }
     }
 
-    // Check if .so exists, compile if missing
-    if !out_dir.exists() {
-        eprintln!("Compiling {} ({})...", benchmark.name, arch.as_str());
+    // Check if .so exists and is up-to-date, compile if missing/stale/forced
+    let lib_path = out_dir.join(format!("lib{}.so", suffix));
+    let should_compile = force || needs_recompile(&elf_path, &lib_path);
+
+    if should_compile {
+        // Delete old output directory if forcing recompile
+        if force && out_dir.exists() {
+            let _ = std::fs::remove_dir_all(&out_dir);
+        }
+
+        let spinner = Spinner::new(format!("Compiling {} ({})", benchmark.name, arch.as_str()));
         let mut options = CompileOptions::new()
             .with_compiler(compiler.clone())
-            .with_export_functions(benchmark.uses_exports);
+            .with_export_functions(benchmark.uses_exports)
+            .with_quiet(true);
         if fast {
             options = options.with_instret_mode(InstretMode::Off);
         }
 
         if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
+            spinner.finish_with_failure(&format!("compile failed: {}", e));
             return Some(bench::TableRow::error(&backend_name, format!("compile failed: {}", e)));
         }
+        spinner.finish_and_clear();
     }
 
     match bench::run_bench_auto(&out_dir, &elf_path, runs) {
