@@ -45,6 +45,7 @@ pub struct ElfFile<X: Xlen> {
     pub e_flags: u32,
     pub sections: Vec<LoadedSection<X>>,
     pub program_headers: Vec<ProgramHeader<X>>,
+    pub symbols: Vec<Symbol<X>>,
 }
 
 impl<X: Xlen> ElfFile<X> {
@@ -65,13 +66,35 @@ impl<X: Xlen> ElfFile<X> {
         let all_sections = Self::parse_all_sections(data, &header)?;
         let strtab = Self::find_string_table(&all_sections, &header);
         let sections = Self::load_allocatable_sections(data, &all_sections, strtab.as_ref());
+        let symbols = Self::parse_symbols(data, &all_sections);
 
         Ok(Self {
             entry_point: header.entry,
             e_flags: header.flags,
             sections,
             program_headers,
+            symbols,
         })
+    }
+
+    /// Look up a symbol by name.
+    ///
+    /// Returns the symbol's value (address) if found.
+    pub fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.symbols
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| X::to_u64(s.value))
+    }
+
+    /// Look up a function symbol by name.
+    ///
+    /// Only returns symbols with STT_FUNC type.
+    pub fn lookup_function(&self, name: &str) -> Option<u64> {
+        self.symbols
+            .iter()
+            .find(|s| s.name == name && s.sym_type == STT_FUNC)
+            .map(|s| X::to_u64(s.value))
     }
 
     /// Check if ELF uses the E (embedded) extension with 16 registers.
@@ -339,6 +362,10 @@ impl<X: Xlen> ElfFile<X> {
         let start = strtab_offset + string_offset;
         let mut result = String::new();
 
+        if start >= data.len() {
+            return result;
+        }
+
         for &byte in &data[start..] {
             if byte == 0 {
                 break;
@@ -347,6 +374,101 @@ impl<X: Xlen> ElfFile<X> {
         }
 
         result
+    }
+
+    /// Parse symbol table from ELF sections.
+    fn parse_symbols(data: &[u8], sections: &[SectionHeader<X>]) -> Vec<Symbol<X>> {
+        let mut symbols = Vec::new();
+
+        // Find symbol table section (.symtab)
+        let symtab = sections.iter().find(|s| s.sh_type == SHT_SYMTAB);
+        let symtab = match symtab {
+            Some(s) => s,
+            None => return symbols,
+        };
+
+        // Find string table for symbol names (linked via sh_link)
+        let strtab_idx = symtab.link as usize;
+        let strtab = if strtab_idx < sections.len() {
+            &sections[strtab_idx]
+        } else {
+            return symbols;
+        };
+
+        let strtab_offset = X::to_u64(strtab.offset) as usize;
+        let symtab_offset = X::to_u64(symtab.offset) as usize;
+        let symtab_size = X::to_u64(symtab.size) as usize;
+        let entsize = X::to_u64(symtab.entsize) as usize;
+
+        if entsize == 0 {
+            return symbols;
+        }
+
+        let num_symbols = symtab_size / entsize;
+
+        for i in 0..num_symbols {
+            let offset = symtab_offset + i * entsize;
+            if let Some(sym) = Self::parse_symbol(data, offset, strtab_offset) {
+                symbols.push(sym);
+            }
+        }
+
+        symbols
+    }
+
+    /// Parse a single symbol entry.
+    fn parse_symbol(data: &[u8], offset: usize, strtab_offset: usize) -> Option<Symbol<X>> {
+        if X::VALUE == 64 {
+            // ELF64 symbol: 24 bytes
+            if offset + 24 > data.len() {
+                return None;
+            }
+
+            let name_idx = read_le32(data, offset) as usize;
+            let info = data[offset + 4];
+            let _other = data[offset + 5];
+            let shndx = read_le16(data, offset + 6);
+            let value = X::from_u64(read_le64(data, offset + 8));
+            let size = X::from_u64(read_le64(data, offset + 16));
+
+            let name = Self::extract_string(data, strtab_offset, name_idx);
+            let sym_type = info & 0xf;
+            let binding = info >> 4;
+
+            Some(Symbol {
+                name,
+                value,
+                size,
+                sym_type,
+                binding,
+                shndx,
+            })
+        } else {
+            // ELF32 symbol: 16 bytes
+            if offset + 16 > data.len() {
+                return None;
+            }
+
+            let name_idx = read_le32(data, offset) as usize;
+            let value = X::from_u64(read_le32(data, offset + 4) as u64);
+            let size = X::from_u64(read_le32(data, offset + 8) as u64);
+            let info = data[offset + 12];
+            let _other = data[offset + 13];
+            let shndx = read_le16(data, offset + 14);
+
+            let name = Self::extract_string(data, strtab_offset, name_idx);
+            let sym_type = info & 0xf;
+            let binding = info >> 4;
+
+            Some(Symbol {
+                name,
+                value,
+                size,
+                sym_type,
+                binding,
+                shndx,
+            })
+        }
     }
 }
 

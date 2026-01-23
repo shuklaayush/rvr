@@ -4,7 +4,7 @@ use rvr_isa::Xlen;
 
 use crate::constants::*;
 use crate::file::ElfFile;
-use crate::header::{LoadedSection, ProgramHeader};
+use crate::header::{LoadedSection, ProgramHeader, Symbol};
 use crate::{ElfError, Result};
 
 /// A memory segment with virtual address and data.
@@ -54,6 +54,7 @@ pub struct ElfImage<X: Xlen> {
     pub e_flags: u32,
     pub memory_segments: Vec<MemorySegment<X>>,
     pub sections: Vec<LoadedSection<X>>,
+    pub symbols: Vec<Symbol<X>>,
 }
 
 impl<X: Xlen> ElfImage<X> {
@@ -68,7 +69,28 @@ impl<X: Xlen> ElfImage<X> {
             e_flags: elf.e_flags,
             memory_segments: segments,
             sections: elf.sections,
+            symbols: elf.symbols,
         })
+    }
+
+    /// Look up a symbol by name.
+    ///
+    /// Returns the symbol's value (address) if found.
+    pub fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.symbols
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| X::to_u64(s.value))
+    }
+
+    /// Look up a function symbol by name.
+    ///
+    /// Only returns symbols with STT_FUNC type.
+    pub fn lookup_function(&self, name: &str) -> Option<u64> {
+        self.symbols
+            .iter()
+            .find(|s| s.name == name && s.sym_type == STT_FUNC)
+            .map(|s| X::to_u64(s.value))
     }
 
     /// Create ELF image from raw bytecode (not an actual ELF file).
@@ -86,6 +108,7 @@ impl<X: Xlen> ElfImage<X> {
             e_flags: 0,
             memory_segments: vec![segment],
             sections: Vec::new(),
+            symbols: Vec::new(),
         }
     }
 

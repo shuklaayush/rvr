@@ -59,3 +59,20 @@ pub struct LoadedSection<X: Xlen> {
     pub size: X::Reg,
     pub data: Vec<u8>,
 }
+
+/// ELF symbol.
+#[derive(Clone, Debug)]
+pub struct Symbol<X: Xlen> {
+    /// Symbol name.
+    pub name: String,
+    /// Symbol value (address for functions).
+    pub value: X::Reg,
+    /// Symbol size.
+    pub size: X::Reg,
+    /// Symbol type (STT_FUNC, STT_OBJECT, etc.).
+    pub sym_type: u8,
+    /// Symbol binding (STB_LOCAL, STB_GLOBAL, etc.).
+    pub binding: u8,
+    /// Section index.
+    pub shndx: u16,
+}

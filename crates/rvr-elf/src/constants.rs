@@ -44,6 +44,18 @@ pub const SHF_WRITE: u64 = 0x1;
 pub const SHF_ALLOC: u64 = 0x2;
 pub const SHF_EXECINSTR: u64 = 0x4;
 
+// Symbol binding (upper 4 bits of st_info)
+pub const STB_LOCAL: u8 = 0;
+pub const STB_GLOBAL: u8 = 1;
+pub const STB_WEAK: u8 = 2;
+
+// Symbol type (lower 4 bits of st_info)
+pub const STT_NOTYPE: u8 = 0;
+pub const STT_OBJECT: u8 = 1;
+pub const STT_FUNC: u8 = 2;
+pub const STT_SECTION: u8 = 3;
+pub const STT_FILE: u8 = 4;
+
 // RISC-V ELF e_flags (RISC-V ELF psABI)
 pub const EF_RISCV_RVC: u32 = 0x1; // Uses C (compressed) extension
 pub const EF_RISCV_FLOAT_ABI_SOFT: u32 = 0x0; // Soft-float ABI
