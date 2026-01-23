@@ -104,7 +104,7 @@ impl FfiTracerPtr {
     /// # Safety
     /// `inner` must be a valid pointer from `from_boxed`.
     unsafe fn as_tracer_mut(&mut self) -> &mut dyn Tracer {
-        &mut **(self.inner as *mut Box<dyn Tracer>)
+        unsafe { &mut **(self.inner as *mut Box<dyn Tracer>) }
     }
 }
 
@@ -113,45 +113,53 @@ impl FfiTracerPtr {
 // =============================================================================
 
 /// Initialize tracer (called at start of execution).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_init(_tracer: *mut FfiTracerPtr) {
     // No-op for now - tracer is already initialized
 }
 
 /// Finalize tracer (called at end of execution).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_fini(tracer: *mut FfiTracerPtr) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().finalize();
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().finalize();
+        }
     }
 }
 
 /// Trace block entry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_block(tracer: *mut FfiTracerPtr, pc: u64) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().trace_block(pc);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().trace_block(pc);
+        }
     }
 }
 
 /// Trace instruction PC.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_pc(tracer: *mut FfiTracerPtr, pc: u64, op: u16) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().trace_pc(pc, op);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().trace_pc(pc, op);
+        }
     }
 }
 
 /// Trace instruction opcode.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_opcode(tracer: *mut FfiTracerPtr, pc: u64, op: u16, opcode: u32) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().trace_opcode(pc, op, opcode);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().trace_opcode(pc, op, opcode);
+        }
     }
 }
 
 /// Trace register read.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_reg_read(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -159,13 +167,15 @@ pub unsafe extern "C" fn trace_reg_read(
     reg: u8,
     value: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().trace_reg_read(pc, op, reg, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().trace_reg_read(pc, op, reg, value);
+        }
     }
 }
 
 /// Trace register write.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_reg_write(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -173,15 +183,17 @@ pub unsafe extern "C" fn trace_reg_write(
     reg: u8,
     value: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_reg_write(pc, op, reg, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_reg_write(pc, op, reg, value);
+        }
     }
 }
 
 /// Trace byte memory read.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_read_byte(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -189,15 +201,17 @@ pub unsafe extern "C" fn trace_mem_read_byte(
     addr: u64,
     value: u8,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_read_byte(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_read_byte(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace halfword memory read.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_read_halfword(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -205,15 +219,17 @@ pub unsafe extern "C" fn trace_mem_read_halfword(
     addr: u64,
     value: u16,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_read_halfword(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_read_halfword(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace word memory read.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_read_word(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -221,15 +237,17 @@ pub unsafe extern "C" fn trace_mem_read_word(
     addr: u64,
     value: u32,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_read_word(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_read_word(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace doubleword memory read.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_read_dword(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -237,15 +255,17 @@ pub unsafe extern "C" fn trace_mem_read_dword(
     addr: u64,
     value: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_read_dword(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_read_dword(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace byte memory write.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_write_byte(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -253,15 +273,17 @@ pub unsafe extern "C" fn trace_mem_write_byte(
     addr: u64,
     value: u8,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_write_byte(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_write_byte(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace halfword memory write.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_write_halfword(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -269,15 +291,17 @@ pub unsafe extern "C" fn trace_mem_write_halfword(
     addr: u64,
     value: u16,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_write_halfword(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_write_halfword(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace word memory write.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_write_word(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -285,15 +309,17 @@ pub unsafe extern "C" fn trace_mem_write_word(
     addr: u64,
     value: u32,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_write_word(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_write_word(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace doubleword memory write.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_mem_write_dword(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -301,43 +327,49 @@ pub unsafe extern "C" fn trace_mem_write_dword(
     addr: u64,
     value: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_mem_write_dword(pc, op, addr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_mem_write_dword(pc, op, addr, value);
+        }
     }
 }
 
 /// Trace branch taken.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_branch_taken(
     tracer: *mut FfiTracerPtr,
     pc: u64,
     op: u16,
     target: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().trace_branch_taken(pc, op, target);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().trace_branch_taken(pc, op, target);
+        }
     }
 }
 
 /// Trace branch not taken.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_branch_not_taken(
     tracer: *mut FfiTracerPtr,
     pc: u64,
     op: u16,
     target: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_branch_not_taken(pc, op, target);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_branch_not_taken(pc, op, target);
+        }
     }
 }
 
 /// Trace CSR read.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_csr_read(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -345,13 +377,15 @@ pub unsafe extern "C" fn trace_csr_read(
     csr: u16,
     value: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer).as_tracer_mut().trace_csr_read(pc, op, csr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer).as_tracer_mut().trace_csr_read(pc, op, csr, value);
+        }
     }
 }
 
 /// Trace CSR write.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn trace_csr_write(
     tracer: *mut FfiTracerPtr,
     pc: u64,
@@ -359,10 +393,12 @@ pub unsafe extern "C" fn trace_csr_write(
     csr: u16,
     value: u64,
 ) {
-    if !tracer.is_null() && !(*tracer).inner.is_null() {
-        (*tracer)
-            .as_tracer_mut()
-            .trace_csr_write(pc, op, csr, value);
+    unsafe {
+        if !tracer.is_null() && !(*tracer).inner.is_null() {
+            (*tracer)
+                .as_tracer_mut()
+                .trace_csr_write(pc, op, csr, value);
+        }
     }
 }
 

@@ -113,7 +113,9 @@ impl GuardedMemory {
     /// Caller must ensure `offset + data.len() <= self.size()`.
     pub unsafe fn copy_from(&mut self, offset: usize, data: &[u8]) {
         debug_assert!(offset + data.len() <= self.memory_size);
-        std::ptr::copy_nonoverlapping(data.as_ptr(), self.as_ptr().add(offset), data.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.as_ptr().add(offset), data.len());
+        }
     }
 
     /// Read a byte from memory.
@@ -123,7 +125,7 @@ impl GuardedMemory {
     /// Caller must ensure `offset < self.size()`.
     pub unsafe fn read_u8(&self, offset: usize) -> u8 {
         debug_assert!(offset < self.memory_size);
-        *self.as_ptr().add(offset)
+        unsafe { *self.as_ptr().add(offset) }
     }
 
     /// Write a byte to memory.
@@ -133,7 +135,7 @@ impl GuardedMemory {
     /// Caller must ensure `offset < self.size()`.
     pub unsafe fn write_u8(&mut self, offset: usize, value: u8) {
         debug_assert!(offset < self.memory_size);
-        *self.as_ptr().add(offset) = value;
+        unsafe { *self.as_ptr().add(offset) = value };
     }
 }
 

@@ -61,11 +61,13 @@ struct RvApi {
 
 impl RvApi {
     unsafe fn load(lib: &Library) -> Result<Self, RunError> {
-        Ok(Self {
-            execute_from: load_symbol(lib, b"rv_execute_from", "rv_execute_from")?,
-            tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
-            export_functions: load_data_symbol(lib, b"RV_EXPORT_FUNCTIONS").unwrap_or(0) != 0,
-        })
+        unsafe {
+            Ok(Self {
+                execute_from: load_symbol(lib, b"rv_execute_from", "rv_execute_from")?,
+                tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
+                export_functions: load_data_symbol(lib, b"RV_EXPORT_FUNCTIONS").unwrap_or(0) != 0,
+            })
+        }
     }
 }
 
@@ -74,16 +76,20 @@ unsafe fn load_symbol<T: Copy>(
     symbol: &'static [u8],
     label: &'static str,
 ) -> Result<T, RunError> {
-    let sym: Symbol<T> = lib.get(symbol).map_err(|e| {
-        error!(symbol = label, "symbol not found in library");
-        RunError::SymbolNotFound(label.to_string(), e)
-    })?;
-    Ok(*sym)
+    unsafe {
+        let sym: Symbol<T> = lib.get(symbol).map_err(|e| {
+            error!(symbol = label, "symbol not found in library");
+            RunError::SymbolNotFound(label.to_string(), e)
+        })?;
+        Ok(*sym)
+    }
 }
 
 unsafe fn load_data_symbol(lib: &Library, symbol: &'static [u8]) -> Option<u32> {
-    let sym: Symbol<*const u32> = lib.get(symbol).ok()?;
-    Some(**sym)
+    unsafe {
+        let sym: Symbol<*const u32> = lib.get(symbol).ok()?;
+        Some(**sym)
+    }
 }
 
 /// Tracer kind matches RV_TRACER_KIND in generated C code.
@@ -693,6 +699,16 @@ impl Runner {
     /// before execute_from() can resume execution.
     pub fn clear_exit(&mut self) {
         self.inner.clear_exit();
+    }
+
+    /// Get the current instruction count.
+    pub fn instret(&self) -> u64 {
+        self.inner.instret()
+    }
+
+    /// Get the exit code (only valid after program has exited).
+    pub fn exit_code(&self) -> u8 {
+        self.inner.exit_code()
     }
 
     /// Execute from a specific address.
