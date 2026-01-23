@@ -332,7 +332,7 @@ impl<X: Xlen> BlockTable<X> {
     fn get_merge_target(
         &self,
         block: &BasicBlock,
-        entry_points: &FxHashSet<u64>,
+        entry_points: &[u64],
         registry: &ExtensionRegistry<X>,
     ) -> Option<u64> {
         let instr = self.instruction_table.get_at_pc(block.last_pc)?;
