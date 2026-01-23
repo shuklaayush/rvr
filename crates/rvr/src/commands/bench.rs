@@ -376,8 +376,6 @@ pub fn bench_run(
             }
         };
 
-        bench::print_bench_header(benchmark.name, benchmark.description, runs);
-
         // Collect all rows first, then sort by overhead/time
         let mut rows: Vec<bench::TableRow> = Vec::new();
 
@@ -472,7 +470,8 @@ pub fn bench_run(
             }
         });
 
-        // Print sorted rows
+        // Print header and sorted rows
+        bench::print_bench_header(benchmark.name, benchmark.description, runs);
         for row in &rows {
             bench::print_table_row(row);
         }
