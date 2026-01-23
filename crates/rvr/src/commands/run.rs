@@ -63,7 +63,7 @@ pub fn cmd_run(
 fn cmd_run_gdb(runner: rvr::Runner, addr: &str) -> i32 {
     use rvr::gdb::GdbServer;
 
-    let mut server = GdbServer::new(runner);
+    let server = GdbServer::new(runner);
     match server.run(addr) {
         Ok(()) => EXIT_SUCCESS,
         Err(e) => {
