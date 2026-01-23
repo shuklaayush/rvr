@@ -25,6 +25,8 @@ rvr-ir.workspace = true
 rvr-cfg.workspace = true
 rvr-emit.workspace = true
 rvr-state.workspace = true
+gdbstub.workspace = true
+gdbstub_arch.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 perf-event.workspace = true

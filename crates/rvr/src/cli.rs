@@ -117,6 +117,10 @@ pub enum Commands {
         /// Number of runs (for averaging)
         #[arg(long, default_value = "1")]
         runs: usize,
+
+        /// Start GDB server on specified address (e.g., :1234 or 127.0.0.1:1234)
+        #[arg(long)]
+        gdb: Option<String>,
     },
     /// Build Rust project to RISC-V ELF
     Build {

@@ -34,6 +34,10 @@ parking_lot = "0.12"
 indicatif = "0.18"
 console = "0.16"
 
+# GDB debugging support
+gdbstub = "0.7"
+gdbstub_arch = "0.3"
+
 # Internal crates
 rvr-elf = { path = "crates/rvr-elf" }
 rvr-isa = { path = "crates/rvr-isa" }

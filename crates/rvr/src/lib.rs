@@ -209,6 +209,7 @@ mod runner;
 pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
 
 pub mod bench;
+pub mod gdb;
 pub mod metrics;
 pub mod polkavm;
 pub mod tests;
@@ -359,13 +360,11 @@ impl<X: Xlen> Recompiler<X> {
         pipeline.lift_to_ir()?;
 
         // Load debug info for #line directives (if enabled and ELF has debug info)
-        if self.config.emit_line_info {
-            if let Some(path_str) = elf_path.to_str() {
-                if let Err(e) = pipeline.load_debug_info(path_str) {
+        if self.config.emit_line_info
+            && let Some(path_str) = elf_path.to_str()
+                && let Err(e) = pipeline.load_debug_info(path_str) {
                     warn!(error = %e, "failed to load debug info (continuing without #line directives)");
                 }
-            }
-        }
 
         // Emit C code
         let base_name = output_dir

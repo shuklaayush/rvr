@@ -150,6 +150,32 @@ trait RunnerImpl {
     /// Set a register value.
     fn set_register(&mut self, reg: usize, value: u64);
 
+    /// Get a register value.
+    fn get_register(&self, reg: usize) -> u64;
+
+    /// Get the program counter.
+    fn get_pc(&self) -> u64;
+
+    /// Set the program counter.
+    fn set_pc(&mut self, pc: u64);
+
+    /// Read memory at the given address into the buffer.
+    /// Returns the number of bytes read.
+    fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize;
+
+    /// Write memory at the given address from the buffer.
+    /// Returns the number of bytes written.
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize;
+
+    /// Get the number of general-purpose registers (16 for E, 32 for I).
+    fn num_regs(&self) -> usize;
+
+    /// Get the XLEN (32 or 64).
+    fn xlen(&self) -> u8;
+
+    /// Get the memory size.
+    fn memory_size(&self) -> usize;
+
     /// Clear the exit flag to allow further execution.
     fn clear_exit(&mut self);
 }
@@ -213,6 +239,55 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
 
     fn set_register(&mut self, reg: usize, value: u64) {
         self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn get_register(&self, reg: usize) -> u64 {
+        X::to_u64(self.state.get_reg(reg))
+    }
+
+    fn get_pc(&self) -> u64 {
+        X::to_u64(self.state.pc())
+    }
+
+    fn set_pc(&mut self, pc: u64) {
+        self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = buf.len().min(mem_size - addr);
+        let src = unsafe { std::slice::from_raw_parts(self.memory.as_ptr().add(addr), len) };
+        buf[..len].copy_from_slice(src);
+        len
+    }
+
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = data.len().min(mem_size - addr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.memory.as_ptr().add(addr), len);
+        }
+        len
+    }
+
+    fn num_regs(&self) -> usize {
+        NUM_REGS
+    }
+
+    fn xlen(&self) -> u8 {
+        X::VALUE
+    }
+
+    fn memory_size(&self) -> usize {
+        self.memory.size()
     }
 
     fn clear_exit(&mut self) {
@@ -291,6 +366,55 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
         self.state.set_reg(reg, X::from_u64(value));
     }
 
+    fn get_register(&self, reg: usize) -> u64 {
+        X::to_u64(self.state.get_reg(reg))
+    }
+
+    fn get_pc(&self) -> u64 {
+        X::to_u64(self.state.pc())
+    }
+
+    fn set_pc(&mut self, pc: u64) {
+        self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = buf.len().min(mem_size - addr);
+        let src = unsafe { std::slice::from_raw_parts(self.memory.as_ptr().add(addr), len) };
+        buf[..len].copy_from_slice(src);
+        len
+    }
+
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = data.len().min(mem_size - addr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.memory.as_ptr().add(addr), len);
+        }
+        len
+    }
+
+    fn num_regs(&self) -> usize {
+        NUM_REGS
+    }
+
+    fn xlen(&self) -> u8 {
+        X::VALUE
+    }
+
+    fn memory_size(&self) -> usize {
+        self.memory.size()
+    }
+
     fn clear_exit(&mut self) {
         self.state.clear_exit();
     }
@@ -359,6 +483,55 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for StatsRunner<X, NUM_REGS> {
 
     fn set_register(&mut self, reg: usize, value: u64) {
         self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn get_register(&self, reg: usize) -> u64 {
+        X::to_u64(self.state.get_reg(reg))
+    }
+
+    fn get_pc(&self) -> u64 {
+        X::to_u64(self.state.pc())
+    }
+
+    fn set_pc(&mut self, pc: u64) {
+        self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = buf.len().min(mem_size - addr);
+        let src = unsafe { std::slice::from_raw_parts(self.memory.as_ptr().add(addr), len) };
+        buf[..len].copy_from_slice(src);
+        len
+    }
+
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = data.len().min(mem_size - addr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.memory.as_ptr().add(addr), len);
+        }
+        len
+    }
+
+    fn num_regs(&self) -> usize {
+        NUM_REGS
+    }
+
+    fn xlen(&self) -> u8 {
+        X::VALUE
+    }
+
+    fn memory_size(&self) -> usize {
+        self.memory.size()
     }
 
     fn clear_exit(&mut self) {
@@ -431,6 +604,55 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for DebugRunner<X, NUM_REGS> {
 
     fn set_register(&mut self, reg: usize, value: u64) {
         self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn get_register(&self, reg: usize) -> u64 {
+        X::to_u64(self.state.get_reg(reg))
+    }
+
+    fn get_pc(&self) -> u64 {
+        X::to_u64(self.state.pc())
+    }
+
+    fn set_pc(&mut self, pc: u64) {
+        self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = buf.len().min(mem_size - addr);
+        let src = unsafe { std::slice::from_raw_parts(self.memory.as_ptr().add(addr), len) };
+        buf[..len].copy_from_slice(src);
+        len
+    }
+
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = data.len().min(mem_size - addr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.memory.as_ptr().add(addr), len);
+        }
+        len
+    }
+
+    fn num_regs(&self) -> usize {
+        NUM_REGS
+    }
+
+    fn xlen(&self) -> u8 {
+        X::VALUE
+    }
+
+    fn memory_size(&self) -> usize {
+        self.memory.size()
     }
 
     fn clear_exit(&mut self) {
@@ -709,6 +931,48 @@ impl Runner {
     /// Get the exit code (only valid after program has exited).
     pub fn exit_code(&self) -> u8 {
         self.inner.exit_code()
+    }
+
+    /// Get a register value.
+    pub fn get_register(&self, reg: usize) -> u64 {
+        self.inner.get_register(reg)
+    }
+
+    /// Get the program counter.
+    pub fn get_pc(&self) -> u64 {
+        self.inner.get_pc()
+    }
+
+    /// Set the program counter.
+    pub fn set_pc(&mut self, pc: u64) {
+        self.inner.set_pc(pc);
+    }
+
+    /// Read memory at the given address into the buffer.
+    /// Returns the number of bytes actually read.
+    pub fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
+        self.inner.read_memory(addr, buf)
+    }
+
+    /// Write memory at the given address from the buffer.
+    /// Returns the number of bytes actually written.
+    pub fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
+        self.inner.write_memory(addr, data)
+    }
+
+    /// Get the number of general-purpose registers (16 for E extension, 32 for I).
+    pub fn num_regs(&self) -> usize {
+        self.inner.num_regs()
+    }
+
+    /// Get the XLEN (32 or 64 bits).
+    pub fn xlen(&self) -> u8 {
+        self.inner.xlen()
+    }
+
+    /// Get the memory size in bytes.
+    pub fn memory_size(&self) -> usize {
+        self.inner.memory_size()
     }
 
     /// Execute from a specific address.

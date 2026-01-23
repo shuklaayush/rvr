@@ -4,12 +4,18 @@ use std::path::PathBuf;
 
 use tracing::error;
 
-use crate::cli::{EXIT_FAILURE, OutputFormat};
+use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS, OutputFormat};
 use crate::commands::{print_multi_result, print_single_result};
 
 /// Handle the `run` command.
-pub fn cmd_run(lib_dir: &PathBuf, elf_path: &PathBuf, format: OutputFormat, runs: usize) -> i32 {
-    let mut runner = match rvr::Runner::load(lib_dir, elf_path) {
+pub fn cmd_run(
+    lib_dir: &PathBuf,
+    elf_path: &PathBuf,
+    format: OutputFormat,
+    runs: usize,
+    gdb_addr: Option<&str>,
+) -> i32 {
+    let runner = match rvr::Runner::load(lib_dir, elf_path) {
         Ok(r) => r,
         Err(e) => {
             error!(error = %e, path = %lib_dir.display(), "failed to load library");
@@ -17,6 +23,13 @@ pub fn cmd_run(lib_dir: &PathBuf, elf_path: &PathBuf, format: OutputFormat, runs
         }
     };
 
+    // If --gdb is specified, start GDB server instead of running normally
+    if let Some(addr) = gdb_addr {
+        return cmd_run_gdb(runner, addr);
+    }
+
+    // Normal execution
+    let mut runner = runner;
     if runs <= 1 {
         match runner.run() {
             Ok(result) => {
@@ -42,6 +55,20 @@ pub fn cmd_run(lib_dir: &PathBuf, elf_path: &PathBuf, format: OutputFormat, runs
                 error!(error = %e, "execution failed");
                 EXIT_FAILURE
             }
+        }
+    }
+}
+
+/// Run with GDB server.
+fn cmd_run_gdb(runner: rvr::Runner, addr: &str) -> i32 {
+    use rvr::gdb::GdbServer;
+
+    let mut server = GdbServer::new(runner);
+    match server.run(addr) {
+        Ok(()) => EXIT_SUCCESS,
+        Err(e) => {
+            error!(error = %e, "GDB server error");
+            EXIT_FAILURE
         }
     }
 }
