@@ -391,7 +391,7 @@ pub fn bench_run(
                             let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                             match bench::run_host(&host_bin, runs) {
                                 Ok(result) => {
-                                    spinner.finish_and_clear();
+                                    spinner.finish_with_success("host done");
                                     host_time = result.time_secs;
                                     rows.push(bench::TableRow::host("host", &result));
                                 }
@@ -412,14 +412,14 @@ pub fn bench_run(
                             spinner.finish_with_failure(&format!("build failed: {}", e));
                             rows.push(bench::TableRow::error("host", "build failed".to_string()));
                         } else {
-                            spinner.finish_and_clear();
+                            spinner.finish_with_success("built host");
                         }
                     }
                     if host_lib.exists() {
                         let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                         match polkavm::run_host_benchmark(&host_lib, runs) {
                             Ok(result) => {
-                                spinner.finish_and_clear();
+                                spinner.finish_with_success("host done");
                                 host_time = Some(result.time_secs);
                                 // Create a HostResult-like row
                                 let host_result = bench::HostResult {
@@ -540,7 +540,7 @@ fn run_single_arch(
                     spinner.finish_with_failure("build failed");
                     return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
                 }
-                spinner.finish_and_clear();
+                spinner.finish_with_success(&format!("built {}", arch.as_str()));
             }
             BenchmarkSource::Polkavm => {
                 // Auto-build using polkavm module
@@ -549,7 +549,7 @@ fn run_single_arch(
                     spinner.finish_with_failure(&format!("build failed: {}", e));
                     return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
                 }
-                spinner.finish_and_clear();
+                spinner.finish_with_success(&format!("built {}", arch.as_str()));
             }
         }
     }
@@ -577,14 +577,18 @@ fn run_single_arch(
             spinner.finish_with_failure(&format!("compile failed: {}", e));
             return Some(bench::TableRow::error(&backend_name, format!("compile failed: {}", e)));
         }
-        spinner.finish_and_clear();
+        spinner.finish_with_success(&format!("compiled {}", arch.as_str()));
     }
 
+    // Run the benchmark
+    let spinner = Spinner::new(format!("Running {} ({})", benchmark.name, arch.as_str()));
     match bench::run_bench_auto(&out_dir, &elf_path, runs) {
         Ok((result, _mode)) => {
+            spinner.finish_with_success(&format!("{} done", arch.as_str()));
             Some(bench::TableRow::backend(&backend_name, &result, host_time))
         }
         Err(e) => {
+            spinner.finish_with_failure(&e);
             Some(bench::TableRow::error(&backend_name, e))
         }
     }

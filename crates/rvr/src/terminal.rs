@@ -55,6 +55,7 @@ impl Spinner {
     }
 
     /// Finish the spinner without a final message (just clear it).
+    #[allow(dead_code)]
     pub fn finish_and_clear(&self) {
         self.bar.finish_and_clear();
     }
