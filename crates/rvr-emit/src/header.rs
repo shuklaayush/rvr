@@ -210,6 +210,7 @@ constexpr int32_t  RV_INT32_MIN   = INT32_MIN;
 fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let rtype = reg_type::<X>();
     let reg_bytes = HeaderConfig::<X>::reg_bytes();
+    let has_suspend = cfg.instret_mode.suspends();
 
     // Compute offsets
     let offset_memory = 0;
@@ -223,7 +224,12 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let instret_align_offset = offset_pad0 + 4;
     let instret_padding = (8 - (instret_align_offset % 8)) % 8;
     let offset_instret = instret_align_offset + instret_padding;
-    let offset_reservation_addr = offset_instret + 8; // 8 bytes for instret (no target_instret when suspender=())
+
+    // When suspend mode is enabled, target_instret comes after instret
+    let offset_target_instret = offset_instret + 8;
+    let suspender_size = if has_suspend { 8 } else { 0 };
+    let offset_reservation_addr = offset_instret + 8 + suspender_size;
+
     let offset_reservation_valid = offset_reservation_addr + reg_bytes;
     let offset_has_exited = offset_reservation_valid + 1;
     let offset_exit_code = offset_has_exited + 1;
@@ -236,7 +242,17 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let offset_start_brk = offset_brk + reg_bytes;
     let base_machine_size = offset_start_brk + reg_bytes;
 
-    // Optional fields
+    // Optional suspender field (after instret)
+    let suspender_field = if has_suspend {
+        format!(
+            "    uint64_t target_instret;            /* offset {} */\n",
+            offset_target_instret
+        )
+    } else {
+        String::new()
+    };
+
+    // Optional tracer field (at end)
     let mut extra_fields = String::new();
     let has_tracer = !cfg.tracer_config.is_none();
     if has_tracer {
@@ -256,7 +272,7 @@ typedef struct RvState {{
     {rtype} pc;                         /* offset {offset_pc} */
     uint32_t _pad0;                     /* offset {offset_pad0} */
     uint64_t instret;                   /* offset {offset_instret} */
-
+{suspender_field}
     /* Reservation for LR/SC */
     {rtype} reservation_addr;           /* offset {offset_reservation_addr} */
     uint8_t reservation_valid;          /* offset {offset_reservation_valid} */
@@ -282,6 +298,7 @@ typedef struct RvState {{
         offset_pc = offset_pc,
         offset_pad0 = offset_pad0,
         offset_instret = offset_instret,
+        suspender_field = suspender_field,
         offset_reservation_addr = offset_reservation_addr,
         offset_reservation_valid = offset_reservation_valid,
         offset_has_exited = offset_has_exited,
