@@ -1,7 +1,8 @@
 [package]
 name = "reth-validator"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85" # edition 2024 minimum
 
 [workspace]
 
@@ -29,7 +30,9 @@ bincode_v2 = { package = "bincode", version = "2.0.1", default-features = false,
 serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "1.0.145", default-features = false, features = ["alloc"] }
 
+# RISC-V runtime support (entry point, panic handler, allocator, critical section)
 [target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]
+rvr-rt = { path = "../../crates/rvr-rt", features = ["entry", "panic-htif", "alloc", "critical-section"] }
 critical-section = { version = "1.2", features = ["restore-state-bool"] }
 
 [target.'cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))'.dependencies]

@@ -2,14 +2,29 @@
 name = "rvr-rt"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85" # edition 2024 minimum
 description = "Runtime support for RISC-V programs targeting rvr"
 license = "MIT OR Apache-2.0"
+keywords = ["riscv", "runtime", "no-std", "embedded"]
+categories = ["no-std", "embedded"]
+
+# Keep this crate out of the main workspace (it's a no_std guest runtime)
+[workspace]
 
 [features]
-default = ["entry", "panic-halt"]
-# Provide default _start entry point
+default = []
+
+# Entry point with ecall-based exit
 entry = []
-# Provide panic handler that halts
-panic-halt = []
-# Provide panic handler that traps (ebreak)
-panic-trap = []
+
+# Panic handlers (mutually exclusive - pick one)
+panic-halt = []   # Infinite loop
+panic-trap = []   # unimp instruction (exit_code=1 via trap)
+panic-abort = []  # ecall exit with code 1
+panic-htif = []   # Write panic message via HTIF, then exit with code 1
+
+# Bump allocator with const-generic heap size
+alloc = []
+
+# Critical section implementation (compatible with critical-section crate)
+critical-section = []

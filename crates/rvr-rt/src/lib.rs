@@ -1,78 +1,70 @@
 //! Runtime support for RISC-V programs targeting rvr.
 //!
-//! This crate provides:
-//! - Linker script setup (via build.rs)
-//! - Optional entry point (`_start`)
-//! - Optional panic handler
+//! This crate provides common runtime components for bare-metal RISC-V programs:
 //!
-//! # Usage
+//! - **Entry point** (`entry` feature): `_start` that sets up stack, zeros BSS,
+//!   calls `main`, and exits via ecall with the return value as exit code.
 //!
-//! Add to your `Cargo.toml`:
+//! - **Panic handlers** (mutually exclusive):
+//!   - `panic-halt`: Infinite loop (safe, debugger-friendly)
+//!   - `panic-trap`: Illegal instruction (exit_code=1 via trap)
+//!   - `panic-abort`: Exit via ecall with code 1
+//!
+//! - **Allocator** (`alloc` feature): Bump allocator with const-generic heap size
+//!
+//! - **Critical section** (`critical-section` feature): Single-threaded critical
+//!   section via mstatus CSR
+//!
+//! # Quick Start
+//!
 //! ```toml
 //! [dependencies]
-//! rvr-rt = "0.1"
+//! rvr-rt = { version = "0.1", features = ["entry", "panic-trap", "alloc"] }
 //! ```
 //!
-//! Then build with:
-//! ```bash
-//! rvr build --target rv64i .
+//! ```ignore
+//! #![no_std]
+//! #![no_main]
+//!
+//! use rvr_rt::BumpAlloc;
+//!
+//! #[global_allocator]
+//! static ALLOC: BumpAlloc<{ 16 * 1024 * 1024 }> = BumpAlloc::new();
+//!
+//! #[no_mangle]
+//! pub extern "C" fn main() -> i32 {
+//!     // Your code here
+//!     0 // Exit code
+//! }
 //! ```
+//!
+//! # Features
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `entry` | Provides `_start` entry point with ecall-based exit |
+//! | `panic-halt` | Panic handler that loops forever |
+//! | `panic-trap` | Panic handler that executes `unimp` (exit_code=1) |
+//! | `panic-abort` | Panic handler that calls exit syscall with code 1 |
+//! | `alloc` | Bump allocator (`BumpAlloc<N>`) |
+//! | `critical-section` | Critical section implementation for `critical-section` crate |
 
 #![no_std]
 
-use core::arch::global_asm;
-
-// Entry point - sets up stack and global pointer, then calls main
+// Entry point module
 #[cfg(feature = "entry")]
-global_asm!(
-    r#"
-.section .text._start
-.global _start
-.type _start, @function
-_start:
-    # Set up global pointer (required for some code models)
-    .option push
-    .option norelax
-    la gp, __global_pointer$
-    .option pop
+mod entry;
 
-    # Set up stack pointer
-    la sp, __stack_top
+// Panic handlers module
+#[cfg(any(feature = "panic-halt", feature = "panic-trap", feature = "panic-abort", feature = "panic-htif"))]
+mod panic;
 
-    # Zero the BSS section
-    la t0, __bss_start
-    la t1, __bss_end
-1:
-    bgeu t0, t1, 2f
-    sw zero, 0(t0)
-    addi t0, t0, 4
-    j 1b
-2:
+// Allocator module
+#[cfg(feature = "alloc")]
+mod alloc;
+#[cfg(feature = "alloc")]
+pub use alloc::BumpAlloc;
 
-    # Call main
-    call main
-
-    # If main returns, trap
-    ebreak
-
-.size _start, . - _start
-"#
-);
-
-/// Panic handler that halts (infinite loop)
-#[cfg(feature = "panic-halt")]
-#[panic_handler]
-fn panic_halt(_info: &core::panic::PanicInfo) -> ! {
-    loop {
-        core::hint::spin_loop();
-    }
-}
-
-/// Panic handler that traps (ebreak)
-#[cfg(feature = "panic-trap")]
-#[panic_handler]
-fn panic_trap(_info: &core::panic::PanicInfo) -> ! {
-    unsafe {
-        core::arch::asm!("ebreak", options(noreturn));
-    }
-}
+// Critical section module
+#[cfg(feature = "critical-section")]
+mod critical;

@@ -4,15 +4,11 @@
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 extern crate alloc;
 
+// Use rvr-rt for RISC-V runtime support (entry, panic, alloc, critical-section)
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-mod allocator;
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-mod critical_section;
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-mod entry;
+use rvr_rt::BumpAlloc;
+
 pub mod libs;
-#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-mod panic;
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 use alloc::{sync::Arc, vec::Vec};
@@ -30,6 +26,11 @@ use reth_stateless::{
 };
 
 use crate::libs::senders::recover_signers;
+
+// 100 MB heap for RISC-V builds
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[global_allocator]
+static ALLOC: BumpAlloc<{ 100 * 1024 * 1024 }> = BumpAlloc::new();
 
 fn validate_block(
     block: EthBlock,
@@ -50,7 +51,6 @@ fn validate_block(
     block_hash
 }
 
-#[cfg_attr(any(target_arch = "riscv32", target_arch = "riscv64"), allow(dead_code))]
 pub fn run() {
     let stateless_input: StatelessInput =
         serde_json::from_str(include_str!("../fixtures/22974575.json"))
@@ -78,10 +78,17 @@ pub fn run() {
 
     let public_inputs = (block_hash.0, parent_hash.0, true);
     black_box(public_inputs);
-    // let _public_input_bytes =
-    //     bincode_v2::serde::encode_to_vec(public_inputs, bincode_v2::config::legacy()).unwrap();
 }
 
+// Entry point for RISC-V builds (called by rvr-rt's _start)
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[no_mangle]
+pub extern "C" fn main() -> i32 {
+    run();
+    0
+}
+
+// Entry point for host builds
 #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
 fn main() {
     run();
