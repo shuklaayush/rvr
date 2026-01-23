@@ -170,6 +170,12 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
         self.exit_code
     }
 
+    /// Clear the exit flag to allow further execution.
+    pub fn clear_exit(&mut self) {
+        self.has_exited = 0;
+        self.exit_code = 0;
+    }
+
     /// Get the instruction count.
     pub fn instret(&self) -> u64 {
         self.instret

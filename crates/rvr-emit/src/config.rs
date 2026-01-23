@@ -243,6 +243,8 @@ pub struct EmitConfig<X: Xlen> {
     pub compiler: Compiler,
     /// Syscall handling mode.
     pub syscall_mode: SyscallMode,
+    /// Export functions mode: compiled for calling exported functions rather than running from entry point.
+    pub export_functions: bool,
     _marker: PhantomData<X>,
 }
 
@@ -267,6 +269,7 @@ impl<X: Xlen> EmitConfig<X> {
             tracer_config: TracerConfig::none(),
             compiler: Compiler::default(),
             syscall_mode: SyscallMode::default(),
+            export_functions: false,
             _marker: PhantomData,
         }
     }

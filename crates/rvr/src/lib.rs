@@ -246,6 +246,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Recompiler<X: Xlen> {
     config: EmitConfig<X>,
     quiet: bool,
+    export_functions: bool,
     _marker: PhantomData<X>,
 }
 
@@ -255,6 +256,7 @@ impl<X: Xlen> Recompiler<X> {
         Self {
             config,
             quiet: false,
+            export_functions: false,
             _marker: PhantomData,
         }
     }
@@ -279,6 +281,16 @@ impl<X: Xlen> Recompiler<X> {
     /// Suppress compilation output.
     pub fn with_quiet(mut self, quiet: bool) -> Self {
         self.quiet = quiet;
+        self
+    }
+
+    /// Enable export functions mode for calling exported functions.
+    ///
+    /// When enabled, all function symbols are added as CFG entry points,
+    /// and RV_EXPORT_FUNCTIONS metadata is set in the compiled library.
+    pub fn with_export_functions(mut self, enabled: bool) -> Self {
+        self.export_functions = enabled;
+        self.config.export_functions = enabled;
         self
     }
 
@@ -334,6 +346,11 @@ impl<X: Xlen> Recompiler<X> {
         };
         let mut pipeline = Pipeline::<X>::with_registry(image, self.config.clone(), registry);
 
+        // Add function symbols as extra entry points if requested
+        if self.export_functions {
+            pipeline.add_function_symbols_as_entry_points();
+        }
+
         // Build CFG (InstructionTable → BlockTable → optimizations)
         pipeline.build_cfg()?;
 
@@ -371,6 +388,9 @@ pub struct CompileOptions {
     pub tohost: bool,
     /// Emit #line directives with source locations (requires debug info in ELF).
     pub line_info: bool,
+    /// Export functions mode: compile for calling exported functions rather than running from entry point.
+    /// Adds all function symbols as entry points for CFG analysis.
+    pub export_functions: bool,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
     /// Number of parallel compile jobs (0 = auto-detect based on CPU count).
@@ -445,6 +465,15 @@ impl CompileOptions {
         self
     }
 
+    /// Enable export functions mode for calling exported functions.
+    ///
+    /// When enabled, all function symbols are added as CFG entry points,
+    /// and RV_EXPORT_FUNCTIONS metadata is set in the compiled library.
+    pub fn with_export_functions(mut self, enabled: bool) -> Self {
+        self.export_functions = enabled;
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
@@ -481,13 +510,17 @@ pub fn compile_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config).with_quiet(options.quiet);
+            let recompiler = Recompiler::<Rv32>::new(config)
+                .with_quiet(options.quiet)
+                .with_export_functions(options.export_functions);
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config).with_quiet(options.quiet);
+            let recompiler = Recompiler::<Rv64>::new(config)
+                .with_quiet(options.quiet)
+                .with_export_functions(options.export_functions);
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
     )
@@ -512,13 +545,15 @@ pub fn lift_to_c_with_options(
         || {
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv32>::new(config);
+            let recompiler =
+                Recompiler::<Rv32>::new(config).with_export_functions(options.export_functions);
             recompiler.lift(elf_path, output_dir)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
-            let recompiler = Recompiler::<Rv64>::new(config);
+            let recompiler =
+                Recompiler::<Rv64>::new(config).with_export_functions(options.export_functions);
             recompiler.lift(elf_path, output_dir)
         },
     )

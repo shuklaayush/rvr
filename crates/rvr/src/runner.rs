@@ -56,6 +56,7 @@ type RvExecuteFrom = unsafe extern "C" fn(*mut c_void, u64) -> i32;
 struct RvApi {
     execute_from: RvExecuteFrom,
     tracer_kind: u32,
+    export_functions: bool,
 }
 
 impl RvApi {
@@ -63,6 +64,7 @@ impl RvApi {
         Ok(Self {
             execute_from: load_symbol(lib, b"rv_execute_from", "rv_execute_from")?,
             tracer_kind: load_data_symbol(lib, b"RV_TRACER_KIND").unwrap_or(0),
+            export_functions: load_data_symbol(lib, b"RV_EXPORT_FUNCTIONS").unwrap_or(0) != 0,
         })
     }
 }
@@ -135,6 +137,15 @@ trait RunnerImpl {
 
     /// Get entry point from ELF.
     fn entry_point(&self) -> u64;
+
+    /// Look up a symbol by name.
+    fn lookup_symbol(&self, name: &str) -> Option<u64>;
+
+    /// Set a register value.
+    fn set_register(&mut self, reg: usize, value: u64);
+
+    /// Clear the exit flag to allow further execution.
+    fn clear_exit(&mut self);
 }
 
 // ============================================================================
@@ -188,6 +199,18 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
 
     fn entry_point(&self) -> u64 {
         X::to_u64(self.elf_image.entry_point)
+    }
+
+    fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.elf_image.lookup_symbol(name)
+    }
+
+    fn set_register(&mut self, reg: usize, value: u64) {
+        self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn clear_exit(&mut self) {
+        self.state.clear_exit();
     }
 }
 
@@ -253,6 +276,18 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
     fn entry_point(&self) -> u64 {
         X::to_u64(self.elf_image.entry_point)
     }
+
+    fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.elf_image.lookup_symbol(name)
+    }
+
+    fn set_register(&mut self, reg: usize, value: u64) {
+        self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn clear_exit(&mut self) {
+        self.state.clear_exit();
+    }
 }
 
 // ============================================================================
@@ -310,6 +345,18 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for StatsRunner<X, NUM_REGS> {
 
     fn entry_point(&self) -> u64 {
         X::to_u64(self.elf_image.entry_point)
+    }
+
+    fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.elf_image.lookup_symbol(name)
+    }
+
+    fn set_register(&mut self, reg: usize, value: u64) {
+        self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn clear_exit(&mut self) {
+        self.state.clear_exit();
     }
 }
 
@@ -370,6 +417,18 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for DebugRunner<X, NUM_REGS> {
 
     fn entry_point(&self) -> u64 {
         X::to_u64(self.elf_image.entry_point)
+    }
+
+    fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.elf_image.lookup_symbol(name)
+    }
+
+    fn set_register(&mut self, reg: usize, value: u64) {
+        self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn clear_exit(&mut self) {
+        self.state.clear_exit();
     }
 }
 
@@ -594,6 +653,58 @@ impl Runner {
             api,
             inner,
         })
+    }
+
+    /// Check if library was compiled with export functions mode.
+    ///
+    /// When enabled, the library exports functions that can be called
+    /// independently via `execute_from()` rather than running from entry point.
+    pub fn has_export_functions(&self) -> bool {
+        self.api.export_functions
+    }
+
+    /// Look up a symbol by name and return its address.
+    pub fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.inner.lookup_symbol(name)
+    }
+
+    /// Get the entry point address.
+    pub fn entry_point(&self) -> u64 {
+        self.inner.entry_point()
+    }
+
+    /// Load segments and reset state for a fresh run.
+    pub fn prepare(&mut self) {
+        self.inner.load_segments();
+        self.inner.reset();
+    }
+
+    /// Set a register value.
+    ///
+    /// Register 0 (zero) is hardwired to zero and cannot be modified.
+    /// Register 1 (ra) is the return address.
+    pub fn set_register(&mut self, reg: usize, value: u64) {
+        self.inner.set_register(reg, value);
+    }
+
+    /// Clear the exit flag to allow further execution.
+    ///
+    /// After a program exits (e.g., via ebreak), this must be called
+    /// before execute_from() can resume execution.
+    pub fn clear_exit(&mut self) {
+        self.inner.clear_exit();
+    }
+
+    /// Execute from a specific address.
+    ///
+    /// Call `prepare()` first to load segments and reset state.
+    /// Returns the elapsed time and instruction count.
+    pub fn execute_from(&mut self, pc: u64) -> (std::time::Duration, u64) {
+        let start = Instant::now();
+        unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), pc) };
+        let elapsed = start.elapsed();
+        let instret = self.inner.instret();
+        (elapsed, instret)
     }
 
     /// Run the program and return the result.

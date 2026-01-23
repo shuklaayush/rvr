@@ -33,6 +33,8 @@ pub struct DispatchConfig<X: Xlen> {
     pub has_tracing: bool,
     /// Built-in tracer kind when available.
     pub tracer_kind: Option<TracerKind>,
+    /// Export functions mode: compiled for calling exported functions.
+    pub export_functions: bool,
     _marker: std::marker::PhantomData<X>,
 }
 
@@ -47,6 +49,7 @@ impl<X: Xlen> DispatchConfig<X> {
             memory_bits: config.memory_bits,
             has_tracing: !config.tracer_config.is_none(),
             tracer_kind: config.tracer_config.builtin_kind(),
+            export_functions: config.export_functions,
             _marker: std::marker::PhantomData,
         }
     }
@@ -98,12 +101,14 @@ fn gen_trap_handler<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     format!(
         r#"/* Trap handler for invalid addresses - replaces NULL checks */
 __attribute__((preserve_none, cold))
-void rv_trap({}) {{
+void rv_trap({params}) {{
     state->has_exited = true;
     state->exit_code = 1;
+    {save_to_state}
 }}
 "#,
-        cfg.sig.params
+        params = cfg.sig.params,
+        save_to_state = cfg.sig.save_to_state,
     )
 }
 
@@ -119,13 +124,17 @@ fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
         }
     };
 
+    let export_functions_val: u32 = if cfg.export_functions { 1 } else { 0 };
+
     format!(
         r#"/* Minimal C API - state management happens in Rust */
 
-/* Exported metadata constant (read via dlsym) */
+/* Exported metadata constants (read via dlsym) */
 const uint32_t RV_TRACER_KIND = {tracer_kind};
+const uint32_t RV_EXPORT_FUNCTIONS = {export_functions};
 "#,
         tracer_kind = tracer_kind_val,
+        export_functions = export_functions_val,
     )
 }
 

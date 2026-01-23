@@ -12,6 +12,11 @@ use tracing::{error, info};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
 
+/// Exit code for success.
+const EXIT_SUCCESS: i32 = 0;
+/// Exit code for failure.
+const EXIT_FAILURE: i32 = 1;
+
 #[derive(Parser)]
 #[command(name = "rvr")]
 #[command(about = "RISC-V Recompiler - compiles ELF to native code via C")]
@@ -230,7 +235,59 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum BenchCommands {
-    /// Benchmark reth-validator
+    /// List available benchmarks
+    List,
+    /// Build benchmark from source (requires Rust nightly with RISC-V targets)
+    Build {
+        /// Benchmark name (e.g., bench-minimal, bench-prime-sieve)
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+
+        /// Architectures to build (comma-separated: rv32i,rv64i)
+        #[arg(short, long, default_value = "rv32i,rv64i")]
+        arch: String,
+    },
+    /// Compile benchmark ELF to native code
+    Compile {
+        /// Benchmark name
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Architectures to compile (comma-separated: rv32i,rv64i)
+        #[arg(short, long, default_value = "rv64i")]
+        arch: String,
+
+        /// Fast mode (no instret counting)
+        #[arg(short, long)]
+        fast: bool,
+
+        /// C compiler command
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// Linker to use
+        #[arg(long)]
+        linker: Option<String>,
+    },
+    /// Run compiled benchmark
+    Run {
+        /// Benchmark name
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Architectures to run (comma-separated: rv32i,rv64i)
+        #[arg(short, long, default_value = "rv64i")]
+        arch: String,
+
+        /// Number of runs for averaging
+        #[arg(short, long, default_value = "3")]
+        runs: usize,
+
+        /// Fast mode (must match compile)
+        #[arg(short, long)]
+        fast: bool,
+    },
+    /// Benchmark reth-validator (full benchmark with host comparison)
     Reth {
         #[command(subcommand)]
         command: RethBenchCommands,
@@ -487,7 +544,7 @@ fn run_command(cli: &Cli) -> i32 {
                 Ok(config) => config,
                 Err(err) => {
                     error!(error = %err, "invalid tracer configuration");
-                    return 1;
+                    return EXIT_FAILURE;
                 }
             };
             let options = CompileOptions::new()
@@ -500,7 +557,7 @@ fn run_command(cli: &Cli) -> i32 {
             let options = if let Some(cc) = cc {
                 let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
                     error!(error = %e, "invalid compiler");
-                    std::process::exit(1);
+                    std::process::exit(EXIT_FAILURE);
                 });
                 if let Some(ld) = linker {
                     compiler = compiler.with_linker(ld);
@@ -512,11 +569,11 @@ fn run_command(cli: &Cli) -> i32 {
             match rvr::compile_with_options(input, output, options) {
                 Ok(path) => {
                     info!(output = %path.display(), "done");
-                    0
+                    EXIT_SUCCESS
                 }
                 Err(e) => {
                     error!(error = %e, "compilation failed");
-                    1
+                    EXIT_FAILURE
                 }
             }
         }
@@ -535,7 +592,7 @@ fn run_command(cli: &Cli) -> i32 {
                 Ok(config) => config,
                 Err(err) => {
                     error!(error = %err, "invalid tracer configuration");
-                    return 1;
+                    return EXIT_FAILURE;
                 }
             };
             let options = CompileOptions::new()
@@ -548,11 +605,11 @@ fn run_command(cli: &Cli) -> i32 {
             match rvr::lift_to_c_with_options(input, output, options) {
                 Ok(path) => {
                     info!(output = %path.display(), "done");
-                    0
+                    EXIT_SUCCESS
                 }
                 Err(e) => {
                     error!(error = %e, "lift failed");
-                    1
+                    EXIT_FAILURE
                 }
             }
         }
@@ -566,7 +623,7 @@ fn run_command(cli: &Cli) -> i32 {
                 Ok(r) => r,
                 Err(e) => {
                     error!(error = %e, path = %lib_dir.display(), "failed to load library");
-                    return 1;
+                    return EXIT_FAILURE;
                 }
             };
 
@@ -578,7 +635,7 @@ fn run_command(cli: &Cli) -> i32 {
                     }
                     Err(e) => {
                         error!(error = %e, "execution failed");
-                        1
+                        EXIT_FAILURE
                     }
                 }
             } else {
@@ -595,38 +652,56 @@ fn run_command(cli: &Cli) -> i32 {
                     }
                     Err(e) => {
                         error!(error = %e, "execution failed");
-                        1
+                        EXIT_FAILURE
                     }
                 }
             }
         }
-        Commands::Bench { command } => {
-            match command {
-                BenchCommands::Reth { command } => match command {
-                    RethBenchCommands::Build { arch, no_host } => {
-                        reth_build(arch, *no_host);
-                    }
-                    RethBenchCommands::Compile {
-                        arch,
-                        trace,
-                        fast,
-                        cc,
-                        linker,
-                    } => {
-                        reth_compile(arch, *trace, *fast, cc, linker.as_deref());
-                    }
-                    RethBenchCommands::Run {
-                        arch,
-                        runs,
-                        trace,
-                        fast,
-                    } => {
-                        reth_run(arch, *runs, *trace, *fast);
-                    }
-                },
+        Commands::Bench { command } => match command {
+            BenchCommands::List => {
+                bench_list();
+                EXIT_SUCCESS
             }
-            0
-        }
+            BenchCommands::Build { name, arch } => bench_build(name.as_deref(), arch),
+            BenchCommands::Compile {
+                name,
+                arch,
+                fast,
+                cc,
+                linker,
+            } => bench_compile(name, arch, *fast, cc, linker.as_deref()),
+            BenchCommands::Run {
+                name,
+                arch,
+                runs,
+                fast,
+            } => bench_run(name, arch, *runs, *fast),
+            BenchCommands::Reth { command } => match command {
+                RethBenchCommands::Build { arch, no_host } => {
+                    reth_build(arch, *no_host);
+                    EXIT_SUCCESS
+                }
+                RethBenchCommands::Compile {
+                    arch,
+                    trace,
+                    fast,
+                    cc,
+                    linker,
+                } => {
+                    reth_compile(arch, *trace, *fast, cc, linker.as_deref());
+                    EXIT_SUCCESS
+                }
+                RethBenchCommands::Run {
+                    arch,
+                    runs,
+                    trace,
+                    fast,
+                } => {
+                    reth_run(arch, *runs, *trace, *fast);
+                    EXIT_SUCCESS
+                }
+            },
+        },
         Commands::Test { command } => match command {
             TestCommands::Riscv { command } => match command {
                 RiscvTestCommands::Build {
@@ -651,7 +726,7 @@ fn reth_build(arch_str: &str, no_host: bool) {
 
     if !reth_dir.exists() {
         eprintln!("Error: {} not found", reth_dir.display());
-        std::process::exit(1);
+        std::process::exit(EXIT_FAILURE);
     }
 
     let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
@@ -669,7 +744,7 @@ fn reth_build(arch_str: &str, no_host: bool) {
 
         if !status.success() {
             eprintln!("Host build failed");
-            std::process::exit(1);
+            std::process::exit(EXIT_FAILURE);
         }
     }
 
@@ -685,7 +760,7 @@ fn reth_build(arch_str: &str, no_host: bool) {
 
     if !status.success() {
         eprintln!("ELF build failed");
-        std::process::exit(1);
+        std::process::exit(EXIT_FAILURE);
     }
 
     // List output binaries
@@ -719,7 +794,7 @@ fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str, linker: Optio
         Ok(a) => a,
         Err(e) => {
             eprintln!("Error: {}", e);
-            std::process::exit(1);
+            std::process::exit(EXIT_FAILURE);
         }
     };
 
@@ -742,7 +817,7 @@ fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str, linker: Optio
 
         let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
             eprintln!("Error: {}", e);
-            std::process::exit(1);
+            std::process::exit(EXIT_FAILURE);
         });
         if let Some(ld) = linker {
             compiler = compiler.with_linker(ld);
@@ -760,7 +835,7 @@ fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str, linker: Optio
 
         if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
             eprintln!("Error compiling {}: {}", arch, e);
-            std::process::exit(1);
+            std::process::exit(EXIT_FAILURE);
         }
     }
 
@@ -773,7 +848,7 @@ fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("Error: {}", e);
-            std::process::exit(1);
+            std::process::exit(EXIT_FAILURE);
         }
     };
 
@@ -860,7 +935,7 @@ fn riscv_tests_build(
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {}", e);
-            return 1;
+            return EXIT_FAILURE;
         }
     };
 
@@ -870,7 +945,7 @@ fn riscv_tests_build(
         None => {
             eprintln!("Error: RISC-V toolchain not found");
             eprintln!("Install riscv64-unknown-elf-gcc or specify --toolchain");
-            return 1;
+            return EXIT_FAILURE;
         }
     };
 
@@ -897,7 +972,7 @@ fn riscv_tests_build(
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {}", e);
-            return 1;
+            return EXIT_FAILURE;
         }
     };
 
@@ -914,7 +989,7 @@ fn riscv_tests_build(
     }
 
     rvr::tests::print_build_summary(&results);
-    0
+    EXIT_SUCCESS
 }
 
 /// Run riscv-tests suite.
@@ -925,7 +1000,7 @@ fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
     if !test_dir.exists() {
         eprintln!("Error: test directory not found: {}", test_dir.display());
         eprintln!("Place riscv-tests ELF binaries in bin/riscv/tests/");
-        return 1;
+        return EXIT_FAILURE;
     }
 
     let config = TestConfig::default()
@@ -942,8 +1017,226 @@ fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
     tests::print_summary(&summary);
 
     if summary.all_passed() {
-        0
+        EXIT_SUCCESS
     } else {
-        1
+        EXIT_FAILURE
     }
+}
+
+// --- Generic benchmark commands ---
+
+/// Known benchmarks and their locations
+const BENCHMARKS: &[(&str, &str)] = &[
+    ("bench-minimal", "Minimal function call overhead benchmark"),
+    ("bench-prime-sieve", "Prime number sieve algorithm"),
+    ("bench-pinky", "NES emulator benchmark"),
+    ("bench-memset", "Memory set benchmark"),
+];
+
+/// List available benchmarks.
+fn bench_list() {
+    println!("Available benchmarks:");
+    println!();
+    for (name, desc) in BENCHMARKS {
+        println!("  {:<20} {}", name, desc);
+    }
+    println!();
+    println!("Use 'rvr bench build <name>' to build from source");
+    println!("Use 'rvr bench compile <name>' to compile to native");
+    println!("Use 'rvr bench run <name>' to run benchmark");
+}
+
+/// Build benchmark from source.
+fn bench_build(name: Option<&str>, arch_str: &str) -> i32 {
+    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let programs_dir = project_dir.join("benchmarks/programs");
+
+    if !programs_dir.exists() {
+        eprintln!("Error: {} not found", programs_dir.display());
+        return EXIT_FAILURE;
+    }
+
+    // Determine which benchmarks to build
+    let to_build: Vec<&str> = if let Some(n) = name {
+        if !BENCHMARKS.iter().any(|(bname, _)| *bname == n) {
+            eprintln!("Error: unknown benchmark '{}'", n);
+            eprintln!("Run 'rvr bench list' to see available benchmarks");
+            return EXIT_FAILURE;
+        }
+        vec![n]
+    } else {
+        BENCHMARKS.iter().map(|(n, _)| *n).collect()
+    };
+
+    eprintln!("Building benchmarks: {}", to_build.join(", "));
+    eprintln!("Architectures: {}", arch_str);
+    eprintln!();
+
+    // Build via make
+    let targets: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
+    let benchmarks_arg = to_build.join(" ");
+
+    for target in &targets {
+        let status = Command::new("make")
+            .arg("-C")
+            .arg(&programs_dir)
+            .arg(target)
+            .env("BENCHMARKS", &benchmarks_arg)
+            .status()
+            .expect("failed to run make");
+
+        if !status.success() {
+            eprintln!("Build failed for {}", target);
+            return EXIT_FAILURE;
+        }
+    }
+
+    eprintln!();
+    eprintln!("Build complete. Binaries in bin/benchmarks/<name>/<arch>/");
+    EXIT_SUCCESS
+}
+
+/// Compile benchmark ELF to native code.
+fn bench_compile(name: &str, arch_str: &str, fast: bool, cc: &str, linker: Option<&str>) -> i32 {
+    if !BENCHMARKS.iter().any(|(bname, _)| *bname == name) {
+        eprintln!("Error: unknown benchmark '{}'", name);
+        return EXIT_FAILURE;
+    }
+
+    let archs = match Arch::parse_list(arch_str) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return EXIT_FAILURE;
+        }
+    };
+
+    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let bin_dir = project_dir.join("bin/benchmarks").join(name);
+
+    let suffix = if fast { "fast" } else { "base" };
+
+    for arch in &archs {
+        let elf_path = bin_dir.join(arch.as_str()).join(name);
+        if !elf_path.exists() {
+            eprintln!("Warning: {} not found, skipping", elf_path.display());
+            continue;
+        }
+
+        let out_dir = project_dir
+            .join("target/benchmarks")
+            .join(name)
+            .join(arch.as_str())
+            .join(suffix);
+
+        let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(EXIT_FAILURE);
+        });
+        if let Some(ld) = linker {
+            compiler = compiler.with_linker(ld);
+        }
+
+        eprintln!(
+            "Compiling {} ({}) -> {}",
+            name,
+            arch.as_str(),
+            out_dir.display()
+        );
+
+        let mut options = CompileOptions::new()
+            .with_compiler(compiler)
+            .with_export_functions(true); // Enable export functions for benchmarks
+        if fast {
+            options = options.with_instret_mode(InstretMode::Off);
+        }
+
+        if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
+            eprintln!("Error compiling {}: {}", arch, e);
+            return EXIT_FAILURE;
+        }
+    }
+
+    eprintln!("Compile complete.");
+    EXIT_SUCCESS
+}
+
+/// Run compiled benchmark.
+fn bench_run(name: &str, arch_str: &str, runs: usize, fast: bool) -> i32 {
+    if !BENCHMARKS.iter().any(|(bname, _)| *bname == name) {
+        eprintln!("Error: unknown benchmark '{}'", name);
+        return EXIT_FAILURE;
+    }
+
+    let archs = match Arch::parse_list(arch_str) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return EXIT_FAILURE;
+        }
+    };
+
+    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let bin_dir = project_dir.join("bin/benchmarks").join(name);
+
+    let suffix = if fast { "fast" } else { "base" };
+
+    println!("Benchmark: {} (runs={})", name, runs);
+    println!();
+    println!(
+        "| {:<6} | {:>12} | {:>10} | {:>10} | {:>8} |",
+        "Arch", "Instructions", "Time (s)", "Speed", "Mode"
+    );
+    println!("|--------|--------------|------------|------------|----------|");
+
+    for arch in &archs {
+        let elf_path = bin_dir.join(arch.as_str()).join(name);
+        let out_dir = project_dir
+            .join("target/benchmarks")
+            .join(name)
+            .join(arch.as_str())
+            .join(suffix);
+
+        if !out_dir.exists() {
+            println!(
+                "| {:<6} | {:>12} | {:>10} | {:>10} | {:>8} |",
+                arch.as_str(),
+                "-",
+                "-",
+                "not compiled",
+                "-"
+            );
+            continue;
+        }
+
+        match bench::run_bench_auto(&out_dir, &elf_path, runs) {
+            Ok((result, mode)) => {
+                let mode_str = match mode {
+                    bench::BenchMode::Library => "library",
+                    bench::BenchMode::Executable => "executable",
+                };
+                println!(
+                    "| {:<6} | {:>12} | {:>10.6} | {:>10} | {:>8} |",
+                    arch.as_str(),
+                    result.result.instret,
+                    result.result.time_secs,
+                    bench::format_speed(result.result.mips),
+                    mode_str
+                );
+            }
+            Err(e) => {
+                println!(
+                    "| {:<6} | {:>12} | {:>10} | {:>10} | {:>8} |",
+                    arch.as_str(),
+                    "-",
+                    "-",
+                    format!("error: {}", e),
+                    "-"
+                );
+            }
+        }
+    }
+
+    println!();
+    EXIT_SUCCESS
 }

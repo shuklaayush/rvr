@@ -91,6 +91,145 @@ pub fn run_bench(
     }
 }
 
+/// Benchmark execution mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchMode {
+    /// Executable mode: run from entry point
+    Executable,
+    /// Library mode: call initialize() then run() N times
+    Library,
+}
+
+/// Run a benchmark with automatic mode detection.
+///
+/// Uses the RV_EXPORT_FUNCTIONS metadata from the compiled library to determine
+/// whether to use library mode (call initialize/run) or executable mode (entry point).
+pub fn run_bench_auto(
+    lib_dir: &Path,
+    elf_path: &Path,
+    runs: usize,
+) -> Result<(RunResultWithPerf, BenchMode), String> {
+    let mut runner =
+        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
+
+    if runner.has_export_functions() {
+        // Library mode: call initialize() then run()
+        let init_addr = runner
+            .lookup_symbol("initialize")
+            .ok_or("export_functions mode but 'initialize' symbol not found")?;
+        let run_addr = runner
+            .lookup_symbol("run")
+            .ok_or("export_functions mode but 'run' symbol not found")?;
+
+        let result = run_bench_library_inner(&mut runner, init_addr, run_addr, runs)?;
+        Ok((result, BenchMode::Library))
+    } else {
+        // Executable mode: run from entry point
+        let result = if runs <= 1 {
+            runner
+                .run_with_counters()
+                .map_err(|e| format!("execution failed: {}", e))?
+        } else {
+            runner
+                .run_multiple_with_counters(runs)
+                .map_err(|e| format!("execution failed: {}", e))?
+        };
+        Ok((result, BenchMode::Executable))
+    }
+}
+
+/// Run a library-mode benchmark with `initialize()` and `run()` exports.
+///
+/// The benchmark exports two symbols:
+/// - `initialize`: Called once before timing (setup)
+/// - `run`: Called N times with timing (the actual benchmark)
+pub fn run_bench_library(
+    lib_dir: &Path,
+    elf_path: &Path,
+    runs: usize,
+) -> Result<RunResultWithPerf, String> {
+    let mut runner =
+        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
+
+    // Look up required symbols
+    let init_addr = runner
+        .lookup_symbol("initialize")
+        .ok_or("symbol 'initialize' not found in ELF")?;
+    let run_addr = runner
+        .lookup_symbol("run")
+        .ok_or("symbol 'run' not found in ELF")?;
+
+    run_bench_library_inner(&mut runner, init_addr, run_addr, runs)
+}
+
+/// Internal implementation for library-mode benchmarks.
+///
+/// Calls initialize() once (not timed), then run() N times (timed).
+/// Uses 0 as return address - rv_trap handles it and saves state properly.
+fn run_bench_library_inner(
+    runner: &mut Runner,
+    init_addr: u64,
+    run_addr: u64,
+    runs: usize,
+) -> Result<RunResultWithPerf, String> {
+    let runs = runs.max(1);
+
+    // Set up perf counters
+    let mut perf_group = crate::perf::PerfGroup::new();
+
+    // Run benchmark N times
+    let mut total_time = 0.0;
+    let mut total_instret = 0u64;
+
+    for _ in 0..runs {
+        // Load segments and reset state for each run
+        runner.prepare();
+
+        // Set return address (ra/x1) to 0 - rv_trap handles it
+        runner.set_register(1, 0);
+
+        // Run initialize() (not timed)
+        runner.execute_from(init_addr);
+
+        // Clear exit flag so we can continue executing
+        runner.clear_exit();
+
+        // Reset ra for run() call
+        runner.set_register(1, 0);
+
+        if let Some(ref mut group) = perf_group {
+            let _ = group.reset();
+            let _ = group.enable();
+        }
+
+        let start = Instant::now();
+        let (_, instret) = runner.execute_from(run_addr);
+        let elapsed = start.elapsed();
+
+        if let Some(ref mut group) = perf_group {
+            let _ = group.disable();
+        }
+
+        total_time += elapsed.as_secs_f64();
+        total_instret += instret;
+    }
+
+    let avg_time = total_time / runs as f64;
+    let avg_instret = total_instret / runs as u64;
+    let mips = (avg_instret as f64 / avg_time) / 1_000_000.0;
+
+    let perf = perf_group.as_mut().and_then(|g| g.read());
+
+    let result = crate::RunResult {
+        exit_code: 0,
+        instret: avg_instret,
+        time_secs: avg_time,
+        mips,
+    };
+
+    Ok(RunResultWithPerf { result, perf })
+}
+
 /// Run host binary and time it (for baseline comparison).
 /// Collects perf counters and supports multiple runs for averaging.
 pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {

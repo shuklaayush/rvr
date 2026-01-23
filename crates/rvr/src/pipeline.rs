@@ -24,6 +24,8 @@ pub struct Pipeline<X: Xlen> {
     ir_blocks: HashMap<u64, BlockIR<X>>,
     /// Extension registry for decoding and lifting.
     registry: ExtensionRegistry<X>,
+    /// Extra entry points (e.g., exported function addresses).
+    extra_entry_points: Vec<u64>,
 }
 
 impl<X: Xlen> Pipeline<X> {
@@ -52,6 +54,7 @@ impl<X: Xlen> Pipeline<X> {
             block_table: None,
             ir_blocks: HashMap::new(),
             registry: ExtensionRegistry::standard(),
+            extra_entry_points: Vec::new(),
         }
     }
 
@@ -74,6 +77,7 @@ impl<X: Xlen> Pipeline<X> {
             block_table: None,
             ir_blocks: HashMap::new(),
             registry,
+            extra_entry_points: Vec::new(),
         }
     }
 
@@ -100,6 +104,31 @@ impl<X: Xlen> Pipeline<X> {
     /// Get reference to lifted IR blocks.
     pub fn ir_blocks(&self) -> &HashMap<u64, BlockIR<X>> {
         &self.ir_blocks
+    }
+
+    /// Add extra entry points (e.g., exported function addresses).
+    ///
+    /// These addresses will be treated as additional function entry points
+    /// during CFG analysis, ensuring blocks are generated for them.
+    /// Must be called before `build_cfg`.
+    pub fn add_extra_entry_points(&mut self, entry_points: &[u64]) {
+        self.extra_entry_points.extend(entry_points.iter().copied());
+    }
+
+    /// Add function symbols from the ELF as extra entry points.
+    ///
+    /// This is useful for benchmarks where exported functions like `initialize`
+    /// and `run` need to be callable independently.
+    pub fn add_function_symbols_as_entry_points(&mut self) {
+        use rvr_elf::STT_FUNC;
+        let entry_points: Vec<u64> = self
+            .image
+            .symbols
+            .iter()
+            .filter(|s| s.sym_type == STT_FUNC && !s.name.is_empty())
+            .map(|s| X::to_u64(s.value))
+            .collect();
+        self.extra_entry_points.extend(entry_points);
     }
 
     /// Build CFG: creates InstructionTable → BlockTable with optimizations.
@@ -165,6 +194,15 @@ impl<X: Xlen> Pipeline<X> {
                 let seg_start = X::to_u64(seg.virtual_start);
                 instr_table.populate_segment(&seg.data, seg_start, &self.registry);
             }
+        }
+
+        // Add extra entry points (e.g., exported functions for library mode)
+        if !self.extra_entry_points.is_empty() {
+            debug!(
+                count = self.extra_entry_points.len(),
+                "adding extra entry points"
+            );
+            instr_table.add_entry_points(self.extra_entry_points.iter().copied());
         }
 
         // Add read-only segments for constant propagation
