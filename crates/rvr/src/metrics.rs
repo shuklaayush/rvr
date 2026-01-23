@@ -396,21 +396,21 @@ impl CliRecorderHandle {
             let mut keys: Vec<_> = histograms.keys().collect();
             keys.sort();
             for key in keys {
-                if let Some(values) = histograms.get(key) {
-                    if !values.is_empty() {
-                        let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
-                        let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                        let sum: f64 = values.iter().sum();
-                        let avg = sum / values.len() as f64;
-                        println!(
-                            "  {}: count={}, min={:.6}, max={:.6}, avg={:.6}",
-                            key,
-                            values.len(),
-                            min,
-                            max,
-                            avg
-                        );
-                    }
+                if let Some(values) = histograms.get(key)
+                    && !values.is_empty()
+                {
+                    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    let sum: f64 = values.iter().sum();
+                    let avg = sum / values.len() as f64;
+                    println!(
+                        "  {}: count={}, min={:.6}, max={:.6}, avg={:.6}",
+                        key,
+                        values.len(),
+                        min,
+                        max,
+                        avg
+                    );
                 }
             }
             println!();

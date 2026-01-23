@@ -138,10 +138,10 @@ fn compile_entry(toolchain_dir: &Path, arch: &str) -> Result<PathBuf, String> {
             .and_then(|m| m.modified())
             .ok();
 
-        if let (Some(src), Some(obj)) = (src_time, obj_time) {
-            if obj > src {
-                return Ok(entry_obj);
-            }
+        if let (Some(src), Some(obj)) = (src_time, obj_time)
+            && obj > src
+        {
+            return Ok(entry_obj);
         }
     }
 

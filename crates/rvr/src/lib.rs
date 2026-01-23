@@ -362,9 +362,10 @@ impl<X: Xlen> Recompiler<X> {
         // Load debug info for #line directives (if enabled and ELF has debug info)
         if self.config.emit_line_info
             && let Some(path_str) = elf_path.to_str()
-                && let Err(e) = pipeline.load_debug_info(path_str) {
-                    warn!(error = %e, "failed to load debug info (continuing without #line directives)");
-                }
+            && let Err(e) = pipeline.load_debug_info(path_str)
+        {
+            warn!(error = %e, "failed to load debug info (continuing without #line directives)");
+        }
 
         // Emit C code
         let base_name = output_dir

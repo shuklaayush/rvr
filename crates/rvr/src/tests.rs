@@ -214,10 +214,10 @@ fn discover_tests_recursive(dir: &Path, filter: Option<&str>, tests: &mut Vec<Pa
         }
 
         // Apply filter if specified
-        if let Some(filter) = filter {
-            if !name.contains(filter) {
-                continue;
-            }
+        if let Some(filter) = filter
+            && !name.contains(filter)
+        {
+            continue;
         }
 
         tests.push(path);
