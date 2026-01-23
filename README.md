@@ -49,14 +49,14 @@ rvr test riscv run --filter rv64ui  # filtered
 
 # Benchmarks
 rvr bench list                       # List available benchmarks
-rvr bench build                      # Build all from source (requires Rust nightly)
-rvr bench compile bench-minimal      # Compile to native
-rvr bench run bench-minimal          # Run benchmark
+rvr bench build                      # Build all from source
+rvr bench compile                    # Compile all to native
+rvr bench run                        # Run all benchmarks
 
-# Reth benchmark (with host comparison)
-rvr bench reth build                 # Build host binary + RISC-V ELFs
-rvr bench reth compile --arch rv64i  # Recompile ELF to native
-rvr bench reth run --arch rv64i      # Run benchmark
+# Single benchmark
+rvr bench build reth                 # Build reth ELF + host binary
+rvr bench compile reth               # Compile to native
+rvr bench run reth --compare-host    # Run with host comparison
 ```
 
 ## Syscalls
