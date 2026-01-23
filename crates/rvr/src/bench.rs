@@ -201,21 +201,28 @@ fn run_bench_library_inner(
         // Reset ra for run() call
         runner.set_register(1, 0);
 
+        // Record instret before run() to calculate delta
+        let instret_before = runner.instret();
+
         if let Some(ref mut group) = perf_group {
             let _ = group.reset();
             let _ = group.enable();
         }
 
         let start = Instant::now();
-        let (_, instret) = runner.execute_from(run_addr);
+        runner.execute_from(run_addr);
         let elapsed = start.elapsed();
 
         if let Some(ref mut group) = perf_group {
             let _ = group.disable();
         }
 
+        // Calculate instret delta (only run() instructions)
+        let instret_after = runner.instret();
+        let run_instret = instret_after - instret_before;
+
         total_time += elapsed.as_secs_f64();
-        total_instret += instret;
+        total_instret += run_instret;
     }
 
     let avg_time = total_time / runs as f64;
