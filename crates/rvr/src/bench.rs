@@ -43,7 +43,10 @@ impl Arch {
         s.split(',')
             .map(|part| {
                 Self::parse(part.trim()).ok_or_else(|| {
-                    format!("unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e/all", part)
+                    format!(
+                        "unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e/all",
+                        part
+                    )
                 })
             })
             .collect()
@@ -193,12 +196,12 @@ fn run_bench_library_inner(
         runner.set_register(1, 0);
 
         // Run initialize() (not timed)
-        runner.execute_from(init_addr);
+        runner
+            .execute_from(init_addr)
+            .map_err(|e| format!("initialize() failed: {}", e))?;
 
-        // Clear exit flag so we can continue executing
+        // Clear exit flag and reset ra for run()
         runner.clear_exit();
-
-        // Reset ra for run() call
         runner.set_register(1, 0);
 
         // Record instret before run() to calculate delta
@@ -209,20 +212,19 @@ fn run_bench_library_inner(
             let _ = group.enable();
         }
 
-        let start = Instant::now();
-        runner.execute_from(run_addr);
-        let elapsed = start.elapsed();
+        let (elapsed, instret_after) = runner
+            .execute_from(run_addr)
+            .map_err(|e| format!("run() failed: {}", e))?;
 
         if let Some(ref mut group) = perf_group {
             let _ = group.disable();
         }
 
-        // Calculate instret delta (only run() instructions)
-        let instret_after = runner.instret();
-        let run_instret = instret_after - instret_before;
-
         total_time += elapsed.as_secs_f64();
-        total_instret += run_instret;
+        total_instret += instret_after - instret_before;
+
+        // Clear exit flag for next iteration
+        runner.clear_exit();
     }
 
     let avg_time = total_time / runs as f64;

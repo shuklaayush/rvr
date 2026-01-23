@@ -7,12 +7,12 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::time::Instant;
 
-use libloading::os::unix::{Library, Symbol, RTLD_NOW};
-use rvr_elf::{get_elf_xlen, ElfImage};
+use libloading::os::unix::{Library, RTLD_NOW, Symbol};
+use rvr_elf::{ElfImage, get_elf_xlen};
 use rvr_ir::{Rv32, Rv64, Xlen};
 use rvr_state::{
-    DebugTracer, GuardedMemory, PreflightTracer, RvState, StatsTracer, TracerState,
-    DEFAULT_MEMORY_SIZE, NUM_REGS_E, NUM_REGS_I,
+    DEFAULT_MEMORY_SIZE, DebugTracer, GuardedMemory, NUM_REGS_E, NUM_REGS_I, PreflightTracer,
+    RvState, StatsTracer, TracerState,
 };
 use thiserror::Error;
 use tracing::{debug, error, trace};
@@ -714,13 +714,17 @@ impl Runner {
     /// Execute from a specific address.
     ///
     /// Call `prepare()` first to load segments and reset state.
-    /// Returns the elapsed time and instruction count.
-    pub fn execute_from(&mut self, pc: u64) -> (std::time::Duration, u64) {
+    /// Returns `Ok((elapsed, instret))` on success, `Err` if exit code is non-zero.
+    pub fn execute_from(&mut self, pc: u64) -> Result<(std::time::Duration, u64), RunError> {
         let start = Instant::now();
         unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), pc) };
         let elapsed = start.elapsed();
-        let instret = self.inner.instret();
-        (elapsed, instret)
+        let exit_code = self.inner.exit_code();
+        if exit_code != 0 {
+            Err(RunError::ExecutionError(exit_code))
+        } else {
+            Ok((elapsed, self.inner.instret()))
+        }
     }
 
     /// Run the program and return the result.
