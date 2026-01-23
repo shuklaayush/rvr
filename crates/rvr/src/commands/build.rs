@@ -1,9 +1,10 @@
 //! Rust build command for cross-compiling to RISC-V.
 
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
+use crate::terminal::{self, Spinner};
 
 /// Embedded target specifications.
 pub mod targets {
@@ -25,7 +26,25 @@ pub mod targets {
     }
 }
 
+/// Parameters for building a single architecture.
+struct BuildParams<'a> {
+    arch: &'a str,
+    project_path: &'a PathBuf,
+    target_dir: &'a PathBuf,
+    link_x_path: &'a PathBuf,
+    crate_name: &'a str,
+    bin_name: &'a str,
+    toolchain: &'a str,
+    features: Option<&'a str>,
+    release: bool,
+    output: Option<&'a PathBuf>,
+    project_dir: &'a PathBuf,
+    verbose: bool,
+    quiet: bool,
+}
+
 /// Build a Rust project to RISC-V ELF.
+#[allow(clippy::too_many_arguments)]
 pub fn build_rust_project(
     path: &PathBuf,
     target_str: &str,
@@ -34,6 +53,8 @@ pub fn build_rust_project(
     toolchain: &str,
     features: Option<&str>,
     release: bool,
+    verbose: bool,
+    quiet: bool,
 ) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
 
@@ -47,7 +68,7 @@ pub fn build_rust_project(
     // Check Cargo.toml exists
     let cargo_toml = project_path.join("Cargo.toml");
     if !cargo_toml.exists() {
-        eprintln!("Error: {} not found", cargo_toml.display());
+        terminal::error(&format!("{} not found", cargo_toml.display()));
         return EXIT_FAILURE;
     }
 
@@ -55,7 +76,7 @@ pub fn build_rust_project(
     let cargo_content = match std::fs::read_to_string(&cargo_toml) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error reading {}: {}", cargo_toml.display(), e);
+            terminal::error(&format!("Reading {}: {}", cargo_toml.display(), e));
             return EXIT_FAILURE;
         }
     };
@@ -76,70 +97,87 @@ pub fn build_rust_project(
     // Create temp directory for target specs
     let target_dir = project_path.join("target/.rvr");
     if let Err(e) = std::fs::create_dir_all(&target_dir) {
-        eprintln!("Error creating {}: {}", target_dir.display(), e);
+        terminal::error(&format!("Creating {}: {}", target_dir.display(), e));
         return EXIT_FAILURE;
     }
 
     // Write linker script
     let link_x_path = target_dir.join("link.x");
     if let Err(e) = std::fs::write(&link_x_path, targets::LINK_X) {
-        eprintln!("Error writing link.x: {}", e);
+        terminal::error(&format!("Writing link.x: {}", e));
         return EXIT_FAILURE;
     }
 
     for arch in &targets {
         if let Err(code) = build_for_arch(
-            arch,
-            &project_path,
-            &target_dir,
-            &link_x_path,
-            crate_name,
-            bin_name,
-            toolchain,
-            features,
-            release,
-            output,
-            &project_dir,
+            BuildParams {
+                arch,
+                project_path: &project_path,
+                target_dir: &target_dir,
+                link_x_path: &link_x_path,
+                crate_name,
+                bin_name,
+                toolchain,
+                features,
+                release,
+                output,
+                project_dir: &project_dir,
+                verbose,
+                quiet,
+            },
         ) {
             return code;
         }
     }
 
-    eprintln!("Build complete.");
+    if !quiet {
+        terminal::success("Build complete");
+    }
     EXIT_SUCCESS
 }
 
 /// Build for a single architecture.
-fn build_for_arch(
-    arch: &str,
-    project_path: &PathBuf,
-    target_dir: &PathBuf,
-    link_x_path: &PathBuf,
-    crate_name: &str,
-    bin_name: &str,
-    toolchain: &str,
-    features: Option<&str>,
-    release: bool,
-    output: Option<&PathBuf>,
-    project_dir: &PathBuf,
-) -> Result<(), i32> {
+fn build_for_arch(p: BuildParams<'_>) -> Result<(), i32> {
+    let BuildParams {
+        arch,
+        project_path,
+        target_dir,
+        link_x_path,
+        crate_name,
+        bin_name,
+        toolchain,
+        features,
+        release,
+        output,
+        project_dir,
+        verbose,
+        quiet,
+    } = p;
     // Get and write target spec
     let spec = match targets::get_target_spec(arch) {
         Some(s) => s,
         None => {
-            eprintln!("Error: unknown target '{}'", arch);
-            eprintln!("Supported targets: rv32i, rv32e, rv64i, rv64e");
+            terminal::error(&format!("Unknown target '{}'", arch));
+            terminal::info("Supported targets: rv32i, rv32e, rv64i, rv64e");
             return Err(EXIT_FAILURE);
         }
     };
 
     let spec_path = target_dir.join(format!("{}.json", arch));
     if let Err(e) = std::fs::write(&spec_path, spec) {
-        eprintln!("Error writing {}: {}", spec_path.display(), e);
+        terminal::error(&format!("Writing {}: {}", spec_path.display(), e));
         return Err(EXIT_FAILURE);
     }
 
-    eprintln!("Building {} for {}", crate_name, arch);
+    // Create spinner for build (unless quiet or verbose)
+    let spinner = if !quiet && !verbose {
+        Some(Spinner::new(format!("Building {} for {}", crate_name, arch)))
+    } else if !quiet {
+        eprintln!("Building {} for {}", crate_name, arch);
+        None
+    } else {
+        None
+    };
 
     // Determine RUSTFLAGS
     let cpu = if arch.starts_with("rv64") {
@@ -173,16 +211,45 @@ fn build_for_arch(
         cmd.arg("--features").arg(feats);
     }
 
+    // Print the command if verbose mode is enabled
+    if verbose {
+        eprintln!();
+        eprintln!("RUSTFLAGS=\"{}\" \\", rustflags);
+        eprint!("  cargo +{} build --target {}", toolchain, spec_path.display());
+        eprint!(" -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem");
+        if release {
+            eprint!(" --release");
+        }
+        if let Some(feats) = features {
+            eprint!(" --features {}", feats);
+        }
+        eprintln!();
+        eprintln!();
+    }
+
+    // Run with suppressed output if we have a spinner
+    if spinner.is_some() {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
     let status = match cmd.status() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Error running cargo: {}", e);
+            if let Some(s) = &spinner {
+                s.finish_with_failure(&format!("Running cargo: {}", e));
+            } else {
+                terminal::error(&format!("Running cargo: {}", e));
+            }
             return Err(EXIT_FAILURE);
         }
     };
 
     if !status.success() {
-        eprintln!("Build failed for {}", arch);
+        if let Some(s) = &spinner {
+            s.finish_with_failure(&format!("Build failed for {}", arch));
+        } else if !quiet {
+            terminal::error(&format!("Build failed for {}", arch));
+        }
         return Err(EXIT_FAILURE);
     }
 
@@ -200,21 +267,38 @@ fn build_for_arch(
     };
 
     if let Err(e) = std::fs::create_dir_all(&dest_dir) {
-        eprintln!("Error creating {}: {}", dest_dir.display(), e);
+        if let Some(s) = &spinner {
+            s.finish_with_failure(&format!("Creating {}: {}", dest_dir.display(), e));
+        } else {
+            terminal::error(&format!("Creating {}: {}", dest_dir.display(), e));
+        }
         return Err(EXIT_FAILURE);
     }
 
     let dest_path = dest_dir.join(bin_name);
     if let Err(e) = std::fs::copy(&build_output, &dest_path) {
-        eprintln!(
-            "Error copying {} to {}: {}",
-            build_output.display(),
-            dest_path.display(),
-            e
-        );
+        if let Some(s) = &spinner {
+            s.finish_with_failure(&format!(
+                "Copying {} to {}: {}",
+                build_output.display(),
+                dest_path.display(),
+                e
+            ));
+        } else {
+            terminal::error(&format!(
+                "Copying {} to {}: {}",
+                build_output.display(),
+                dest_path.display(),
+                e
+            ));
+        }
         return Err(EXIT_FAILURE);
     }
 
-    eprintln!("  -> {}", dest_path.display());
+    if let Some(s) = spinner {
+        s.finish_with_success(&format!("{} ({}) → {}", crate_name, arch, dest_path.display()));
+    } else if !quiet {
+        terminal::path_output(&dest_path);
+    }
     Ok(())
 }

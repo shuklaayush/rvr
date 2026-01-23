@@ -2,6 +2,7 @@
 
 mod cli;
 mod commands;
+mod terminal;
 
 use clap::Parser;
 use tracing_subscriber::fmt::format::FmtSpan;
