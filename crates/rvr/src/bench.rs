@@ -192,6 +192,11 @@ fn run_bench_library_inner(
         // Load segments and reset state for each run
         runner.prepare();
 
+        // Run entry point to set up gp and sp, then clear exit for initialize()
+        let entry_point = runner.entry_point();
+        let _ = runner.execute_from(entry_point);
+        runner.clear_exit();
+
         // Set return address (ra/x1) to 0 - rv_trap handles it
         runner.set_register(1, 0);
 
