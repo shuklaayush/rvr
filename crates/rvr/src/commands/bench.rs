@@ -20,8 +20,8 @@ pub enum BenchmarkSource {
         /// Path to project directory (relative to repo root)
         path: &'static str,
     },
-    /// Prebuilt ELF - already in bin/{arch}/{name}
-    Prebuilt,
+    /// Polkavm benchmark - build with benchmarks/build.sh
+    Polkavm,
 }
 
 /// Benchmark metadata.
@@ -51,7 +51,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
-        source: BenchmarkSource::Prebuilt,
+        source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
         name: "prime-sieve",
@@ -59,7 +59,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
-        source: BenchmarkSource::Prebuilt,
+        source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
         name: "pinky",
@@ -67,7 +67,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
-        source: BenchmarkSource::Prebuilt,
+        source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
         name: "memset",
@@ -75,7 +75,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
-        source: BenchmarkSource::Prebuilt,
+        source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
         name: "reth",
@@ -106,7 +106,7 @@ pub fn bench_list() {
         let mut markers = Vec::new();
         match b.source {
             BenchmarkSource::Rust { .. } => markers.push("rust"),
-            BenchmarkSource::Prebuilt => markers.push("prebuilt"),
+            BenchmarkSource::Polkavm => markers.push("polkavm"),
         }
         if b.host_binary.is_some() {
             markers.push("has host");
@@ -185,29 +185,25 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                     return result;
                 }
             }
-            BenchmarkSource::Prebuilt => {
-                // Check if prebuilt ELFs exist
-                let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
-                let mut missing = false;
+            BenchmarkSource::Polkavm => {
+                eprintln!("Building {} (polkavm) for {}", benchmark.name, arch_str);
 
-                for a in &archs {
-                    let elf_path = project_dir.join("bin").join(a).join(benchmark.name);
-                    if !elf_path.exists() {
-                        eprintln!(
-                            "  Warning: prebuilt ELF not found: {}",
-                            elf_path.display()
-                        );
-                        missing = true;
-                    }
+                let build_script = project_dir.join("benchmarks/build.sh");
+                if !build_script.exists() {
+                    eprintln!("  Error: build script not found: {}", build_script.display());
+                    return EXIT_FAILURE;
                 }
 
-                if missing {
-                    eprintln!(
-                        "  Note: {} uses prebuilt ELFs. Place them in bin/<arch>/{}",
-                        benchmark.name, benchmark.name
-                    );
-                } else {
-                    eprintln!("  {} ELFs already present", benchmark.name);
+                let status = Command::new(&build_script)
+                    .arg("--arch")
+                    .arg(arch_str)
+                    .arg(benchmark.name)
+                    .status()
+                    .expect("failed to run build script");
+
+                if !status.success() {
+                    eprintln!("  Build failed for {}", benchmark.name);
+                    return EXIT_FAILURE;
                 }
             }
         }
@@ -447,9 +443,21 @@ fn run_single_arch(
                     return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
                 }
             }
-            BenchmarkSource::Prebuilt => {
-                // No ELF available for this arch
-                return Some(bench::TableRow::error(&backend_name, "no ELF".to_string()));
+            BenchmarkSource::Polkavm => {
+                // Auto-build using polkavm build script
+                eprintln!("Building {} for {}...", benchmark.name, arch.as_str());
+                let build_script = project_dir.join("benchmarks/build.sh");
+                let status = Command::new(&build_script)
+                    .arg("--arch")
+                    .arg(arch.as_str())
+                    .arg(benchmark.name)
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
+                    }
+                }
             }
         }
     }

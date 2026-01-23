@@ -1,3 +1,6 @@
 [submodule "tests/riscv-tests"]
 	path = tests/riscv-tests
 	url = https://github.com/riscv/riscv-tests.git
+[submodule "benchmarks/polkavm"]
+	path = benchmarks/polkavm
+	url = https://github.com/nickalolkoff/polkavm.git
