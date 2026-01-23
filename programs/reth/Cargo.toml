@@ -53,5 +53,5 @@ opt-level = 3
 panic = "abort"
 
 [[bin]]
-name = "reth-validator"
+name = "reth"
 path = "src/main.rs"
