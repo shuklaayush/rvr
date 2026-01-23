@@ -577,7 +577,7 @@ impl BuildConfig {
     /// Create a new build config with defaults.
     pub fn new(categories: Vec<TestCategory>) -> Self {
         Self {
-            src_dir: PathBuf::from("tests/riscv-tests/isa"),
+            src_dir: PathBuf::from("programs/riscv-tests/isa"),
             out_dir: PathBuf::from("bin/riscv-tests"),
             toolchain: String::new(), // Will be auto-detected
             categories,

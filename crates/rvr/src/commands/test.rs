@@ -34,7 +34,7 @@ pub fn riscv_tests_build(
     let project_dir = std::env::current_dir().expect("failed to get current directory");
 
     let mut config = BuildConfig::new(categories)
-        .with_src_dir(project_dir.join("tests/riscv-tests/isa"))
+        .with_src_dir(project_dir.join("programs/riscv-tests/isa"))
         .with_toolchain(&toolchain);
 
     if let Some(out) = output {

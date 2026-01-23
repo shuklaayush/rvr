@@ -1,12 +1,31 @@
 //! Benchmark commands and registry.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use rvr::bench::{self, Arch};
+use rvr::polkavm;
 use rvr::{CompileOptions, Compiler, InstretMode};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
+
+/// Find the project root directory (git root or cwd).
+fn find_project_root() -> PathBuf {
+    // Try to find git root first
+    if let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(path) = String::from_utf8(output.stdout) {
+                return PathBuf::from(path.trim());
+            }
+        }
+    }
+    // Fall back to current directory
+    std::env::current_dir().expect("failed to get current directory")
+}
 
 // ============================================================================
 // Benchmark registry
@@ -81,10 +100,10 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         name: "reth",
         description: "Reth block validator",
         uses_exports: false,
-        host_binary: Some("programs/reth-validator/target/release/reth-validator"),
+        host_binary: Some("programs/reth/target/release/reth-validator"),
         default_archs: "rv64i",
         source: BenchmarkSource::Rust {
-            path: "programs/reth-validator",
+            path: "programs/reth",
         },
     },
 ];
@@ -129,7 +148,7 @@ pub fn bench_list() {
 
 /// Build benchmark ELF from source.
 pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32 {
-    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let project_dir = find_project_root();
 
     // Determine which benchmarks to build
     let benchmarks: Vec<&BenchmarkInfo> = match name {
@@ -186,24 +205,24 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 }
             }
             BenchmarkSource::Polkavm => {
-                eprintln!("Building {} (polkavm) for {}", benchmark.name, arch_str);
+                // Build for each architecture
+                let archs = match Arch::parse_list(arch_str) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        return EXIT_FAILURE;
+                    }
+                };
 
-                let build_script = project_dir.join("benchmarks/build.sh");
-                if !build_script.exists() {
-                    eprintln!("  Error: build script not found: {}", build_script.display());
-                    return EXIT_FAILURE;
-                }
-
-                let status = Command::new(&build_script)
-                    .arg("--arch")
-                    .arg(arch_str)
-                    .arg(benchmark.name)
-                    .status()
-                    .expect("failed to run build script");
-
-                if !status.success() {
-                    eprintln!("  Build failed for {}", benchmark.name);
-                    return EXIT_FAILURE;
+                for a in archs {
+                    eprintln!("Building {} (polkavm) for {}", benchmark.name, a.as_str());
+                    match polkavm::build_benchmark(&project_dir, benchmark.name, a.as_str()) {
+                        Ok(path) => eprintln!("  -> {}", path.display()),
+                        Err(e) => {
+                            eprintln!("  Error: {}", e);
+                            return EXIT_FAILURE;
+                        }
+                    }
                 }
             }
         }
@@ -222,7 +241,7 @@ pub fn bench_compile(
     cc: &str,
     linker: Option<&str>,
 ) -> i32 {
-    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let project_dir = find_project_root();
 
     // Determine which benchmarks to compile
     let benchmarks: Vec<&BenchmarkInfo> = match name {
@@ -307,7 +326,7 @@ pub fn bench_run(
     fast: bool,
     compare_host: bool,
 ) -> i32 {
-    let project_dir = std::env::current_dir().expect("failed to get current directory");
+    let project_dir = find_project_root();
 
     // Determine which benchmarks to run
     let benchmarks: Vec<&BenchmarkInfo> = match name {
@@ -344,16 +363,48 @@ pub fn bench_run(
         // Run host baseline if requested and available
         let mut host_time: Option<f64> = None;
         if compare_host {
-            if let Some(host_path) = benchmark.host_binary {
-                let host_bin = project_dir.join(host_path);
-                if host_bin.exists() {
-                    match bench::run_host(&host_bin, runs) {
-                        Ok(result) => {
-                            host_time = result.time_secs;
-                            rows.push(bench::TableRow::host("host", &result));
+            match &benchmark.source {
+                BenchmarkSource::Rust { .. } => {
+                    // Use prebuilt host binary if available
+                    if let Some(host_path) = benchmark.host_binary {
+                        let host_bin = project_dir.join(host_path);
+                        if host_bin.exists() {
+                            match bench::run_host(&host_bin, runs) {
+                                Ok(result) => {
+                                    host_time = result.time_secs;
+                                    rows.push(bench::TableRow::host("host", &result));
+                                }
+                                Err(e) => {
+                                    rows.push(bench::TableRow::error("host", e));
+                                }
+                            }
                         }
-                        Err(e) => {
-                            rows.push(bench::TableRow::error("host", e));
+                    }
+                }
+                BenchmarkSource::Polkavm => {
+                    // Build and run polkavm benchmark on host
+                    let host_lib = project_dir.join("bin/host").join(format!("{}.so", benchmark.name));
+                    if !host_lib.exists() {
+                        eprintln!("Building {} for host...", benchmark.name);
+                        if let Err(e) = polkavm::build_host_benchmark(&project_dir, benchmark.name) {
+                            eprintln!("  {}", e);
+                            rows.push(bench::TableRow::error("host", "build failed".to_string()));
+                        }
+                    }
+                    if host_lib.exists() {
+                        match polkavm::run_host_benchmark(&host_lib, runs) {
+                            Ok(result) => {
+                                host_time = Some(result.time_secs);
+                                // Create a HostResult-like row
+                                let host_result = bench::HostResult {
+                                    time_secs: Some(result.time_secs),
+                                    perf: None,
+                                };
+                                rows.push(bench::TableRow::host("host", &host_result));
+                            }
+                            Err(e) => {
+                                rows.push(bench::TableRow::error("host", e));
+                            }
                         }
                     }
                 }
@@ -444,19 +495,11 @@ fn run_single_arch(
                 }
             }
             BenchmarkSource::Polkavm => {
-                // Auto-build using polkavm build script
+                // Auto-build using polkavm module
                 eprintln!("Building {} for {}...", benchmark.name, arch.as_str());
-                let build_script = project_dir.join("benchmarks/build.sh");
-                let status = Command::new(&build_script)
-                    .arg("--arch")
-                    .arg(arch.as_str())
-                    .arg(benchmark.name)
-                    .status();
-                match status {
-                    Ok(s) if s.success() => {}
-                    _ => {
-                        return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
-                    }
+                if let Err(e) = polkavm::build_benchmark(project_dir, benchmark.name, arch.as_str()) {
+                    eprintln!("  {}", e);
+                    return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
                 }
             }
         }
