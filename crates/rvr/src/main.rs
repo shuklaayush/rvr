@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rvr::bench::{self, Arch, TableRow};
+use rvr::bench::{self, Arch};
 use rvr::tests::{self, TestConfig};
 use rvr::{CompileOptions, Compiler, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
@@ -237,25 +237,29 @@ enum Commands {
 enum BenchCommands {
     /// List available benchmarks
     List,
-    /// Build benchmark from source (requires Rust nightly with RISC-V targets)
+    /// Build benchmark ELF from source
     Build {
-        /// Benchmark name (e.g., bench-minimal, bench-prime-sieve)
+        /// Benchmark name (omit to build all)
         #[arg(value_name = "NAME")]
         name: Option<String>,
 
         /// Architectures to build (comma-separated: rv32i,rv64i)
-        #[arg(short, long, default_value = "rv32i,rv64i")]
-        arch: String,
+        #[arg(short, long)]
+        arch: Option<String>,
+
+        /// Skip building host binary (for benchmarks that have one)
+        #[arg(long)]
+        no_host: bool,
     },
-    /// Compile benchmark ELF to native code
+    /// Compile benchmark ELF to native .so
     Compile {
-        /// Benchmark name
+        /// Benchmark name (omit to compile all)
         #[arg(value_name = "NAME")]
-        name: String,
+        name: Option<String>,
 
         /// Architectures to compile (comma-separated: rv32i,rv64i)
-        #[arg(short, long, default_value = "rv64i")]
-        arch: String,
+        #[arg(short, long)]
+        arch: Option<String>,
 
         /// Fast mode (no instret counting)
         #[arg(short, long)]
@@ -271,13 +275,13 @@ enum BenchCommands {
     },
     /// Run compiled benchmark
     Run {
-        /// Benchmark name
+        /// Benchmark name (omit to run all)
         #[arg(value_name = "NAME")]
-        name: String,
+        name: Option<String>,
 
         /// Architectures to run (comma-separated: rv32i,rv64i)
-        #[arg(short, long, default_value = "rv64i")]
-        arch: String,
+        #[arg(short, long)]
+        arch: Option<String>,
 
         /// Number of runs for averaging
         #[arg(short, long, default_value = "3")]
@@ -286,11 +290,10 @@ enum BenchCommands {
         /// Fast mode (must match compile)
         #[arg(short, long)]
         fast: bool,
-    },
-    /// Benchmark reth-validator (full benchmark with host comparison)
-    Reth {
-        #[command(subcommand)]
-        command: RethBenchCommands,
+
+        /// Include host binary comparison (if available)
+        #[arg(long)]
+        compare_host: bool,
     },
 }
 
@@ -335,59 +338,6 @@ enum RiscvTestCommands {
     },
 }
 
-#[derive(Subcommand)]
-enum RethBenchCommands {
-    /// Build RISC-V ELF binaries and host binary from source
-    Build {
-        /// Architectures to build (comma-separated: rv32i,rv32e,rv64i,rv64e)
-        #[arg(short, long, default_value = "rv32i,rv32e,rv64i,rv64e")]
-        arch: String,
-
-        /// Skip building host binary
-        #[arg(long)]
-        no_host: bool,
-    },
-    /// Compile ELF binaries to native code (via rvr)
-    Compile {
-        /// Architectures to compile (comma-separated: rv32i,rv32e,rv64i,rv64e)
-        #[arg(short, long, default_value = "rv32i,rv32e,rv64i,rv64e")]
-        arch: String,
-
-        /// Enable tracing
-        #[arg(short, long)]
-        trace: bool,
-
-        /// Fast mode (no instret counting)
-        #[arg(short, long)]
-        fast: bool,
-
-        /// C compiler command (e.g., clang, clang-20, gcc-13)
-        #[arg(long, default_value = "clang")]
-        cc: String,
-
-        /// Linker to use (e.g., lld, lld-20). Auto-derived from --cc if not specified.
-        #[arg(long)]
-        linker: Option<String>,
-    },
-    /// Run benchmarks (assumes already compiled)
-    Run {
-        /// Architectures to benchmark (comma-separated: rv32i,rv32e,rv64i,rv64e)
-        #[arg(short, long, default_value = "rv32i,rv32e,rv64i,rv64e")]
-        arch: String,
-
-        /// Number of runs for averaging
-        #[arg(short, long, default_value = "3")]
-        runs: usize,
-
-        /// Enable tracing (must match compile)
-        #[arg(short, long)]
-        trace: bool,
-
-        /// Fast mode (must match compile)
-        #[arg(short, long)]
-        fast: bool,
-    },
-}
 
 fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
     let mut vars = Vec::new();
@@ -662,45 +612,23 @@ fn run_command(cli: &Cli) -> i32 {
                 bench_list();
                 EXIT_SUCCESS
             }
-            BenchCommands::Build { name, arch } => bench_build(name.as_deref(), arch),
+            BenchCommands::Build { name, arch, no_host } => {
+                bench_build(name.as_deref(), arch.as_deref(), *no_host)
+            }
             BenchCommands::Compile {
                 name,
                 arch,
                 fast,
                 cc,
                 linker,
-            } => bench_compile(name, arch, *fast, cc, linker.as_deref()),
+            } => bench_compile(name.as_deref(), arch.as_deref(), *fast, cc, linker.as_deref()),
             BenchCommands::Run {
                 name,
                 arch,
                 runs,
                 fast,
-            } => bench_run(name, arch, *runs, *fast),
-            BenchCommands::Reth { command } => match command {
-                RethBenchCommands::Build { arch, no_host } => {
-                    reth_build(arch, *no_host);
-                    EXIT_SUCCESS
-                }
-                RethBenchCommands::Compile {
-                    arch,
-                    trace,
-                    fast,
-                    cc,
-                    linker,
-                } => {
-                    reth_compile(arch, *trace, *fast, cc, linker.as_deref());
-                    EXIT_SUCCESS
-                }
-                RethBenchCommands::Run {
-                    arch,
-                    runs,
-                    trace,
-                    fast,
-                } => {
-                    reth_run(arch, *runs, *trace, *fast);
-                    EXIT_SUCCESS
-                }
-            },
+                compare_host,
+            } => bench_run(name.as_deref(), arch.as_deref(), *runs, *fast, *compare_host),
         },
         Commands::Test { command } => match command {
             TestCommands::Riscv { command } => match command {
@@ -716,209 +644,6 @@ fn run_command(cli: &Cli) -> i32 {
                 } => riscv_tests_run(filter.clone(), *verbose, *timeout),
             },
         },
-    }
-}
-
-/// Build RISC-V ELF binaries and host binary from source.
-fn reth_build(arch_str: &str, no_host: bool) {
-    let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let reth_dir = project_dir.join("programs/reth-validator");
-
-    if !reth_dir.exists() {
-        eprintln!("Error: {} not found", reth_dir.display());
-        std::process::exit(EXIT_FAILURE);
-    }
-
-    let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
-
-    // Build host binary first (unless --no-host)
-    if !no_host {
-        eprintln!("Building host binary...");
-        let status = Command::new("cargo")
-            .arg("build")
-            .arg("--release")
-            .arg("--manifest-path")
-            .arg(reth_dir.join("Cargo.toml"))
-            .status()
-            .expect("failed to run cargo");
-
-        if !status.success() {
-            eprintln!("Host build failed");
-            std::process::exit(EXIT_FAILURE);
-        }
-    }
-
-    // Build RISC-V ELFs via make
-    eprintln!("Building RISC-V ELFs: {}", archs.join(", "));
-
-    let status = Command::new("make")
-        .arg("-C")
-        .arg(&reth_dir)
-        .args(&archs)
-        .status()
-        .expect("failed to run make");
-
-    if !status.success() {
-        eprintln!("ELF build failed");
-        std::process::exit(EXIT_FAILURE);
-    }
-
-    // List output binaries
-    eprintln!();
-    eprintln!("Build complete. Output binaries:");
-
-    // Host binary
-    if !no_host {
-        let host_bin = reth_dir.join("target/release/reth-validator");
-        if host_bin.exists() {
-            if let Ok(meta) = std::fs::metadata(&host_bin) {
-                eprintln!("  {} ({} bytes)", host_bin.display(), meta.len());
-            }
-        }
-    }
-
-    // RISC-V ELFs
-    for arch in &archs {
-        let bin_path = project_dir.join(format!("bin/reth/{}/reth-validator", arch));
-        if bin_path.exists() {
-            if let Ok(meta) = std::fs::metadata(&bin_path) {
-                eprintln!("  {} ({} bytes)", bin_path.display(), meta.len());
-            }
-        }
-    }
-}
-
-/// Compile reth-validator ELFs to native code for all specified architectures.
-fn reth_compile(arch_str: &str, trace: bool, fast: bool, cc: &str, linker: Option<&str>) {
-    let archs = match Arch::parse_list(arch_str) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(EXIT_FAILURE);
-        }
-    };
-
-    let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let bin_dir = project_dir.join("bin/reth");
-
-    let suffix = get_bench_suffix(trace, fast);
-
-    for arch in &archs {
-        let elf_path = bin_dir.join(arch.as_str()).join("reth-validator");
-        if !elf_path.exists() {
-            eprintln!("Warning: {} not found, skipping", elf_path.display());
-            continue;
-        }
-
-        let out_dir = project_dir
-            .join("target")
-            .join(arch.as_str())
-            .join(format!("reth-{}", suffix));
-
-        let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
-            eprintln!("Error: {}", e);
-            std::process::exit(EXIT_FAILURE);
-        });
-        if let Some(ld) = linker {
-            compiler = compiler.with_linker(ld);
-        }
-
-        eprintln!("Compiling {} ({}) -> {}", arch, compiler, out_dir.display());
-
-        let mut options = CompileOptions::new().with_compiler(compiler);
-        if trace {
-            options = options.with_tracer_config(TracerConfig::builtin(TracerKind::Stats));
-        }
-        if fast {
-            options = options.with_instret_mode(InstretMode::Off);
-        }
-
-        if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
-            eprintln!("Error compiling {}: {}", arch, e);
-            std::process::exit(EXIT_FAILURE);
-        }
-    }
-
-    eprintln!("Compile complete.");
-}
-
-/// Run benchmarks for all specified architectures.
-fn reth_run(arch_str: &str, runs: usize, trace: bool, fast: bool) {
-    let archs = match Arch::parse_list(arch_str) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(EXIT_FAILURE);
-        }
-    };
-
-    let project_dir = std::env::current_dir().expect("failed to get current directory");
-
-    // Run host binary first to get baseline (optional - may not exist on all platforms)
-    let host_bin = project_dir.join("programs/reth-validator/target/release/reth-validator");
-    let (host_result, host_time) = match bench::run_host(&host_bin, runs) {
-        Ok(result) => {
-            let time = result.time_secs;
-            (Some(result), time)
-        }
-        Err(_) => (None, None),
-    };
-
-    let suffix = get_bench_suffix(trace, fast);
-
-    // Collect all rows (host row only if we have host results)
-    let mut rows: Vec<TableRow> = Vec::new();
-    if let Some(ref result) = host_result {
-        rows.push(TableRow::host(result));
-    }
-
-    let bin_dir = project_dir.join("bin/reth");
-
-    for arch in &archs {
-        let elf_path = bin_dir.join(arch.as_str()).join("reth-validator");
-        let out_dir = project_dir
-            .join("target")
-            .join(arch.as_str())
-            .join(format!("reth-{}", suffix));
-
-        let row = if !out_dir.exists() {
-            TableRow::error(
-                arch.as_str(),
-                "not compiled (run `rvr bench reth compile` first)".to_string(),
-            )
-        } else {
-            match bench::run_bench(&out_dir, &elf_path, runs) {
-                Ok(result) => TableRow::arch(*arch, &result, host_time),
-                Err(e) => TableRow::error(arch.as_str(), e),
-            }
-        };
-
-        rows.push(row);
-    }
-
-    // Sort by time (fastest first), errors go last
-    rows.sort_by(|a, b| match (a.time_secs, b.time_secs) {
-        (Some(ta), Some(tb)) => ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-
-    // Print header and sorted rows
-    bench::print_table_header(trace, fast, runs);
-    for row in &rows {
-        bench::print_table_row(row);
-    }
-
-    println!();
-}
-
-fn get_bench_suffix(trace: bool, fast: bool) -> &'static str {
-    match (trace, fast) {
-        (true, true) => "trace-fast",
-        (true, false) => "trace",
-        (false, true) => "fast",
-        (false, false) => "base",
     }
 }
 
@@ -1023,137 +748,252 @@ fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
     }
 }
 
-// --- Generic benchmark commands ---
+// --- Benchmark registry ---
 
-/// Known benchmarks and their locations
-const BENCHMARKS: &[(&str, &str)] = &[
-    ("bench-minimal", "Minimal function call overhead benchmark"),
-    ("bench-prime-sieve", "Prime number sieve algorithm"),
-    ("bench-pinky", "NES emulator benchmark"),
-    ("bench-memset", "Memory set benchmark"),
+/// Benchmark metadata.
+struct BenchmarkInfo {
+    /// Benchmark name (used in CLI and paths).
+    name: &'static str,
+    /// Short description.
+    description: &'static str,
+    /// Whether benchmark uses export_functions mode (initialize/run pattern).
+    /// If false, runs from ELF entry point.
+    uses_exports: bool,
+    /// Path to host binary relative to project root (for comparison).
+    /// None if no host binary available.
+    host_binary: Option<&'static str>,
+    /// Path to ELF directory relative to project root.
+    /// ELF is at {elf_dir}/{arch}/{name}
+    elf_dir: &'static str,
+    /// Default architectures for this benchmark.
+    default_archs: &'static str,
+}
+
+/// All registered benchmarks.
+const BENCHMARKS: &[BenchmarkInfo] = &[
+    BenchmarkInfo {
+        name: "bench-minimal",
+        description: "Minimal function call overhead",
+        uses_exports: true,
+        host_binary: None,
+        elf_dir: "bin/benchmarks/bench-minimal",
+        default_archs: "rv64i",
+    },
+    BenchmarkInfo {
+        name: "bench-prime-sieve",
+        description: "Prime number sieve algorithm",
+        uses_exports: true,
+        host_binary: None,
+        elf_dir: "bin/benchmarks/bench-prime-sieve",
+        default_archs: "rv64i",
+    },
+    BenchmarkInfo {
+        name: "bench-pinky",
+        description: "NES emulator (cycle-accurate)",
+        uses_exports: true,
+        host_binary: None,
+        elf_dir: "bin/benchmarks/bench-pinky",
+        default_archs: "rv64i",
+    },
+    BenchmarkInfo {
+        name: "bench-memset",
+        description: "Memory set operations",
+        uses_exports: true,
+        host_binary: None,
+        elf_dir: "bin/benchmarks/bench-memset",
+        default_archs: "rv64i",
+    },
+    BenchmarkInfo {
+        name: "reth",
+        description: "Reth block validator",
+        uses_exports: false,
+        host_binary: Some("programs/reth-validator/target/release/reth-validator"),
+        elf_dir: "bin/reth",
+        default_archs: "rv64i",
+    },
 ];
+
+/// Find benchmark by name.
+fn find_benchmark(name: &str) -> Option<&'static BenchmarkInfo> {
+    BENCHMARKS.iter().find(|b| b.name == name)
+}
 
 /// List available benchmarks.
 fn bench_list() {
     println!("Available benchmarks:");
     println!();
-    for (name, desc) in BENCHMARKS {
-        println!("  {:<20} {}", name, desc);
+    for b in BENCHMARKS {
+        let host_marker = if b.host_binary.is_some() { " [has host]" } else { "" };
+        println!("  {:<20} {}{}", b.name, b.description, host_marker);
     }
     println!();
-    println!("Use 'rvr bench build <name>' to build from source");
-    println!("Use 'rvr bench compile <name>' to compile to native");
-    println!("Use 'rvr bench run <name>' to run benchmark");
+    println!("Commands:");
+    println!("  rvr bench build [name]     Build ELF from source");
+    println!("  rvr bench compile [name]   Compile ELF to native .so");
+    println!("  rvr bench run [name]       Run benchmark");
+    println!();
+    println!("Omit [name] to operate on all benchmarks.");
 }
 
-/// Build benchmark from source.
-fn bench_build(name: Option<&str>, arch_str: &str) -> i32 {
+/// Build benchmark ELF from source.
+fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let programs_dir = project_dir.join("benchmarks/programs");
-
-    if !programs_dir.exists() {
-        eprintln!("Error: {} not found", programs_dir.display());
-        return EXIT_FAILURE;
-    }
 
     // Determine which benchmarks to build
-    let to_build: Vec<&str> = if let Some(n) = name {
-        if !BENCHMARKS.iter().any(|(bname, _)| *bname == n) {
-            eprintln!("Error: unknown benchmark '{}'", n);
-            eprintln!("Run 'rvr bench list' to see available benchmarks");
-            return EXIT_FAILURE;
-        }
-        vec![n]
-    } else {
-        BENCHMARKS.iter().map(|(n, _)| *n).collect()
+    let benchmarks: Vec<&BenchmarkInfo> = match name {
+        Some(n) => match find_benchmark(n) {
+            Some(b) => vec![b],
+            None => {
+                eprintln!("Error: unknown benchmark '{}'", n);
+                eprintln!("Run 'rvr bench list' to see available benchmarks");
+                return EXIT_FAILURE;
+            }
+        },
+        None => BENCHMARKS.iter().collect(),
     };
 
-    eprintln!("Building benchmarks: {}", to_build.join(", "));
-    eprintln!("Architectures: {}", arch_str);
-    eprintln!();
+    for benchmark in &benchmarks {
+        // Determine architectures
+        let arch_str = arch.unwrap_or(benchmark.default_archs);
+        let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
 
-    // Build via make
-    let targets: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
-    let benchmarks_arg = to_build.join(" ");
+        eprintln!("Building {} ({})", benchmark.name, archs.join(", "));
 
-    for target in &targets {
-        let status = Command::new("make")
-            .arg("-C")
-            .arg(&programs_dir)
-            .arg(target)
-            .env("BENCHMARKS", &benchmarks_arg)
-            .status()
-            .expect("failed to run make");
+        // Special handling for reth which has its own build system
+        if benchmark.name == "reth" {
+            let reth_dir = project_dir.join("programs/reth-validator");
+            if !reth_dir.exists() {
+                eprintln!("  Error: {} not found", reth_dir.display());
+                continue;
+            }
 
-        if !status.success() {
-            eprintln!("Build failed for {}", target);
-            return EXIT_FAILURE;
+            // Build host binary first (unless --no-host)
+            if !no_host && benchmark.host_binary.is_some() {
+                eprintln!("  Building host binary...");
+                let status = Command::new("cargo")
+                    .arg("build")
+                    .arg("--release")
+                    .arg("--manifest-path")
+                    .arg(reth_dir.join("Cargo.toml"))
+                    .status()
+                    .expect("failed to run cargo");
+
+                if !status.success() {
+                    eprintln!("  Host build failed");
+                    return EXIT_FAILURE;
+                }
+            }
+
+            // Build RISC-V ELFs via make
+            let status = Command::new("make")
+                .arg("-C")
+                .arg(&reth_dir)
+                .args(&archs)
+                .status()
+                .expect("failed to run make");
+
+            if !status.success() {
+                eprintln!("  ELF build failed");
+                return EXIT_FAILURE;
+            }
+        } else {
+            // Generic benchmark build via benchmarks/polkavm build system
+            // For now, assume pre-built ELFs exist
+            eprintln!("  Note: Build from source not yet implemented for polkavm benchmarks");
+            eprintln!("  ELFs should be at: {}", benchmark.elf_dir);
         }
     }
 
     eprintln!();
-    eprintln!("Build complete. Binaries in bin/benchmarks/<name>/<arch>/");
+    eprintln!("Build complete.");
     EXIT_SUCCESS
 }
 
-/// Compile benchmark ELF to native code.
-fn bench_compile(name: &str, arch_str: &str, fast: bool, cc: &str, linker: Option<&str>) -> i32 {
-    if !BENCHMARKS.iter().any(|(bname, _)| *bname == name) {
-        eprintln!("Error: unknown benchmark '{}'", name);
-        return EXIT_FAILURE;
-    }
-
-    let archs = match Arch::parse_list(arch_str) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return EXIT_FAILURE;
-        }
-    };
-
+/// Compile benchmark ELF to native .so.
+fn bench_compile(
+    name: Option<&str>,
+    arch: Option<&str>,
+    fast: bool,
+    cc: &str,
+    linker: Option<&str>,
+) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let bin_dir = project_dir.join("bin/benchmarks").join(name);
+
+    // Determine which benchmarks to compile
+    let benchmarks: Vec<&BenchmarkInfo> = match name {
+        Some(n) => match find_benchmark(n) {
+            Some(b) => vec![b],
+            None => {
+                eprintln!("Error: unknown benchmark '{}'", n);
+                return EXIT_FAILURE;
+            }
+        },
+        None => BENCHMARKS.iter().collect(),
+    };
 
     let suffix = if fast { "fast" } else { "base" };
 
-    for arch in &archs {
-        let elf_path = bin_dir.join(arch.as_str()).join(name);
-        if !elf_path.exists() {
-            eprintln!("Warning: {} not found, skipping", elf_path.display());
-            continue;
-        }
+    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
+        eprintln!("Error: {}", e);
+        std::process::exit(EXIT_FAILURE);
+    });
+    if let Some(ld) = linker {
+        compiler = compiler.with_linker(ld);
+    }
 
-        let out_dir = project_dir
-            .join("target/benchmarks")
-            .join(name)
-            .join(arch.as_str())
-            .join(suffix);
+    for benchmark in &benchmarks {
+        let arch_str = arch.unwrap_or(benchmark.default_archs);
+        let archs = match Arch::parse_list(arch_str) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return EXIT_FAILURE;
+            }
+        };
 
-        let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
-            eprintln!("Error: {}", e);
-            std::process::exit(EXIT_FAILURE);
-        });
-        if let Some(ld) = linker {
-            compiler = compiler.with_linker(ld);
-        }
+        let bin_dir = project_dir.join(benchmark.elf_dir);
 
-        eprintln!(
-            "Compiling {} ({}) -> {}",
-            name,
-            arch.as_str(),
-            out_dir.display()
-        );
+        for a in &archs {
+            // Determine ELF name (reth uses "reth-validator", others use benchmark name)
+            let elf_name = if benchmark.name == "reth" {
+                "reth-validator"
+            } else {
+                benchmark.name
+            };
+            let elf_path = bin_dir.join(a.as_str()).join(elf_name);
 
-        let mut options = CompileOptions::new()
-            .with_compiler(compiler)
-            .with_export_functions(true); // Enable export functions for benchmarks
-        if fast {
-            options = options.with_instret_mode(InstretMode::Off);
-        }
+            if !elf_path.exists() {
+                eprintln!(
+                    "Warning: {} not found, skipping",
+                    elf_path.display()
+                );
+                continue;
+            }
 
-        if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
-            eprintln!("Error compiling {}: {}", arch, e);
-            return EXIT_FAILURE;
+            let out_dir = project_dir
+                .join("target/benchmarks")
+                .join(benchmark.name)
+                .join(a.as_str())
+                .join(suffix);
+
+            eprintln!(
+                "Compiling {} ({}) -> {}",
+                benchmark.name,
+                a.as_str(),
+                out_dir.display()
+            );
+
+            let mut options = CompileOptions::new()
+                .with_compiler(compiler.clone())
+                .with_export_functions(benchmark.uses_exports);
+            if fast {
+                options = options.with_instret_mode(InstretMode::Off);
+            }
+
+            if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
+                eprintln!("Error compiling {}: {}", a, e);
+                return EXIT_FAILURE;
+            }
         }
     }
 
@@ -1162,81 +1002,123 @@ fn bench_compile(name: &str, arch_str: &str, fast: bool, cc: &str, linker: Optio
 }
 
 /// Run compiled benchmark.
-fn bench_run(name: &str, arch_str: &str, runs: usize, fast: bool) -> i32 {
-    if !BENCHMARKS.iter().any(|(bname, _)| *bname == name) {
-        eprintln!("Error: unknown benchmark '{}'", name);
-        return EXIT_FAILURE;
-    }
-
-    let archs = match Arch::parse_list(arch_str) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return EXIT_FAILURE;
-        }
-    };
-
+fn bench_run(
+    name: Option<&str>,
+    arch: Option<&str>,
+    runs: usize,
+    fast: bool,
+    compare_host: bool,
+) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let bin_dir = project_dir.join("bin/benchmarks").join(name);
+
+    // Determine which benchmarks to run
+    let benchmarks: Vec<&BenchmarkInfo> = match name {
+        Some(n) => match find_benchmark(n) {
+            Some(b) => vec![b],
+            None => {
+                eprintln!("Error: unknown benchmark '{}'", n);
+                return EXIT_FAILURE;
+            }
+        },
+        None => BENCHMARKS.iter().collect(),
+    };
 
     let suffix = if fast { "fast" } else { "base" };
 
-    println!("Benchmark: {} (runs={})", name, runs);
-    println!();
-    println!(
-        "| {:<6} | {:>12} | {:>10} | {:>10} | {:>8} |",
-        "Arch", "Instructions", "Time (s)", "Speed", "Mode"
-    );
-    println!("|--------|--------------|------------|------------|----------|");
-
-    for arch in &archs {
-        let elf_path = bin_dir.join(arch.as_str()).join(name);
-        let out_dir = project_dir
-            .join("target/benchmarks")
-            .join(name)
-            .join(arch.as_str())
-            .join(suffix);
-
-        if !out_dir.exists() {
-            println!(
-                "| {:<6} | {:>12} | {:>10} | {:>10} | {:>8} |",
-                arch.as_str(),
-                "-",
-                "-",
-                "not compiled",
-                "-"
-            );
-            continue;
-        }
-
-        match bench::run_bench_auto(&out_dir, &elf_path, runs) {
-            Ok((result, mode)) => {
-                let mode_str = match mode {
-                    bench::BenchMode::Library => "library",
-                    bench::BenchMode::Executable => "executable",
-                };
-                println!(
-                    "| {:<6} | {:>12} | {:>10.6} | {:>10} | {:>8} |",
-                    arch.as_str(),
-                    result.result.instret,
-                    result.result.time_secs,
-                    bench::format_speed(result.result.mips),
-                    mode_str
-                );
-            }
+    for benchmark in &benchmarks {
+        let arch_str = arch.unwrap_or(benchmark.default_archs);
+        let archs = match Arch::parse_list(arch_str) {
+            Ok(a) => a,
             Err(e) => {
-                println!(
-                    "| {:<6} | {:>12} | {:>10} | {:>10} | {:>8} |",
-                    arch.as_str(),
-                    "-",
-                    "-",
-                    format!("error: {}", e),
-                    "-"
-                );
+                eprintln!("Error: {}", e);
+                return EXIT_FAILURE;
+            }
+        };
+
+        let bin_dir = project_dir.join(benchmark.elf_dir);
+
+        println!("## {}", benchmark.name);
+        println!();
+        println!("*{} | runs: {}*", benchmark.description, runs);
+        println!();
+        println!(
+            "| {:<8} | {:>12} | {:>10} | {:>12} |",
+            "Backend", "Instructions", "Time", "Speed"
+        );
+        println!("|----------|--------------|------------|--------------|");
+
+        // Run host baseline if requested and available
+        if compare_host {
+            if let Some(host_path) = benchmark.host_binary {
+                let host_bin = project_dir.join(host_path);
+                if host_bin.exists() {
+                    match bench::run_host(&host_bin, runs) {
+                        Ok(result) => {
+                            let time_str = result
+                                .time_secs
+                                .map(|t| format!("{:.3}s", t))
+                                .unwrap_or_else(|| "-".to_string());
+                            println!(
+                                "| {:<8} | {:>12} | {:>10} | {:>12} |",
+                                "native", "-", time_str, "-"
+                            );
+                        }
+                        Err(e) => {
+                            println!(
+                                "| {:<8} | {:>12} | {:>10} | {:>12} |",
+                                "native", "-", "-", format!("err: {}", e)
+                            );
+                        }
+                    }
+                }
             }
         }
+
+        // Run each architecture
+        for a in &archs {
+            let elf_name = if benchmark.name == "reth" {
+                "reth-validator"
+            } else {
+                benchmark.name
+            };
+            let elf_path = bin_dir.join(a.as_str()).join(elf_name);
+            let out_dir = project_dir
+                .join("target/benchmarks")
+                .join(benchmark.name)
+                .join(a.as_str())
+                .join(suffix);
+
+            let backend_name = format!("rvr-{}", a.as_str());
+
+            if !out_dir.exists() {
+                println!(
+                    "| {:<8} | {:>12} | {:>10} | {:>12} |",
+                    backend_name, "-", "-", "not compiled"
+                );
+                continue;
+            }
+
+            match bench::run_bench_auto(&out_dir, &elf_path, runs) {
+                Ok((result, _mode)) => {
+                    println!(
+                        "| {:<8} | {:>12} | {:>10.3}s | {:>12} |",
+                        backend_name,
+                        bench::format_num(result.result.instret),
+                        result.result.time_secs,
+                        bench::format_speed(result.result.mips),
+                    );
+                }
+                Err(e) => {
+                    println!(
+                        "| {:<8} | {:>12} | {:>10} | {:>12} |",
+                        backend_name, "-", "-", format!("err: {}", e)
+                    );
+                }
+            }
+        }
+
+        println!();
     }
 
-    println!();
     EXIT_SUCCESS
 }
