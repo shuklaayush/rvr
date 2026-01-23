@@ -143,9 +143,9 @@ enum Commands {
         #[arg(long)]
         addr_check: bool,
 
-        /// Enable tohost check (for riscv-tests)
+        /// Enable HTIF (Host-Target Interface) for riscv-tests
         #[arg(long)]
-        tohost: bool,
+        htif: bool,
 
         /// Instruction retirement mode
         #[arg(long, value_enum, default_value = "count")]
@@ -184,9 +184,9 @@ enum Commands {
         #[arg(long)]
         addr_check: bool,
 
-        /// Enable tohost check (for riscv-tests)
+        /// Enable HTIF (Host-Target Interface) for riscv-tests
         #[arg(long)]
-        tohost: bool,
+        htif: bool,
 
         /// Emit #line directives with source locations (requires debug info in ELF)
         #[arg(long)]
@@ -531,7 +531,7 @@ fn run_command(cli: &Cli) -> i32 {
             input,
             output,
             addr_check,
-            tohost,
+            htif,
             instret,
             syscalls,
             jobs,
@@ -549,7 +549,7 @@ fn run_command(cli: &Cli) -> i32 {
             };
             let options = CompileOptions::new()
                 .with_addr_check(*addr_check)
-                .with_tohost(*tohost)
+                .with_htif(*htif)
                 .with_instret_mode((*instret).into())
                 .with_syscall_mode((*syscalls).into())
                 .with_tracer_config(tracer_config)
@@ -581,7 +581,7 @@ fn run_command(cli: &Cli) -> i32 {
             input,
             output,
             addr_check,
-            tohost,
+            htif,
             line_info,
             instret,
             syscalls,
@@ -597,7 +597,7 @@ fn run_command(cli: &Cli) -> i32 {
             };
             let options = CompileOptions::new()
                 .with_addr_check(*addr_check)
-                .with_tohost(*tohost)
+                .with_htif(*htif)
                 .with_line_info(*line_info)
                 .with_instret_mode((*instret).into())
                 .with_syscall_mode((*syscalls).into())

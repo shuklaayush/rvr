@@ -233,8 +233,8 @@ pub struct EmitConfig<X: Xlen> {
     pub emit_comments: bool,
     /// Emit #line directives for source-level debugging.
     pub emit_line_info: bool,
-    /// Enable tohost check (for riscv-tests).
-    pub tohost_enabled: bool,
+    /// Enable HTIF (Host-Target Interface) for riscv-tests.
+    pub htif_enabled: bool,
     /// Memory address bits (default 32).
     pub memory_bits: u8,
     /// Tracer configuration.
@@ -264,7 +264,7 @@ impl<X: Xlen> EmitConfig<X> {
             instret_mode: InstretMode::Count,
             emit_comments: true,
             emit_line_info: false,
-            tohost_enabled: false,
+            htif_enabled: false,
             memory_bits: 32,
             tracer_config: TracerConfig::none(),
             compiler: Compiler::default(),
@@ -359,7 +359,7 @@ impl<X: Xlen> EmitConfig<X> {
 
     /// Set tohost enabled.
     pub fn with_tohost(mut self, enabled: bool) -> Self {
-        self.tohost_enabled = enabled;
+        self.htif_enabled = enabled;
         self
     }
 

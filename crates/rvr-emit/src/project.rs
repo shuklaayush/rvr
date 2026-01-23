@@ -397,7 +397,7 @@ impl<X: Xlen> CProject<X> {
 
     /// Write HTIF files.
     pub fn write_htif(&self) -> std::io::Result<()> {
-        let htif_cfg = HtifConfig::new(&self.base_name, self.config.tohost_enabled);
+        let htif_cfg = HtifConfig::new(&self.base_name, self.config.htif_enabled);
 
         let htif_header = gen_htif_header::<X>(&htif_cfg);
         let header_path = self.htif_header_path();
@@ -508,7 +508,7 @@ impl<X: Xlen> CProject<X> {
         if !self.segments.is_empty() {
             srcs.push(format!("{}_memory.c", self.base_name));
         }
-        if self.config.tohost_enabled {
+        if self.config.htif_enabled {
             srcs.push(format!("{}_htif.c", self.base_name));
         }
 
@@ -581,7 +581,7 @@ impl<X: Xlen> CProject<X> {
         }
 
         // Write HTIF if tohost enabled
-        if self.config.tohost_enabled {
+        if self.config.htif_enabled {
             self.write_htif()?;
         }
 

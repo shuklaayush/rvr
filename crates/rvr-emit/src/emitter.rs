@@ -520,7 +520,7 @@ impl<X: Xlen> CEmitter<X> {
                         };
 
                         // Check for tohost handling on 32-bit stores
-                        if self.config.tohost_enabled && *width == 4 {
+                        if self.config.htif_enabled && *width == 4 {
                             self.render_mem_write_tohost(&base, offset, &value_str, indent);
                         } else if self.config.has_tracing() {
                             let store_fn = match width {

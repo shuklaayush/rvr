@@ -245,8 +245,8 @@ pub fn run_test(elf_path: &Path, timeout: Duration) -> TestResult {
 
     let out_dir = temp_dir.path().join("out");
 
-    // Compile with tohost enabled
-    let options = CompileOptions::new().with_tohost(true).with_quiet(true);
+    // Compile with HTIF enabled
+    let options = CompileOptions::new().with_htif(true).with_quiet(true);
 
     if let Err(e) = compile_with_options(elf_path, &out_dir, options) {
         return TestResult::fail(name, format!("compile failed: {}", e));

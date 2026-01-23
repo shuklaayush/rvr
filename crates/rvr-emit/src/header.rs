@@ -39,8 +39,8 @@ pub struct HeaderConfig<X: Xlen> {
     pub num_registers: usize,
     /// Instret counting mode.
     pub instret_mode: InstretMode,
-    /// Enable tohost check.
-    pub tohost_enabled: bool,
+    /// Enable HTIF (Host-Target Interface).
+    pub htif_enabled: bool,
     /// Enable address checking.
     pub addr_check: bool,
     /// Entry point address.
@@ -69,7 +69,7 @@ impl<X: Xlen> HeaderConfig<X> {
             memory_bits: config.memory_bits,
             num_registers: config.num_regs,
             instret_mode: config.instret_mode,
-            tohost_enabled: config.tohost_enabled,
+            htif_enabled: config.htif_enabled,
             addr_check: config.addr_check,
             entry_point: inputs.entry_point,
             block_addresses,
@@ -129,7 +129,7 @@ __attribute__((preserve_none)) void rv_trap({});
 }
 
 fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
-    let htif_include = if cfg.tohost_enabled {
+    let htif_include = if cfg.htif_enabled {
         format!("#include \"{}_htif.h\"\n", cfg.base_name)
     } else {
         String::new()

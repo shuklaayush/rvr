@@ -384,8 +384,8 @@ impl<X: Xlen> Recompiler<X> {
 pub struct CompileOptions {
     /// Enable address bounds checking.
     pub addr_check: bool,
-    /// Enable tohost check (for riscv-tests).
-    pub tohost: bool,
+    /// Enable HTIF (Host-Target Interface) for riscv-tests.
+    pub htif: bool,
     /// Emit #line directives with source locations (requires debug info in ELF).
     pub line_info: bool,
     /// Export functions mode: compile for calling exported functions rather than running from entry point.
@@ -417,9 +417,9 @@ impl CompileOptions {
         self
     }
 
-    /// Set tohost enabled.
-    pub fn with_tohost(mut self, enabled: bool) -> Self {
-        self.tohost = enabled;
+    /// Set HTIF enabled.
+    pub fn with_htif(mut self, enabled: bool) -> Self {
+        self.htif = enabled;
         self
     }
 
@@ -477,7 +477,7 @@ impl CompileOptions {
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
-        config.tohost_enabled = self.tohost;
+        config.htif_enabled = self.htif;
         config.emit_line_info = self.line_info;
         config.instret_mode = self.instret_mode;
         config.tracer_config = self.tracer_config.clone();
