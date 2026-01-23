@@ -882,7 +882,9 @@ fn lift_c<X: Xlen>(
 
         // System
         OP_C_NOP => (Vec::new(), Terminator::Fall { target: None }),
-        OP_C_EBREAK => (Vec::new(), Terminator::trap("ebreak")),
+        // c.ebreak = normal breakpoint/stop, exit_code = 0
+        // For error exits, use ecall with exit syscall or unimp (illegal instruction)
+        OP_C_EBREAK => (Vec::new(), Terminator::exit(Expr::imm(X::from_u64(0)))),
 
         // Invalid instruction - trap with exit
         OP_C_INVALID => (Vec::new(), Terminator::trap("invalid")),

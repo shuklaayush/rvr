@@ -714,7 +714,9 @@ fn lift_base<X: Xlen>(
         // ECALL is handled by ExtensionRegistry's syscall_handler.
         // This fallback should not normally be reached.
         OP_ECALL => (Vec::new(), Terminator::trap("ecall: use ExtensionRegistry")),
-        OP_EBREAK => (Vec::new(), Terminator::trap("ebreak")),
+        // ebreak = normal breakpoint/stop, exit_code = 0
+        // For error exits, use ecall with exit syscall or unimp (illegal instruction)
+        OP_EBREAK => (Vec::new(), Terminator::exit(Expr::imm(X::from_u64(0)))),
         OP_FENCE => (Vec::new(), Terminator::Fall { target: None }),
         OP_MRET => (Vec::new(), Terminator::Fall { target: None }),
 
