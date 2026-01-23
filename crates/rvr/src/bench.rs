@@ -35,11 +35,15 @@ impl Arch {
     }
 
     /// Parse comma-separated list of architectures.
+    /// Use "all" to get all architectures.
     pub fn parse_list(s: &str) -> Result<Vec<Self>, String> {
+        if s.eq_ignore_ascii_case("all") {
+            return Ok(vec![Self::Rv32i, Self::Rv32e, Self::Rv64i, Self::Rv64e]);
+        }
         s.split(',')
             .map(|part| {
                 Self::parse(part.trim()).ok_or_else(|| {
-                    format!("unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e", part)
+                    format!("unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e/all", part)
                 })
             })
             .collect()
@@ -369,6 +373,22 @@ pub fn format_speed_shell(mips: f64) -> String {
     }
 }
 
+/// Format time value with appropriate unit (s, ms, us, ns).
+/// Input is in seconds.
+pub fn format_time(secs: f64) -> String {
+    if secs <= 0.0 {
+        "-".to_string()
+    } else if secs >= 1.0 {
+        format!("{:.2}s", secs)
+    } else if secs >= 0.001 {
+        format!("{:.2}ms", secs * 1000.0)
+    } else if secs >= 0.000_001 {
+        format!("{:.2}us", secs * 1_000_000.0)
+    } else {
+        format!("{:.2}ns", secs * 1_000_000_000.0)
+    }
+}
+
 // ============================================================================
 // Table output
 // ============================================================================
@@ -400,7 +420,7 @@ pub struct TableRow {
 
 impl TableRow {
     /// Create a row for the host baseline.
-    pub fn host(result: &HostResult) -> Self {
+    pub fn host(label: &str, result: &HostResult) -> Self {
         let (ipc, branch_miss_rate, host_instrs) = result
             .perf
             .as_ref()
@@ -408,7 +428,7 @@ impl TableRow {
             .unwrap_or((None, None, None));
 
         Self {
-            label: "host".to_string(),
+            label: label.to_string(),
             instret: None,
             host_instrs,
             instrs_per_guest: None,
@@ -421,8 +441,8 @@ impl TableRow {
         }
     }
 
-    /// Create a row for a VM architecture.
-    pub fn arch(arch: Arch, result: &RunResultWithPerf, host_time: Option<f64>) -> Self {
+    /// Create a row for a VM backend.
+    pub fn backend(label: &str, result: &RunResultWithPerf, host_time: Option<f64>) -> Self {
         let overhead = host_time.and_then(|ht| calc_overhead(result.result.time_secs, ht));
         let (ipc, branch_miss_rate, host_instrs) = result
             .perf
@@ -434,7 +454,7 @@ impl TableRow {
         let instrs_per_guest = host_instrs.map(|hi| hi as f64 / result.result.instret as f64);
 
         Self {
-            label: arch.as_str().to_string(),
+            label: label.to_string(),
             instret: Some(result.result.instret),
             host_instrs,
             instrs_per_guest,
@@ -470,36 +490,34 @@ pub fn format_instrs_per_guest(ipg: Option<f64>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-/// Print markdown table header.
-pub fn print_table_header(trace: bool, fast: bool, runs: usize) {
+/// Print markdown table header for benchmark results.
+pub fn print_bench_header(name: &str, description: &str, runs: usize) {
+    println!("## {}", name);
     println!();
-    println!("## Benchmark Results");
-    println!();
-    let mode = if trace {
-        "Trace"
-    } else if fast {
-        "Fast (no instret)"
-    } else {
-        "Base"
-    };
-    println!("*Mode: **{}** | Runs: **{}***", mode, runs);
+    println!("*{} | runs: {}*", description, runs);
     println!();
     println!(
-        "| {:<6} | {:>10} | {:>10} | {:>9} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
-        "Arch", "Instret", "Host Ops", "Ops/Guest", "Time", "OH", "Speed", "IPC", "Branch Miss"
+        "| {:<9} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        "Backend", "Instret", "Host Ops", "Ops/Guest", "Time", "OH", "Speed", "IPC", "Branch Miss"
     );
     println!(
-        "|{:-<8}|{:-<12}|{:-<12}|{:-<11}|{:-<10}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
+        "|{:-<11}|{:-<12}|{:-<12}|{:-<11}|{:-<12}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
         "", "", "", "", "", "", "", "", ""
     );
 }
 
 /// Print a table row.
 pub fn print_table_row(row: &TableRow) {
-    if row.error.is_some() {
+    if let Some(ref err) = row.error {
+        // Truncate error to fit in Speed column (12 chars)
+        let err_display = if err.len() > 12 {
+            format!("{}...", &err[..9])
+        } else {
+            err.clone()
+        };
         println!(
-            "| {:<6} | {:>10} | {:>10} | {:>9} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
-            row.label, "-", "-", "-", "-", "-", "-", "-", "-"
+            "| {:<9} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
+            row.label, "-", "-", "-", "-", "-", err_display, "-", "-"
         );
         return;
     }
@@ -515,7 +533,7 @@ pub fn print_table_row(row: &TableRow) {
     let instrs_per_guest = format_instrs_per_guest(row.instrs_per_guest);
     let time = row
         .time_secs
-        .map(|t| format!("{:.3}s", t))
+        .map(format_time)
         .unwrap_or_else(|| "-".to_string());
     let overhead = format_overhead(row.overhead);
     let speed = row
@@ -526,18 +544,9 @@ pub fn print_table_row(row: &TableRow) {
     let branch_miss = format_branch_miss(row.branch_miss_rate);
 
     println!(
-        "| {:<6} | {:>10} | {:>10} | {:>9} | {:>8} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        "| {:<9} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
         row.label, instret, host_instrs, instrs_per_guest, time, overhead, speed, ipc, branch_miss
     );
-}
-
-/// Print the full table.
-pub fn print_table(rows: &[TableRow], trace: bool, fast: bool, runs: usize) {
-    print_table_header(trace, fast, runs);
-    for row in rows {
-        print_table_row(row);
-    }
-    println!();
 }
 
 #[cfg(test)]
