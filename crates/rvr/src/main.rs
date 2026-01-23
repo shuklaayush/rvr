@@ -683,7 +683,7 @@ fn riscv_tests_build(
     if let Some(out) = output {
         config = config.with_out_dir(out);
     } else {
-        config = config.with_out_dir(project_dir.join("bin/riscv/tests"));
+        config = config.with_out_dir(project_dir.join("bin/riscv-tests"));
     }
 
     eprintln!("Using toolchain: {}gcc", toolchain);
@@ -720,11 +720,11 @@ fn riscv_tests_build(
 /// Run riscv-tests suite.
 fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
-    let test_dir = project_dir.join("bin/riscv/tests");
+    let test_dir = project_dir.join("bin/riscv-tests");
 
     if !test_dir.exists() {
         eprintln!("Error: test directory not found: {}", test_dir.display());
-        eprintln!("Place riscv-tests ELF binaries in bin/riscv/tests/");
+        eprintln!("Place riscv-tests ELF binaries in bin/riscv-tests/");
         return EXIT_FAILURE;
     }
 
@@ -762,45 +762,39 @@ struct BenchmarkInfo {
     /// Path to host binary relative to project root (for comparison).
     /// None if no host binary available.
     host_binary: Option<&'static str>,
-    /// Path to ELF directory relative to project root.
-    /// ELF is at {elf_dir}/{arch}/{name}
-    elf_dir: &'static str,
     /// Default architectures for this benchmark.
     default_archs: &'static str,
 }
 
 /// All registered benchmarks.
+/// ELF binaries are at: bin/{arch}/{name}
 const BENCHMARKS: &[BenchmarkInfo] = &[
     BenchmarkInfo {
-        name: "bench-minimal",
+        name: "minimal",
         description: "Minimal function call overhead",
         uses_exports: true,
         host_binary: None,
-        elf_dir: "bin/benchmarks/bench-minimal",
         default_archs: "rv64i",
     },
     BenchmarkInfo {
-        name: "bench-prime-sieve",
+        name: "prime-sieve",
         description: "Prime number sieve algorithm",
         uses_exports: true,
         host_binary: None,
-        elf_dir: "bin/benchmarks/bench-prime-sieve",
         default_archs: "rv64i",
     },
     BenchmarkInfo {
-        name: "bench-pinky",
+        name: "pinky",
         description: "NES emulator (cycle-accurate)",
         uses_exports: true,
         host_binary: None,
-        elf_dir: "bin/benchmarks/bench-pinky",
         default_archs: "rv64i",
     },
     BenchmarkInfo {
-        name: "bench-memset",
+        name: "memset",
         description: "Memory set operations",
         uses_exports: true,
         host_binary: None,
-        elf_dir: "bin/benchmarks/bench-memset",
         default_archs: "rv64i",
     },
     BenchmarkInfo {
@@ -808,7 +802,6 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         description: "Reth block validator",
         uses_exports: false,
         host_binary: Some("programs/reth-validator/target/release/reth-validator"),
-        elf_dir: "bin/reth",
         default_archs: "rv64i",
     },
 ];
@@ -900,7 +893,7 @@ fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32 {
             // Generic benchmark build via benchmarks/polkavm build system
             // For now, assume pre-built ELFs exist
             eprintln!("  Note: Build from source not yet implemented for polkavm benchmarks");
-            eprintln!("  ELFs should be at: {}", benchmark.elf_dir);
+            eprintln!("  ELFs should be at: bin/<arch>/{}", benchmark.name);
         }
     }
 
@@ -951,16 +944,9 @@ fn bench_compile(
             }
         };
 
-        let bin_dir = project_dir.join(benchmark.elf_dir);
-
         for a in &archs {
-            // Determine ELF name (reth uses "reth-validator", others use benchmark name)
-            let elf_name = if benchmark.name == "reth" {
-                "reth-validator"
-            } else {
-                benchmark.name
-            };
-            let elf_path = bin_dir.join(a.as_str()).join(elf_name);
+            // ELF path: bin/{arch}/{name}
+            let elf_path = project_dir.join("bin").join(a.as_str()).join(benchmark.name);
 
             if !elf_path.exists() {
                 eprintln!(
@@ -1035,8 +1021,6 @@ fn bench_run(
             }
         };
 
-        let bin_dir = project_dir.join(benchmark.elf_dir);
-
         println!("## {}", benchmark.name);
         println!();
         println!("*{} | runs: {}*", benchmark.description, runs);
@@ -1076,12 +1060,8 @@ fn bench_run(
 
         // Run each architecture
         for a in &archs {
-            let elf_name = if benchmark.name == "reth" {
-                "reth-validator"
-            } else {
-                benchmark.name
-            };
-            let elf_path = bin_dir.join(a.as_str()).join(elf_name);
+            // ELF path: bin/{arch}/{name}
+            let elf_path = project_dir.join("bin").join(a.as_str()).join(benchmark.name);
             let out_dir = project_dir
                 .join("target/benchmarks")
                 .join(benchmark.name)

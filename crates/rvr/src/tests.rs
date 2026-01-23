@@ -111,7 +111,7 @@ impl TestSummary {
 /// Configuration for running tests.
 #[derive(Debug, Clone)]
 pub struct TestConfig {
-    /// Test directory (default: bin/riscv/tests).
+    /// Test directory (default: bin/riscv-tests).
     pub test_dir: PathBuf,
     /// Filter pattern (e.g., "rv64" to only run rv64 tests).
     pub filter: Option<String>,
@@ -124,7 +124,7 @@ pub struct TestConfig {
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
-            test_dir: PathBuf::from("bin/riscv/tests"),
+            test_dir: PathBuf::from("bin/riscv-tests"),
             filter: None,
             verbose: false,
             timeout_secs: 10,
@@ -578,7 +578,7 @@ impl BuildConfig {
     pub fn new(categories: Vec<TestCategory>) -> Self {
         Self {
             src_dir: PathBuf::from("tests/riscv-tests/isa"),
-            out_dir: PathBuf::from("bin/riscv/tests"),
+            out_dir: PathBuf::from("bin/riscv-tests"),
             toolchain: String::new(), // Will be auto-detected
             categories,
         }
