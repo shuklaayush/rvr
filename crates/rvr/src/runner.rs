@@ -11,8 +11,8 @@ use libloading::os::unix::{Library, RTLD_NOW, Symbol};
 use rvr_elf::{ElfImage, get_elf_xlen};
 use rvr_ir::{Rv32, Rv64, Xlen};
 use rvr_state::{
-    DEFAULT_MEMORY_SIZE, DebugTracer, GuardedMemory, NUM_REGS_E, NUM_REGS_I, PreflightTracer,
-    RvState, StatsTracer, TracerState,
+    DEFAULT_MEMORY_SIZE, DebugTracer, GuardedMemory, InstretSuspender, NUM_REGS_E, NUM_REGS_I,
+    PreflightTracer, RvState, StatsTracer, TracerState,
 };
 use thiserror::Error;
 use tracing::{debug, error, trace};
@@ -123,6 +123,31 @@ impl TracerKind {
     }
 }
 
+/// Instret mode matches RV_INSTRET_MODE in generated C code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstretMode {
+    /// No instruction counting.
+    Off,
+    /// Count instructions but don't suspend.
+    Count,
+    /// Count instructions and suspend at limit.
+    Suspend,
+}
+
+impl InstretMode {
+    fn from_raw(raw: u32) -> Self {
+        match raw {
+            0 => Self::Off,
+            2 => Self::Suspend,
+            _ => Self::Count, // Default to Count (1)
+        }
+    }
+
+    fn is_suspend(&self) -> bool {
+        *self == Self::Suspend
+    }
+}
+
 const PREFLIGHT_DATA_BYTES: usize = 1 << 20;
 const PREFLIGHT_PC_ENTRIES: usize = 1 << 24;
 const STATS_ADDR_BITMAP_BYTES: usize = 1 << 29;
@@ -185,6 +210,23 @@ trait RunnerImpl {
 
     /// Clear the exit flag to allow further execution.
     fn clear_exit(&mut self);
+
+    /// Check if the runner supports instret suspension (for single-stepping).
+    fn supports_suspend(&self) -> bool {
+        false
+    }
+
+    /// Get the target instret for suspension.
+    /// Returns None if suspension is not supported.
+    fn get_target_instret(&self) -> Option<u64> {
+        None
+    }
+
+    /// Set the target instret for suspension.
+    /// Returns true if successful, false if suspension is not supported.
+    fn set_target_instret(&mut self, _target: u64) -> bool {
+        false
+    }
 }
 
 // ============================================================================
@@ -668,20 +710,155 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for DebugRunner<X, NUM_REGS> {
 }
 
 // ============================================================================
+// SuspendRunner - runner with InstretSuspender for single-stepping
+// ============================================================================
+
+/// Typed runner with instret suspension support (for GDB single-stepping).
+///
+/// Uses `InstretSuspender` instead of `()` for the suspender type parameter,
+/// allowing execution to pause after a specific number of instructions.
+struct SuspendRunner<X: Xlen, const NUM_REGS: usize> {
+    state: RvState<X, (), InstretSuspender, NUM_REGS>,
+    memory: GuardedMemory,
+    elf_image: ElfImage<X>,
+}
+
+impl<X: Xlen, const NUM_REGS: usize> SuspendRunner<X, NUM_REGS> {
+    fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
+        let mut state: RvState<X, (), InstretSuspender, NUM_REGS> = RvState::new();
+        state.set_memory(memory.as_ptr());
+        // Initialize suspender to not suspend (max u64)
+        state.suspender.disable();
+        Self {
+            state,
+            memory,
+            elf_image,
+        }
+    }
+}
+
+impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for SuspendRunner<X, NUM_REGS> {
+    fn load_segments(&mut self) {
+        self.memory.clear();
+        for seg in &self.elf_image.memory_segments {
+            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            unsafe { self.memory.copy_from(vaddr, &seg.data) };
+        }
+    }
+
+    fn reset(&mut self) {
+        self.state.reset();
+        self.state.set_memory(self.memory.as_ptr());
+        self.state.suspender.disable();
+    }
+
+    fn as_void_ptr(&mut self) -> *mut c_void {
+        self.state.as_void_ptr()
+    }
+
+    fn instret(&self) -> u64 {
+        self.state.instret()
+    }
+
+    fn exit_code(&self) -> u8 {
+        self.state.exit_code()
+    }
+
+    fn entry_point(&self) -> u64 {
+        X::to_u64(self.elf_image.entry_point)
+    }
+
+    fn lookup_symbol(&self, name: &str) -> Option<u64> {
+        self.elf_image.lookup_symbol(name)
+    }
+
+    fn set_register(&mut self, reg: usize, value: u64) {
+        self.state.set_reg(reg, X::from_u64(value));
+    }
+
+    fn get_register(&self, reg: usize) -> u64 {
+        X::to_u64(self.state.get_reg(reg))
+    }
+
+    fn get_pc(&self) -> u64 {
+        X::to_u64(self.state.pc())
+    }
+
+    fn set_pc(&mut self, pc: u64) {
+        self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = buf.len().min(mem_size - addr);
+        let src = unsafe { std::slice::from_raw_parts(self.memory.as_ptr().add(addr), len) };
+        buf[..len].copy_from_slice(src);
+        len
+    }
+
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
+        let mem_size = self.memory.size();
+        let addr = addr as usize;
+        if addr >= mem_size {
+            return 0;
+        }
+        let len = data.len().min(mem_size - addr);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.memory.as_ptr().add(addr), len);
+        }
+        len
+    }
+
+    fn num_regs(&self) -> usize {
+        NUM_REGS
+    }
+
+    fn xlen(&self) -> u8 {
+        X::VALUE
+    }
+
+    fn memory_size(&self) -> usize {
+        self.memory.size()
+    }
+
+    fn clear_exit(&mut self) {
+        self.state.clear_exit();
+    }
+
+    fn supports_suspend(&self) -> bool {
+        true
+    }
+
+    fn get_target_instret(&self) -> Option<u64> {
+        Some(self.state.suspender.target_instret)
+    }
+
+    fn set_target_instret(&mut self, target: u64) -> bool {
+        self.state.suspender.set_target(target);
+        true
+    }
+}
+
+// ============================================================================
 // Factory functions - create the right runner based on ELF and tracer kind
 // ============================================================================
 
-/// Create runner implementation based on architecture and tracer.
+/// Create runner implementation based on architecture, tracer, and instret mode.
 fn create_runner_impl(
     elf_data: &[u8],
     tracer_kind: TracerKind,
+    instret_mode: InstretMode,
 ) -> Result<Box<dyn RunnerImpl>, RunError> {
     let memory = GuardedMemory::new(DEFAULT_MEMORY_SIZE)?;
     let xlen = get_elf_xlen(elf_data)?;
 
     match xlen {
-        32 => create_rv32_runner(elf_data, tracer_kind, memory),
-        64 => create_rv64_runner(elf_data, tracer_kind, memory),
+        32 => create_rv32_runner(elf_data, tracer_kind, instret_mode, memory),
+        64 => create_rv64_runner(elf_data, tracer_kind, instret_mode, memory),
         _ => unreachable!("get_elf_xlen only returns 32 or 64"),
     }
 }
@@ -689,11 +866,13 @@ fn create_runner_impl(
 fn create_rv32_runner(
     elf_data: &[u8],
     tracer_kind: TracerKind,
+    instret_mode: InstretMode,
     memory: GuardedMemory,
 ) -> Result<Box<dyn RunnerImpl>, RunError> {
     let image = ElfImage::<Rv32>::parse(elf_data)?;
     let is_rve = image.is_rve();
 
+    // Tracers don't currently support suspend mode, so use standard tracers
     match (tracer_kind, is_rve) {
         (TracerKind::Preflight, false) => Ok(Box::new(PreflightRunner::<Rv32, NUM_REGS_I>::new(
             image, memory,
@@ -713,6 +892,13 @@ fn create_rv32_runner(
         (TracerKind::Debug, true) => Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_E>::new(
             image, memory,
         ))),
+        // For no tracer, check if suspend mode is requested
+        (_, false) if instret_mode.is_suspend() => Ok(Box::new(
+            SuspendRunner::<Rv32, NUM_REGS_I>::new(image, memory),
+        )),
+        (_, true) if instret_mode.is_suspend() => Ok(Box::new(
+            SuspendRunner::<Rv32, NUM_REGS_E>::new(image, memory),
+        )),
         (_, false) => Ok(Box::new(TypedRunner::<Rv32, (), NUM_REGS_I>::new(
             image, memory,
         ))),
@@ -725,11 +911,13 @@ fn create_rv32_runner(
 fn create_rv64_runner(
     elf_data: &[u8],
     tracer_kind: TracerKind,
+    instret_mode: InstretMode,
     memory: GuardedMemory,
 ) -> Result<Box<dyn RunnerImpl>, RunError> {
     let image = ElfImage::<Rv64>::parse(elf_data)?;
     let is_rve = image.is_rve();
 
+    // Tracers don't currently support suspend mode, so use standard tracers
     match (tracer_kind, is_rve) {
         (TracerKind::Preflight, false) => Ok(Box::new(PreflightRunner::<Rv64, NUM_REGS_I>::new(
             image, memory,
@@ -749,6 +937,13 @@ fn create_rv64_runner(
         (TracerKind::Debug, true) => Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_E>::new(
             image, memory,
         ))),
+        // For no tracer, check if suspend mode is requested
+        (_, false) if instret_mode.is_suspend() => Ok(Box::new(
+            SuspendRunner::<Rv64, NUM_REGS_I>::new(image, memory),
+        )),
+        (_, true) if instret_mode.is_suspend() => Ok(Box::new(
+            SuspendRunner::<Rv64, NUM_REGS_E>::new(image, memory),
+        )),
         (_, false) => Ok(Box::new(TypedRunner::<Rv64, (), NUM_REGS_I>::new(
             image, memory,
         ))),
@@ -872,14 +1067,16 @@ impl Runner {
         let lib = unsafe { Library::open(Some(&lib_path), RTLD_NOW)? };
         let api = unsafe { RvApi::load(&lib)? };
         let tracer_kind = TracerKind::from_raw(api.tracer_kind);
+        let instret_mode = InstretMode::from_raw(api.instret_mode);
 
         // Load ELF and create typed runner
         let elf_data = std::fs::read(elf_path)?;
-        let inner = create_runner_impl(&elf_data, tracer_kind)?;
+        let inner = create_runner_impl(&elf_data, tracer_kind, instret_mode)?;
 
         trace!(
             entry_point = format!("{:#x}", inner.entry_point()),
             tracer_kind = ?tracer_kind,
+            instret_mode = ?instret_mode,
             "loaded runner"
         );
 
@@ -982,9 +1179,27 @@ impl Runner {
         self.inner.memory_size()
     }
 
-    /// Check if the library was compiled with suspend mode (for single-stepping).
+    /// Check if the runner supports suspend mode (for single-stepping).
+    ///
+    /// Returns true if both the library was compiled with suspend mode
+    /// and the runner was created with InstretSuspender support.
     pub fn supports_suspend(&self) -> bool {
-        self.api.supports_suspend()
+        self.api.supports_suspend() && self.inner.supports_suspend()
+    }
+
+    /// Get the target instret for suspension.
+    ///
+    /// Returns None if suspension is not supported.
+    pub fn get_target_instret(&self) -> Option<u64> {
+        self.inner.get_target_instret()
+    }
+
+    /// Set the target instret for suspension.
+    ///
+    /// When execution reaches this instret count, it will suspend and return.
+    /// Returns true if successful, false if suspension is not supported.
+    pub fn set_target_instret(&mut self, target: u64) -> bool {
+        self.inner.set_target_instret(target)
     }
 
     /// Execute from a specific address.

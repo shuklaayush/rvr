@@ -82,26 +82,41 @@ impl GdbTargetCore {
             return StopReason::SwBreakpoint;
         }
 
-        // For single-step mode, we need to execute one instruction
-        // Currently we run the whole execution and stop at the end
-        // TODO: Implement proper single-stepping with instret suspender
         if self.exec_mode == ExecMode::Step {
-            let pc = self.runner.get_pc();
-            match self.runner.execute_from(pc) {
-                Ok(_) => StopReason::Exited(self.runner.exit_code()),
-                Err(_) => StopReason::Exited(self.runner.exit_code()),
+            // Single-step mode
+            if self.runner.supports_suspend() {
+                // Use instret suspender for true single-stepping
+                let target = self.runner.instret() + 1;
+                self.runner.set_target_instret(target);
+                let pc = self.runner.get_pc();
+                let _ = self.runner.execute_from(pc);
+
+                // Check if we suspended (instret reached target without exiting)
+                if self.runner.exit_code() == 0 && self.runner.instret() >= target {
+                    // Clear the exit flag to allow further execution
+                    self.runner.clear_exit();
+                    return StopReason::DoneStep;
+                }
+                // Program exited
+                StopReason::Exited(self.runner.exit_code())
+            } else {
+                // No suspend support - run until exit (fallback behavior)
+                let pc = self.runner.get_pc();
+                let _ = self.runner.execute_from(pc);
+                StopReason::Exited(self.runner.exit_code())
             }
         } else {
+            // Continue mode - run until exit or breakpoint
+            if self.runner.supports_suspend() {
+                // Disable suspender for continue mode
+                self.runner.set_target_instret(u64::MAX);
+            }
             let pc = self.runner.get_pc();
-            match self.runner.execute_from(pc) {
-                Ok(_) => {
-                    if self.should_stop() {
-                        StopReason::SwBreakpoint
-                    } else {
-                        StopReason::Exited(self.runner.exit_code())
-                    }
-                }
-                Err(_) => StopReason::Exited(self.runner.exit_code()),
+            let _ = self.runner.execute_from(pc);
+            if self.should_stop() {
+                StopReason::SwBreakpoint
+            } else {
+                StopReason::Exited(self.runner.exit_code())
             }
         }
     }
