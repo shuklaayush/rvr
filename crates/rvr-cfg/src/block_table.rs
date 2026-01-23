@@ -250,7 +250,7 @@ impl<X: Xlen> BlockTable<X> {
             return 0;
         }
 
-        let entry_point = self.instruction_table.entry_point();
+        let entry_points = self.instruction_table.entry_points();
 
         // Build lookup map
         let start_to_idx: HashMap<u64, usize> = self
@@ -266,7 +266,7 @@ impl<X: Xlen> BlockTable<X> {
             if absorbed.contains(&block.start) {
                 continue;
             }
-            if let Some(target) = self.get_merge_target(block, entry_point, registry) {
+            if let Some(target) = self.get_merge_target(block, entry_points, registry) {
                 absorbed.insert(target);
             }
         }
@@ -292,7 +292,7 @@ impl<X: Xlen> BlockTable<X> {
 
             // Follow continuation chain
             loop {
-                let target = self.get_merge_target(&current_block, entry_point, registry);
+                let target = self.get_merge_target(&current_block, entry_points, registry);
                 match target {
                     Some(target_pc) if absorbed.contains(&target_pc) => {
                         if let Some(&target_idx) = start_to_idx.get(&target_pc) {
@@ -332,7 +332,7 @@ impl<X: Xlen> BlockTable<X> {
     fn get_merge_target(
         &self,
         block: &BasicBlock,
-        entry_point: u64,
+        entry_points: &FxHashSet<u64>,
         registry: &ExtensionRegistry<X>,
     ) -> Option<u64> {
         let instr = self.instruction_table.get_at_pc(block.last_pc)?;
@@ -344,7 +344,8 @@ impl<X: Xlen> BlockTable<X> {
             _ => return None,
         };
 
-        if target_pc == entry_point {
+        // Don't merge into entry point blocks
+        if entry_points.contains(&target_pc) {
             return None;
         }
 
@@ -369,7 +370,7 @@ impl<X: Xlen> BlockTable<X> {
             return 0;
         }
 
-        let entry_point = self.instruction_table.entry_point();
+        let entry_points = self.instruction_table.entry_points();
 
         // Build lookup maps
         let start_to_idx: HashMap<u64, usize> = self
@@ -386,8 +387,8 @@ impl<X: Xlen> BlockTable<X> {
         let mut to_duplicate = FxHashSet::default();
 
         for block in &self.blocks {
-            // Skip entry point
-            if block.start == entry_point {
+            // Skip entry points
+            if entry_points.contains(&block.start) {
                 continue;
             }
 
@@ -530,7 +531,7 @@ impl<X: Xlen> BlockTable<X> {
             return 0;
         }
 
-        let entry_point = self.instruction_table.entry_point();
+        let entry_points = self.instruction_table.entry_points();
 
         // Build lookup map
         let start_to_idx: HashMap<u64, usize> = self
@@ -575,7 +576,7 @@ impl<X: Xlen> BlockTable<X> {
             }
 
             // Try to inline the taken path
-            if taken_pc != entry_point
+            if !entry_points.contains(&taken_pc)
                 && start_to_idx.contains_key(&taken_pc)
                 && !absorbed.contains(&taken_pc)
                 && !merge_targets.contains(&taken_pc)
@@ -605,7 +606,7 @@ impl<X: Xlen> BlockTable<X> {
 
             // Get fall-through target
             let fall_pc = block.end;
-            if fall_pc == entry_point || !start_to_idx.contains_key(&fall_pc) {
+            if entry_points.contains(&fall_pc) || !start_to_idx.contains_key(&fall_pc) {
                 continue;
             }
 
@@ -617,7 +618,7 @@ impl<X: Xlen> BlockTable<X> {
             let mut depth = 0;
 
             while depth < max_depth {
-                if absorbed.contains(&current_pc) || current_pc == entry_point {
+                if absorbed.contains(&current_pc) || entry_points.contains(&current_pc) {
                     break;
                 }
                 if !start_to_idx.contains_key(&current_pc) {

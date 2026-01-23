@@ -2,6 +2,7 @@
 //!
 //! Maintains decoded instructions, sizes, and raw opcodes.
 
+use rustc_hash::FxHashSet;
 use rvr_isa::{DecodedInstr, ExtensionRegistry, Xlen};
 
 /// Read-only memory segment for constant propagation.
@@ -71,8 +72,8 @@ pub struct InstructionTable<X: Xlen> {
     base_address: u64,
     /// End address (exclusive).
     end_address: u64,
-    /// Entry point address.
-    entry_point: u64,
+    /// Entry points for CFG analysis (function entries, including ELF entry point).
+    entry_points: FxHashSet<u64>,
     /// Read-only segments for constant propagation.
     ro_segments: Vec<RoSegment>,
 }
@@ -86,11 +87,15 @@ impl<X: Xlen> InstructionTable<X> {
         let end_address = base_address + code.len() as u64;
         let total_slots = code.len().div_ceil(Self::SLOT_SIZE);
 
+        // Default entry point is base_address
+        let mut entry_points = FxHashSet::default();
+        entry_points.insert(base_address);
+
         let mut table = Self {
             slots: vec![Slot::default(); total_slots],
             base_address,
             end_address,
-            entry_point: base_address,
+            entry_points,
             ro_segments: vec![RoSegment::new(base_address, end_address, code.to_vec())],
         };
 
@@ -103,11 +108,14 @@ impl<X: Xlen> InstructionTable<X> {
         let total_size = (end_address - base_address) as usize;
         let total_slots = total_size.div_ceil(Self::SLOT_SIZE);
 
+        let mut entry_points = FxHashSet::default();
+        entry_points.insert(entry_point);
+
         Self {
             slots: vec![Slot::default(); total_slots],
             base_address,
             end_address,
-            entry_point,
+            entry_points,
             ro_segments: Vec::new(),
         }
     }
@@ -243,14 +251,19 @@ impl<X: Xlen> InstructionTable<X> {
         self.end_address
     }
 
-    /// Get entry point.
-    pub fn entry_point(&self) -> u64 {
-        self.entry_point
+    /// Get all entry points for CFG analysis.
+    pub fn entry_points(&self) -> &FxHashSet<u64> {
+        &self.entry_points
     }
 
-    /// Set entry point.
-    pub fn set_entry_point(&mut self, entry_point: u64) {
-        self.entry_point = entry_point;
+    /// Add an entry point.
+    pub fn add_entry_point(&mut self, addr: u64) {
+        self.entry_points.insert(addr);
+    }
+
+    /// Add multiple entry points.
+    pub fn add_entry_points(&mut self, addrs: impl IntoIterator<Item = u64>) {
+        self.entry_points.extend(addrs);
     }
 
     /// Get total number of slots.

@@ -480,7 +480,8 @@ fn collect_potential_targets<X: Xlen>(
     let mut internal_targets = FxHashSet::default();
     let mut return_sites = FxHashSet::default();
 
-    function_entries.insert(instruction_table.entry_point());
+    // Add all entry points (ELF entry + any library exports)
+    function_entries.extend(instruction_table.entry_points().iter().copied());
 
     scan_ro_segments_for_code_pointers(instruction_table, &mut internal_targets);
 
@@ -685,11 +686,7 @@ fn worklist<X: Xlen>(
         FxHashMap::with_capacity_and_hasher(estimated_size, Default::default());
     let mut unresolved_dynamic_jumps: FxHashSet<u64> = FxHashSet::default();
 
-    let entry = instruction_table.entry_point();
-    states.insert(entry, RegisterState::new());
-    worklist.push(entry);
-    in_worklist.insert(entry);
-
+    // Add all entry points to worklist
     for addr in function_entries {
         if in_worklist.insert(*addr) {
             states.insert(*addr, RegisterState::new());
@@ -967,7 +964,6 @@ fn compute_leaders<X: Xlen>(
     return_sites: &FxHashSet<u64>,
 ) -> FxHashSet<u64> {
     let mut leaders = FxHashSet::default();
-    leaders.insert(instruction_table.entry_point());
     leaders.extend(function_entries.iter().copied());
     leaders.extend(internal_targets.iter().copied());
     leaders.extend(return_sites.iter().copied());
