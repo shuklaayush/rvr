@@ -5,6 +5,10 @@ Cargo.lock
 *.a
 /output/
 
+# Standalone crate target directories (outside workspace)
+crates/rvr-rt/target/
+programs/*/target/
+
 # Built RISC-V binaries
 /bin/reth/
 /bin/riscv/tests/
