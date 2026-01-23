@@ -7,6 +7,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
+use rvr_isa::{REG_GP, REG_RA, REG_SP};
+
 use crate::perf::HostPerfCounters;
 use crate::{PerfCounters, RunResultWithPerf, Runner};
 
@@ -181,6 +183,10 @@ fn run_bench_library_inner(
 ) -> Result<RunResultWithPerf, String> {
     let runs = runs.max(1);
 
+    // Look up gp and sp from ELF symbols (standard linker-defined symbols)
+    let gp = runner.lookup_symbol("__global_pointer$");
+    let sp = runner.lookup_symbol("__stack_top");
+
     // Set up perf counters
     let mut perf_group = crate::perf::PerfGroup::new();
 
@@ -192,13 +198,16 @@ fn run_bench_library_inner(
         // Load segments and reset state for each run
         runner.prepare();
 
-        // Run entry point to set up gp and sp, then clear exit for initialize()
-        let entry_point = runner.entry_point();
-        let _ = runner.execute_from(entry_point);
-        runner.clear_exit();
+        // Set gp and sp from ELF symbols instead of running entry point
+        if let Some(gp_val) = gp {
+            runner.set_register(REG_GP as usize, gp_val);
+        }
+        if let Some(sp_val) = sp {
+            runner.set_register(REG_SP as usize, sp_val);
+        }
 
-        // Set return address (ra/x1) to 0 - rv_trap handles it
-        runner.set_register(1, 0);
+        // Set return address to 0 - rv_trap handles it
+        runner.set_register(REG_RA as usize, 0);
 
         // Run initialize() (not timed)
         runner
@@ -207,7 +216,7 @@ fn run_bench_library_inner(
 
         // Clear exit flag and reset ra for run()
         runner.clear_exit();
-        runner.set_register(1, 0);
+        runner.set_register(REG_RA as usize, 0);
 
         // Record instret before run() to calculate delta
         let instret_before = runner.instret();
