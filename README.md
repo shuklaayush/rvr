@@ -47,7 +47,13 @@ rvr test riscv build                # build from source (requires riscv toolchai
 rvr test riscv run                  # run all tests
 rvr test riscv run --filter rv64ui  # filtered
 
-# Reth benchmark
+# Benchmarks
+rvr bench list                       # List available benchmarks
+rvr bench build                      # Build all from source (requires Rust nightly)
+rvr bench compile bench-minimal      # Compile to native
+rvr bench run bench-minimal          # Run benchmark
+
+# Reth benchmark (with host comparison)
 rvr bench reth build                 # Build host binary + RISC-V ELFs
 rvr bench reth compile --arch rv64i  # Recompile ELF to native
 rvr bench reth run --arch rv64i      # Run benchmark
