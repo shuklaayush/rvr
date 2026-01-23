@@ -1,6 +1,6 @@
 # Makefile for reth-validator - RISC-V Compilation (RVR)
 #
-# Builds reth-validator for multiple RISC-V targets and outputs to bin/reth/
+# Builds reth-validator for multiple RISC-V targets and outputs to bin/{arch}/reth
 
 # Use specific nightly to avoid compiler_builtins regression
 NIGHTLY = nightly-2025-12-05
@@ -9,7 +9,10 @@ NIGHTLY = nightly-2025-12-05
 LINKER_SCRIPT = link.x
 
 # Output root (relative to this Makefile)
-BIN_ROOT = ../../bin/reth
+BIN_ROOT = ../../bin
+
+# Output binary name (cargo builds reth-validator, we rename to reth)
+OUTPUT_NAME = reth
 
 # RV32I Target
 TARGET32 = rv32i.json
@@ -51,22 +54,22 @@ $(OUTPUT_DIR64E):
 rv32i: | $(OUTPUT_DIR32)
 	@test ! -f target/rv32i/release/$(BINARY) -o $(LINKER_SCRIPT) -nt target/rv32i/release/$(BINARY) && rm -f target/rv32i/release/$(BINARY) || true
 	RUSTFLAGS="$(RUSTFLAGS32)" cargo +$(NIGHTLY) build --release --target $(TARGET32) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
-	cp target/rv32i/release/$(BINARY) $(OUTPUT_DIR32)/$(BINARY)
+	cp target/rv32i/release/$(BINARY) $(OUTPUT_DIR32)/$(OUTPUT_NAME)
 
 rv32e: | $(OUTPUT_DIR32E)
 	@test ! -f target/rv32e/release/$(BINARY) -o $(LINKER_SCRIPT) -nt target/rv32e/release/$(BINARY) && rm -f target/rv32e/release/$(BINARY) || true
 	RUSTFLAGS="$(RUSTFLAGS32E)" cargo +$(NIGHTLY) build --release --target $(TARGET32E) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
-	cp target/rv32e/release/$(BINARY) $(OUTPUT_DIR32E)/$(BINARY)
+	cp target/rv32e/release/$(BINARY) $(OUTPUT_DIR32E)/$(OUTPUT_NAME)
 
 rv64i: | $(OUTPUT_DIR64)
 	@test ! -f target/rv64i/release/$(BINARY) -o $(LINKER_SCRIPT) -nt target/rv64i/release/$(BINARY) && rm -f target/rv64i/release/$(BINARY) || true
 	RUSTFLAGS="$(RUSTFLAGS64)" cargo +$(NIGHTLY) build --release --target $(TARGET64) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
-	cp target/rv64i/release/$(BINARY) $(OUTPUT_DIR64)/$(BINARY)
+	cp target/rv64i/release/$(BINARY) $(OUTPUT_DIR64)/$(OUTPUT_NAME)
 
 rv64e: | $(OUTPUT_DIR64E)
 	@test ! -f target/rv64e/release/$(BINARY) -o $(LINKER_SCRIPT) -nt target/rv64e/release/$(BINARY) && rm -f target/rv64e/release/$(BINARY) || true
 	RUSTFLAGS="$(RUSTFLAGS64E)" cargo +$(NIGHTLY) build --release --target $(TARGET64E) -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
-	cp target/rv64e/release/$(BINARY) $(OUTPUT_DIR64E)/$(BINARY)
+	cp target/rv64e/release/$(BINARY) $(OUTPUT_DIR64E)/$(OUTPUT_NAME)
 
 # Build for host (native baseline)
 host:
@@ -74,10 +77,10 @@ host:
 
 clean:
 	cargo clean
-	rm -f $(OUTPUT_DIR32)/$(BINARY)
-	rm -f $(OUTPUT_DIR32E)/$(BINARY)
-	rm -f $(OUTPUT_DIR64)/$(BINARY)
-	rm -f $(OUTPUT_DIR64E)/$(BINARY)
+	rm -f $(OUTPUT_DIR32)/$(OUTPUT_NAME)
+	rm -f $(OUTPUT_DIR32E)/$(OUTPUT_NAME)
+	rm -f $(OUTPUT_DIR64)/$(OUTPUT_NAME)
+	rm -f $(OUTPUT_DIR64E)/$(OUTPUT_NAME)
 
 clean-all:
 	cargo clean
@@ -93,9 +96,9 @@ help:
 	@echo "  make clean  - Clean build artifacts"
 	@echo ""
 	@echo "Output binaries go to:"
-	@echo "  bin/reth/rv32i/reth-validator"
-	@echo "  bin/reth/rv32e/reth-validator"
-	@echo "  bin/reth/rv64i/reth-validator"
-	@echo "  bin/reth/rv64e/reth-validator"
+	@echo "  bin/rv32i/reth"
+	@echo "  bin/rv32e/reth"
+	@echo "  bin/rv64i/reth"
+	@echo "  bin/rv64e/reth"
 
 .PHONY: all rv32i rv32e rv64i rv64e host clean clean-all help

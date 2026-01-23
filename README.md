@@ -73,6 +73,24 @@ let registry = ExtensionRegistry::<Rv64>::standard()
     .with_syscall_handler(table);
 ```
 
+## Directory Structure
+
+```
+bin/
+├── rv32i/          # RV32I binaries
+│   └── reth
+├── rv64i/          # RV64I binaries
+│   ├── minimal
+│   ├── pinky
+│   ├── prime-sieve
+│   ├── memset
+│   └── reth
+└── riscv-tests/    # riscv-tests suite
+    ├── rv32ui-p-add
+    ├── rv64ui-p-add
+    └── ...
+```
+
 ## Crates
 
 | Crate | Description |
