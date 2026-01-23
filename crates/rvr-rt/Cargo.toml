@@ -1,0 +1,15 @@
+[package]
+name = "rvr-rt"
+version = "0.1.0"
+edition = "2024"
+description = "Runtime support for RISC-V programs targeting rvr"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["entry", "panic-halt"]
+# Provide default _start entry point
+entry = []
+# Provide panic handler that halts
+panic-halt = []
+# Provide panic handler that traps (ebreak)
+panic-trap = []

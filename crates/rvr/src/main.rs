@@ -221,6 +221,32 @@ enum Commands {
         #[arg(long, default_value = "1")]
         runs: usize,
     },
+    /// Build Rust project to RISC-V ELF
+    Build {
+        /// Path to Rust project (directory with Cargo.toml)
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+
+        /// Target architectures (comma-separated: rv32i,rv32e,rv64i,rv64e)
+        #[arg(short, long, default_value = "rv64i")]
+        target: String,
+
+        /// Output directory for ELF binaries (default: bin/{arch}/{name})
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Rust toolchain to use (default: nightly)
+        #[arg(long, default_value = "nightly")]
+        toolchain: String,
+
+        /// Additional features to enable
+        #[arg(long)]
+        features: Option<String>,
+
+        /// Build in release mode (default: true)
+        #[arg(long, default_value = "true")]
+        release: bool,
+    },
     /// Run benchmarks
     Bench {
         #[command(subcommand)]
@@ -607,6 +633,14 @@ fn run_command(cli: &Cli) -> i32 {
                 }
             }
         }
+        Commands::Build {
+            path,
+            target,
+            output,
+            toolchain,
+            features,
+            release,
+        } => build_rust_project(path, target, output.as_ref(), toolchain, features.as_deref(), *release),
         Commands::Bench { command } => match command {
             BenchCommands::List => {
                 bench_list();
@@ -645,6 +679,185 @@ fn run_command(cli: &Cli) -> i32 {
             },
         },
     }
+}
+
+// --- Rust build support ---
+
+/// Embedded target specs
+mod targets {
+    pub const RV32I: &str = include_str!("../../../toolchain/rv32i.json");
+    pub const RV32E: &str = include_str!("../../../toolchain/rv32e.json");
+    pub const RV64I: &str = include_str!("../../../toolchain/rv64i.json");
+    pub const RV64E: &str = include_str!("../../../toolchain/rv64e.json");
+    pub const LINK_X: &str = include_str!("../../../toolchain/link.x");
+
+    pub fn get_target_spec(arch: &str) -> Option<&'static str> {
+        match arch {
+            "rv32i" => Some(RV32I),
+            "rv32e" => Some(RV32E),
+            "rv64i" => Some(RV64I),
+            "rv64e" => Some(RV64E),
+            _ => None,
+        }
+    }
+}
+
+/// Build a Rust project to RISC-V ELF.
+fn build_rust_project(
+    path: &PathBuf,
+    target_str: &str,
+    output: Option<&PathBuf>,
+    toolchain: &str,
+    features: Option<&str>,
+    release: bool,
+) -> i32 {
+    let project_dir = std::env::current_dir().expect("failed to get current directory");
+
+    // Resolve project path
+    let project_path = if path.is_absolute() {
+        path.clone()
+    } else {
+        project_dir.join(path)
+    };
+
+    // Check Cargo.toml exists
+    let cargo_toml = project_path.join("Cargo.toml");
+    if !cargo_toml.exists() {
+        eprintln!("Error: {} not found", cargo_toml.display());
+        return EXIT_FAILURE;
+    }
+
+    // Get project name from Cargo.toml
+    let cargo_content = match std::fs::read_to_string(&cargo_toml) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error reading {}: {}", cargo_toml.display(), e);
+            return EXIT_FAILURE;
+        }
+    };
+
+    let project_name = cargo_content
+        .lines()
+        .find(|line| line.starts_with("name"))
+        .and_then(|line| line.split('=').nth(1))
+        .map(|s| s.trim().trim_matches('"'))
+        .unwrap_or("unknown");
+
+    // Parse target architectures
+    let targets: Vec<&str> = target_str.split(',').map(|s| s.trim()).collect();
+
+    // Create temp directory for target specs
+    let target_dir = project_path.join("target/.rvr");
+    if let Err(e) = std::fs::create_dir_all(&target_dir) {
+        eprintln!("Error creating {}: {}", target_dir.display(), e);
+        return EXIT_FAILURE;
+    }
+
+    // Write linker script
+    let link_x_path = target_dir.join("link.x");
+    if let Err(e) = std::fs::write(&link_x_path, targets::LINK_X) {
+        eprintln!("Error writing link.x: {}", e);
+        return EXIT_FAILURE;
+    }
+
+    for arch in &targets {
+        // Get and write target spec
+        let spec = match targets::get_target_spec(arch) {
+            Some(s) => s,
+            None => {
+                eprintln!("Error: unknown target '{}'", arch);
+                eprintln!("Supported targets: rv32i, rv32e, rv64i, rv64e");
+                return EXIT_FAILURE;
+            }
+        };
+
+        let spec_path = target_dir.join(format!("{}.json", arch));
+        if let Err(e) = std::fs::write(&spec_path, spec) {
+            eprintln!("Error writing {}: {}", spec_path.display(), e);
+            return EXIT_FAILURE;
+        }
+
+        eprintln!("Building {} for {}", project_name, arch);
+
+        // Determine RUSTFLAGS
+        let cpu = if arch.starts_with("rv64") {
+            "generic-rv64"
+        } else {
+            "generic-rv32"
+        };
+
+        let rustflags = format!(
+            "-Clink-arg=-T{} -Clink-arg=--gc-sections -Ctarget-cpu={} -Ccode-model=medium",
+            link_x_path.display(),
+            cpu
+        );
+
+        // Build cargo command
+        let mut cmd = Command::new("cargo");
+        cmd.arg(format!("+{}", toolchain))
+            .arg("build")
+            .arg("--target")
+            .arg(&spec_path)
+            .arg("-Zbuild-std=core,alloc")
+            .arg("-Zbuild-std-features=compiler-builtins-mem")
+            .current_dir(&project_path)
+            .env("RUSTFLAGS", &rustflags);
+
+        if release {
+            cmd.arg("--release");
+        }
+
+        if let Some(feats) = features {
+            cmd.arg("--features").arg(feats);
+        }
+
+        let status = match cmd.status() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error running cargo: {}", e);
+                return EXIT_FAILURE;
+            }
+        };
+
+        if !status.success() {
+            eprintln!("Build failed for {}", arch);
+            return EXIT_FAILURE;
+        }
+
+        // Copy output to destination
+        let profile = if release { "release" } else { "debug" };
+        let build_output = project_path
+            .join("target")
+            .join(arch)
+            .join(profile)
+            .join(project_name);
+
+        let dest_dir = match output {
+            Some(o) => o.join(arch),
+            None => project_dir.join("bin").join(arch),
+        };
+
+        if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+            eprintln!("Error creating {}: {}", dest_dir.display(), e);
+            return EXIT_FAILURE;
+        }
+
+        let dest_path = dest_dir.join(project_name);
+        if let Err(e) = std::fs::copy(&build_output, &dest_path) {
+            eprintln!(
+                "Error copying {} to {}: {}",
+                build_output.display(),
+                dest_path.display(),
+                e
+            );
+            return EXIT_FAILURE;
+        }
+
+        eprintln!("  -> {}", dest_path.display());
+    }
+
+    eprintln!("Build complete.");
+    EXIT_SUCCESS
 }
 
 /// Build riscv-tests from source.
@@ -750,6 +963,18 @@ fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
 
 // --- Benchmark registry ---
 
+/// How to build a benchmark.
+#[derive(Clone, Copy)]
+enum BenchmarkSource {
+    /// Rust project - build with `rvr build`
+    Rust {
+        /// Path to project directory (relative to repo root)
+        path: &'static str,
+    },
+    /// Prebuilt ELF - already in bin/{arch}/{name}
+    Prebuilt,
+}
+
 /// Benchmark metadata.
 struct BenchmarkInfo {
     /// Benchmark name (used in CLI and paths).
@@ -764,6 +989,8 @@ struct BenchmarkInfo {
     host_binary: Option<&'static str>,
     /// Default architectures for this benchmark.
     default_archs: &'static str,
+    /// How to build this benchmark.
+    source: BenchmarkSource,
 }
 
 /// All registered benchmarks.
@@ -775,6 +1002,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        source: BenchmarkSource::Prebuilt,
     },
     BenchmarkInfo {
         name: "prime-sieve",
@@ -782,6 +1010,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        source: BenchmarkSource::Prebuilt,
     },
     BenchmarkInfo {
         name: "pinky",
@@ -789,6 +1018,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        source: BenchmarkSource::Prebuilt,
     },
     BenchmarkInfo {
         name: "memset",
@@ -796,6 +1026,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        source: BenchmarkSource::Prebuilt,
     },
     BenchmarkInfo {
         name: "reth",
@@ -803,6 +1034,9 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: Some("programs/reth-validator/target/release/reth-validator"),
         default_archs: "rv64i",
+        source: BenchmarkSource::Rust {
+            path: "programs/reth-validator",
+        },
     },
 ];
 
@@ -816,8 +1050,20 @@ fn bench_list() {
     println!("Available benchmarks:");
     println!();
     for b in BENCHMARKS {
-        let host_marker = if b.host_binary.is_some() { " [has host]" } else { "" };
-        println!("  {:<20} {}{}", b.name, b.description, host_marker);
+        let mut markers = Vec::new();
+        match b.source {
+            BenchmarkSource::Rust { .. } => markers.push("rust"),
+            BenchmarkSource::Prebuilt => markers.push("prebuilt"),
+        }
+        if b.host_binary.is_some() {
+            markers.push("has host");
+        }
+        let marker_str = if markers.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", markers.join(", "))
+        };
+        println!("  {:<20} {}{}", b.name, b.description, marker_str);
     }
     println!();
     println!("Commands:");
@@ -848,52 +1094,68 @@ fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32 {
     for benchmark in &benchmarks {
         // Determine architectures
         let arch_str = arch.unwrap_or(benchmark.default_archs);
-        let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
 
-        eprintln!("Building {} ({})", benchmark.name, archs.join(", "));
+        match benchmark.source {
+            BenchmarkSource::Rust { path } => {
+                eprintln!("Building {} from {}", benchmark.name, path);
 
-        // Special handling for reth which has its own build system
-        if benchmark.name == "reth" {
-            let reth_dir = project_dir.join("programs/reth-validator");
-            if !reth_dir.exists() {
-                eprintln!("  Error: {} not found", reth_dir.display());
-                continue;
-            }
+                // Build host binary first (unless --no-host)
+                if !no_host && benchmark.host_binary.is_some() {
+                    eprintln!("  Building host binary...");
+                    let status = Command::new("cargo")
+                        .arg("build")
+                        .arg("--release")
+                        .arg("--manifest-path")
+                        .arg(project_dir.join(path).join("Cargo.toml"))
+                        .status()
+                        .expect("failed to run cargo");
 
-            // Build host binary first (unless --no-host)
-            if !no_host && benchmark.host_binary.is_some() {
-                eprintln!("  Building host binary...");
-                let status = Command::new("cargo")
-                    .arg("build")
-                    .arg("--release")
-                    .arg("--manifest-path")
-                    .arg(reth_dir.join("Cargo.toml"))
-                    .status()
-                    .expect("failed to run cargo");
+                    if !status.success() {
+                        eprintln!("  Host build failed");
+                        return EXIT_FAILURE;
+                    }
+                }
 
-                if !status.success() {
-                    eprintln!("  Host build failed");
-                    return EXIT_FAILURE;
+                // Build RISC-V ELFs using rvr build
+                let project_path = project_dir.join(path);
+                let result = build_rust_project(
+                    &project_path,
+                    arch_str,
+                    None, // Use default output (bin/{arch}/)
+                    "nightly",
+                    None,
+                    true,
+                );
+
+                if result != EXIT_SUCCESS {
+                    return result;
                 }
             }
+            BenchmarkSource::Prebuilt => {
+                // Check if prebuilt ELFs exist
+                let archs: Vec<&str> = arch_str.split(',').map(|s| s.trim()).collect();
+                let mut missing = false;
 
-            // Build RISC-V ELFs via make
-            let status = Command::new("make")
-                .arg("-C")
-                .arg(&reth_dir)
-                .args(&archs)
-                .status()
-                .expect("failed to run make");
+                for a in &archs {
+                    let elf_path = project_dir.join("bin").join(a).join(benchmark.name);
+                    if !elf_path.exists() {
+                        eprintln!(
+                            "  Warning: prebuilt ELF not found: {}",
+                            elf_path.display()
+                        );
+                        missing = true;
+                    }
+                }
 
-            if !status.success() {
-                eprintln!("  ELF build failed");
-                return EXIT_FAILURE;
+                if missing {
+                    eprintln!(
+                        "  Note: {} uses prebuilt ELFs. Place them in bin/<arch>/{}",
+                        benchmark.name, benchmark.name
+                    );
+                } else {
+                    eprintln!("  {} ELFs already present", benchmark.name);
+                }
             }
-        } else {
-            // Generic benchmark build via benchmarks/polkavm build system
-            // For now, assume pre-built ELFs exist
-            eprintln!("  Note: Build from source not yet implemented for polkavm benchmarks");
-            eprintln!("  ELFs should be at: bin/<arch>/{}", benchmark.name);
         }
     }
 
