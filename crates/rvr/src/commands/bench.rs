@@ -342,6 +342,9 @@ pub fn bench_run(
 
         bench::print_bench_header(benchmark.name, benchmark.description, runs);
 
+        // Collect all rows first, then sort by overhead/time
+        let mut rows: Vec<bench::TableRow> = Vec::new();
+
         // Run host baseline if requested and available
         let mut host_time: Option<f64> = None;
         if compare_host {
@@ -351,12 +354,10 @@ pub fn bench_run(
                     match bench::run_host(&host_bin, runs) {
                         Ok(result) => {
                             host_time = result.time_secs;
-                            let row = bench::TableRow::host("host", &result);
-                            bench::print_table_row(&row);
+                            rows.push(bench::TableRow::host("host", &result));
                         }
                         Err(e) => {
-                            let row = bench::TableRow::error("host", e);
-                            bench::print_table_row(&row);
+                            rows.push(bench::TableRow::error("host", e));
                         }
                     }
                 }
@@ -365,7 +366,7 @@ pub fn bench_run(
 
         // Run each architecture
         for a in &archs {
-            let result = run_single_arch(
+            if let Some(row) = run_single_arch(
                 benchmark,
                 a,
                 &project_dir,
@@ -374,11 +375,29 @@ pub fn bench_run(
                 runs,
                 &compiler,
                 host_time,
-            );
-
-            if let Some(row) = result {
-                bench::print_table_row(&row);
+            ) {
+                rows.push(row);
             }
+        }
+
+        // Sort by overhead (ascending), then by time. Errors go last.
+        rows.sort_by(|a, b| {
+            match (&a.error, &b.error) {
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), Some(_)) => std::cmp::Ordering::Equal,
+                (None, None) => {
+                    // Sort by overhead if available, otherwise by time
+                    let a_key = a.overhead.or(a.time_secs.map(|t| t * 1000.0));
+                    let b_key = b.overhead.or(b.time_secs.map(|t| t * 1000.0));
+                    a_key.partial_cmp(&b_key).unwrap_or(std::cmp::Ordering::Equal)
+                }
+            }
+        });
+
+        // Print sorted rows
+        for row in &rows {
+            bench::print_table_row(row);
         }
 
         println!();
