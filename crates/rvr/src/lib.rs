@@ -210,6 +210,7 @@ pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
 
 pub mod bench;
 pub mod metrics;
+pub mod polkavm;
 pub mod tests;
 
 use std::marker::PhantomData;
