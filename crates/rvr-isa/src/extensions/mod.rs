@@ -31,46 +31,46 @@ pub use zifencei::ZifenceiExtension;
 
 // Re-export OpId constants and mnemonic functions from each extension
 pub use a::{
-    a_mnemonic, OP_AMOADD_D, OP_AMOADD_W, OP_AMOAND_D, OP_AMOAND_W, OP_AMOMAXU_D, OP_AMOMAXU_W,
-    OP_AMOMAX_D, OP_AMOMAX_W, OP_AMOMINU_D, OP_AMOMINU_W, OP_AMOMIN_D, OP_AMOMIN_W, OP_AMOOR_D,
-    OP_AMOOR_W, OP_AMOSWAP_D, OP_AMOSWAP_W, OP_AMOXOR_D, OP_AMOXOR_W, OP_LR_D, OP_LR_W, OP_SC_D,
-    OP_SC_W,
+    OP_AMOADD_D, OP_AMOADD_W, OP_AMOAND_D, OP_AMOAND_W, OP_AMOMAX_D, OP_AMOMAX_W, OP_AMOMAXU_D,
+    OP_AMOMAXU_W, OP_AMOMIN_D, OP_AMOMIN_W, OP_AMOMINU_D, OP_AMOMINU_W, OP_AMOOR_D, OP_AMOOR_W,
+    OP_AMOSWAP_D, OP_AMOSWAP_W, OP_AMOXOR_D, OP_AMOXOR_W, OP_LR_D, OP_LR_W, OP_SC_D, OP_SC_W,
+    a_mnemonic,
 };
 pub use base::{
-    base_mnemonic, OP_ADD, OP_ADDI, OP_ADDIW, OP_ADDW, OP_AND, OP_ANDI, OP_AUIPC, OP_BEQ, OP_BGE,
-    OP_BGEU, OP_BLT, OP_BLTU, OP_BNE, OP_EBREAK, OP_ECALL, OP_FENCE, OP_JAL, OP_JALR, OP_LB,
-    OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW, OP_LWU, OP_MRET, OP_OR, OP_ORI, OP_SB, OP_SD,
-    OP_SH, OP_SLL, OP_SLLI, OP_SLLIW, OP_SLLW, OP_SLT, OP_SLTI, OP_SLTIU, OP_SLTU, OP_SRA, OP_SRAI,
-    OP_SRAIW, OP_SRAW, OP_SRL, OP_SRLI, OP_SRLIW, OP_SRLW, OP_SUB, OP_SUBW, OP_SW, OP_XOR, OP_XORI,
+    OP_ADD, OP_ADDI, OP_ADDIW, OP_ADDW, OP_AND, OP_ANDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT,
+    OP_BLTU, OP_BNE, OP_EBREAK, OP_ECALL, OP_FENCE, OP_JAL, OP_JALR, OP_LB, OP_LBU, OP_LD, OP_LH,
+    OP_LHU, OP_LUI, OP_LW, OP_LWU, OP_MRET, OP_OR, OP_ORI, OP_SB, OP_SD, OP_SH, OP_SLL, OP_SLLI,
+    OP_SLLIW, OP_SLLW, OP_SLT, OP_SLTI, OP_SLTIU, OP_SLTU, OP_SRA, OP_SRAI, OP_SRAIW, OP_SRAW,
+    OP_SRL, OP_SRLI, OP_SRLIW, OP_SRLW, OP_SUB, OP_SUBW, OP_SW, OP_XOR, OP_XORI, base_mnemonic,
 };
 pub use c::{
-    c_mnemonic, OP_C_ADD, OP_C_ADDI, OP_C_ADDI16SP, OP_C_ADDI4SPN, OP_C_ADDIW, OP_C_ADDW, OP_C_AND,
-    OP_C_ANDI, OP_C_BEQZ, OP_C_BNEZ, OP_C_EBREAK, OP_C_J, OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD,
-    OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW, OP_C_LWSP, OP_C_MV, OP_C_NOP, OP_C_OR, OP_C_SD,
-    OP_C_SDSP, OP_C_SLLI, OP_C_SRAI, OP_C_SRLI, OP_C_SUB, OP_C_SUBW, OP_C_SW, OP_C_SWSP, OP_C_XOR,
+    OP_C_ADD, OP_C_ADDI, OP_C_ADDI4SPN, OP_C_ADDI16SP, OP_C_ADDIW, OP_C_ADDW, OP_C_AND, OP_C_ANDI,
+    OP_C_BEQZ, OP_C_BNEZ, OP_C_EBREAK, OP_C_J, OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP,
+    OP_C_LI, OP_C_LUI, OP_C_LW, OP_C_LWSP, OP_C_MV, OP_C_NOP, OP_C_OR, OP_C_SD, OP_C_SDSP,
+    OP_C_SLLI, OP_C_SRAI, OP_C_SRLI, OP_C_SUB, OP_C_SUBW, OP_C_SW, OP_C_SWSP, OP_C_XOR, c_mnemonic,
 };
 pub use m::{
-    m_mnemonic, OP_DIV, OP_DIVU, OP_DIVUW, OP_DIVW, OP_MUL, OP_MULH, OP_MULHSU, OP_MULHU, OP_MULW,
-    OP_REM, OP_REMU, OP_REMUW, OP_REMW,
+    OP_DIV, OP_DIVU, OP_DIVUW, OP_DIVW, OP_MUL, OP_MULH, OP_MULHSU, OP_MULHU, OP_MULW, OP_REM,
+    OP_REMU, OP_REMUW, OP_REMW, m_mnemonic,
 };
 pub use zba::{
-    zba_mnemonic, OP_ADD_UW, OP_SH1ADD, OP_SH1ADD_UW, OP_SH2ADD, OP_SH2ADD_UW, OP_SH3ADD,
-    OP_SH3ADD_UW, OP_SLLI_UW,
+    OP_ADD_UW, OP_SH1ADD, OP_SH1ADD_UW, OP_SH2ADD, OP_SH2ADD_UW, OP_SH3ADD, OP_SH3ADD_UW,
+    OP_SLLI_UW, zba_mnemonic,
 };
 pub use zbb::{
-    zbb_mnemonic, OP_ANDN, OP_CLZ, OP_CLZW, OP_CPOP, OP_CPOPW, OP_CTZ, OP_CTZW, OP_MAX, OP_MAXU,
-    OP_MIN, OP_MINU, OP_ORC_B, OP_ORN, OP_REV8, OP_ROL, OP_ROLW, OP_ROR, OP_RORI, OP_RORIW,
-    OP_RORW, OP_SEXT_B, OP_SEXT_H, OP_XNOR, OP_ZEXT_H,
+    OP_ANDN, OP_CLZ, OP_CLZW, OP_CPOP, OP_CPOPW, OP_CTZ, OP_CTZW, OP_MAX, OP_MAXU, OP_MIN, OP_MINU,
+    OP_ORC_B, OP_ORN, OP_REV8, OP_ROL, OP_ROLW, OP_ROR, OP_RORI, OP_RORIW, OP_RORW, OP_SEXT_B,
+    OP_SEXT_H, OP_XNOR, OP_ZEXT_H, zbb_mnemonic,
 };
-pub use zbkb::{zbkb_mnemonic, OP_BREV8, OP_PACK, OP_PACKH, OP_PACKW, OP_UNZIP, OP_ZIP};
+pub use zbkb::{OP_BREV8, OP_PACK, OP_PACKH, OP_PACKW, OP_UNZIP, OP_ZIP, zbkb_mnemonic};
 pub use zbs::{
-    zbs_mnemonic, OP_BCLR, OP_BCLRI, OP_BEXT, OP_BEXTI, OP_BINV, OP_BINVI, OP_BSET, OP_BSETI,
+    OP_BCLR, OP_BCLRI, OP_BEXT, OP_BEXTI, OP_BINV, OP_BINVI, OP_BSET, OP_BSETI, zbs_mnemonic,
 };
-pub use zicond::{zicond_mnemonic, OP_CZERO_EQZ, OP_CZERO_NEZ};
+pub use zicond::{OP_CZERO_EQZ, OP_CZERO_NEZ, zicond_mnemonic};
 pub use zicsr::{
-    csr_name, zicsr_mnemonic, CSR_CYCLE, CSR_CYCLEH, CSR_INSTRET, CSR_INSTRETH, CSR_MARCHID,
-    CSR_MHARTID, CSR_MIMPID, CSR_MISA, CSR_MVENDORID, CSR_TIME, CSR_TIMEH, OP_CSRRC, OP_CSRRCI,
-    OP_CSRRS, OP_CSRRSI, OP_CSRRW, OP_CSRRWI,
+    CSR_CYCLE, CSR_CYCLEH, CSR_INSTRET, CSR_INSTRETH, CSR_MARCHID, CSR_MHARTID, CSR_MIMPID,
+    CSR_MISA, CSR_MVENDORID, CSR_TIME, CSR_TIMEH, OP_CSRRC, OP_CSRRCI, OP_CSRRS, OP_CSRRSI,
+    OP_CSRRW, OP_CSRRWI, csr_name, zicsr_mnemonic,
 };
 pub use zifencei::OP_FENCE_I;
 
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_op_info_base() {
-        use crate::{OpClass, OP_ECALL, OP_FENCE, OP_JAL, OP_LW, OP_SW};
+        use crate::{OP_ECALL, OP_FENCE, OP_JAL, OP_LW, OP_SW, OpClass};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         let info = registry.op_info(OP_ADDI).unwrap();
@@ -696,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_op_info_extensions() {
-        use crate::{OpClass, OP_CSRRW, OP_C_J, OP_C_LW, OP_DIV, OP_LR_W, OP_MUL};
+        use crate::{OP_C_J, OP_C_LW, OP_CSRRW, OP_DIV, OP_LR_W, OP_MUL, OpClass};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         let info = registry.op_info(OP_MUL).unwrap();
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_op_info_zifencei() {
-        use crate::{OpClass, EXT_ZIFENCEI, OP_FENCE_I};
+        use crate::{EXT_ZIFENCEI, OP_FENCE_I, OpClass};
         let registry = ExtensionRegistry::<Rv64>::standard();
 
         // Zifencei extension handles FENCE.I instruction
@@ -836,9 +836,11 @@ mod tests {
 
         let ir = registry.lift(&instr);
         // Verify override was called
-        assert!(override_impl
-            .called
-            .load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            override_impl
+                .called
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
         // Default lift should have produced statements
         assert!(!ir.statements.is_empty());
     }
@@ -913,8 +915,8 @@ mod tests {
 
     #[test]
     fn test_ecall_custom_syscall_handler() {
-        use crate::syscalls::LinuxHandler;
         use crate::OP_ECALL;
+        use crate::syscalls::LinuxHandler;
         use rvr_ir::Terminator;
 
         // Use LinuxHandler instead of default
@@ -935,8 +937,8 @@ mod tests {
 
     #[test]
     fn test_ecall_override_takes_precedence() {
-        use crate::syscalls::LinuxHandler;
         use crate::OP_ECALL;
+        use crate::syscalls::LinuxHandler;
         use rvr_ir::{Expr, Terminator};
 
         // Custom override that returns fixed exit code 99

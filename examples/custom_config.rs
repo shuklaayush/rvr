@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use rvr::{EmitConfig, InstretMode, Pipeline, Rv64};
-use rvr_isa::{syscalls::LinuxHandler, syscalls::SyscallAbi, ExtensionRegistry};
+use rvr_isa::{ExtensionRegistry, syscalls::LinuxHandler, syscalls::SyscallAbi};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (elf_path, output_dir) = parse_args()?;

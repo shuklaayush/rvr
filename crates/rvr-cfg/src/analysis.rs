@@ -5,11 +5,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace, trace_span};
 
 use rvr_isa::{
-    DecodedInstr, InstrArgs, Xlen, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT,
-    OP_BLTU, OP_BNE, OP_C_ADD, OP_C_ADDI, OP_C_ADDI16SP, OP_C_ADDI4SPN, OP_C_BEQZ, OP_C_BNEZ,
-    OP_C_J, OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW,
-    OP_C_LWSP, OP_C_MV, OP_JAL, OP_JALR, OP_LB, OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW,
-    OP_LWU,
+    DecodedInstr, InstrArgs, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT, OP_BLTU,
+    OP_BNE, OP_C_ADD, OP_C_ADDI, OP_C_ADDI4SPN, OP_C_ADDI16SP, OP_C_BEQZ, OP_C_BNEZ, OP_C_J,
+    OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW, OP_C_LWSP,
+    OP_C_MV, OP_JAL, OP_JALR, OP_LB, OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW, OP_LWU, Xlen,
 };
 
 use crate::InstructionTable;
@@ -1127,9 +1126,5 @@ fn binary_search_le(sorted: &[u64], target: u64) -> Option<u64> {
             hi = mid;
         }
     }
-    if lo == 0 {
-        None
-    } else {
-        Some(sorted[lo - 1])
-    }
+    if lo == 0 { None } else { Some(sorted[lo - 1]) }
 }

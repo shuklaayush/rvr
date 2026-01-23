@@ -12,7 +12,7 @@ use rvr_ir::Xlen;
 
 use crate::config::{EmitConfig, InstretMode, SyscallMode};
 use crate::inputs::EmitInputs;
-use crate::signature::{reg_type, FnSignature};
+use crate::signature::{FnSignature, reg_type};
 use crate::tracer::TracerConfig;
 
 /// Number of CSRs.

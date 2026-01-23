@@ -197,7 +197,7 @@
 //! common extensions (I, M, A, C, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond).
 
 // Core types - always available
-pub use rvr_elf::{get_elf_xlen, ElfImage};
+pub use rvr_elf::{ElfImage, get_elf_xlen};
 pub use rvr_emit::{Compiler, EmitConfig, InstretMode, SyscallMode, TracerConfig};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
@@ -217,8 +217,8 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use rvr_isa::syscalls::{LinuxHandler, SyscallAbi};
 use rvr_isa::ExtensionRegistry;
+use rvr_isa::syscalls::{LinuxHandler, SyscallAbi};
 use thiserror::Error;
 use tracing::{debug, error, info_span, warn};
 

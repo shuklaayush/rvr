@@ -8,8 +8,9 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_ZBB, InstrArgs, OpClass, OpId, OpInfo,
     encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBB,
+    reg_name,
 };
 
 // Instruction OpIds
@@ -352,7 +353,7 @@ fn lift_andn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 & ~rs2
@@ -377,7 +378,7 @@ fn lift_orn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 | ~rs2
@@ -402,7 +403,7 @@ fn lift_xnor<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = ~(rs1 ^ rs2)
@@ -430,7 +431,7 @@ where
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     let result = op(Expr::reg(rs1));
@@ -457,7 +458,7 @@ where
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     let result = op(Expr::reg(rs1), Expr::reg(rs2));
@@ -481,7 +482,7 @@ fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = (rs1 << (rs2 & mask)) | (rs1 >> ((XLEN - rs2) & mask))
@@ -513,7 +514,7 @@ fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = (rs1 >> (rs2 & mask)) | (rs1 << ((XLEN - rs2) & mask))
@@ -545,7 +546,7 @@ fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = (rs1 >> shamt) | (rs1 << (XLEN - shamt))
@@ -575,7 +576,7 @@ fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // 32-bit rotate left, sign-extend result
@@ -609,7 +610,7 @@ fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // 32-bit rotate right, sign-extend result
@@ -642,7 +643,7 @@ fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // 32-bit rotate right immediate, sign-extend result

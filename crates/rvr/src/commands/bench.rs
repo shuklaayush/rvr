@@ -191,7 +191,10 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                     if run_silent(&mut cmd) {
                         spinner.finish_with_success(&format!("{} (host)", benchmark.name));
                     } else {
-                        spinner.finish_with_failure(&format!("{} (host) build failed", benchmark.name));
+                        spinner.finish_with_failure(&format!(
+                            "{} (host) build failed",
+                            benchmark.name
+                        ));
                         return EXIT_FAILURE;
                     }
                 }
@@ -206,7 +209,8 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 };
 
                 for a in &archs {
-                    let spinner = Spinner::new(format!("Building {} ({})", benchmark.name, a.as_str()));
+                    let spinner =
+                        Spinner::new(format!("Building {} ({})", benchmark.name, a.as_str()));
                     let project_path = project_dir.join(path);
                     let result = build_rust_project(
                         &project_path,
@@ -221,10 +225,22 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                     );
 
                     if result == EXIT_SUCCESS {
-                        let output_path = project_dir.join("bin").join(a.as_str()).join(benchmark.name);
-                        spinner.finish_with_success(&format!("{} ({}) → {}", benchmark.name, a.as_str(), output_path.display()));
+                        let output_path = project_dir
+                            .join("bin")
+                            .join(a.as_str())
+                            .join(benchmark.name);
+                        spinner.finish_with_success(&format!(
+                            "{} ({}) → {}",
+                            benchmark.name,
+                            a.as_str(),
+                            output_path.display()
+                        ));
                     } else {
-                        spinner.finish_with_failure(&format!("{} ({}) build failed", benchmark.name, a.as_str()));
+                        spinner.finish_with_failure(&format!(
+                            "{} ({}) build failed",
+                            benchmark.name,
+                            a.as_str()
+                        ));
                         return result;
                     }
                 }
@@ -240,13 +256,27 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 };
 
                 for a in archs {
-                    let spinner = Spinner::new(format!("Building {} ({}, polkavm)", benchmark.name, a.as_str()));
+                    let spinner = Spinner::new(format!(
+                        "Building {} ({}, polkavm)",
+                        benchmark.name,
+                        a.as_str()
+                    ));
                     match polkavm::build_benchmark(&project_dir, benchmark.name, a.as_str()) {
                         Ok(path) => {
-                            spinner.finish_with_success(&format!("{} ({}) → {}", benchmark.name, a.as_str(), path.display()));
+                            spinner.finish_with_success(&format!(
+                                "{} ({}) → {}",
+                                benchmark.name,
+                                a.as_str(),
+                                path.display()
+                            ));
                         }
                         Err(e) => {
-                            spinner.finish_with_failure(&format!("{} ({}): {}", benchmark.name, a.as_str(), e));
+                            spinner.finish_with_failure(&format!(
+                                "{} ({}): {}",
+                                benchmark.name,
+                                a.as_str(),
+                                e
+                            ));
                             return EXIT_FAILURE;
                         }
                     }
@@ -303,7 +333,10 @@ pub fn bench_compile(
 
         for a in &archs {
             // ELF path: bin/{arch}/{name}
-            let elf_path = project_dir.join("bin").join(a.as_str()).join(benchmark.name);
+            let elf_path = project_dir
+                .join("bin")
+                .join(a.as_str())
+                .join(benchmark.name);
 
             if !elf_path.exists() {
                 terminal::warning(&format!("{} not found, skipping", elf_path.display()));
@@ -330,7 +363,12 @@ pub fn bench_compile(
                 spinner.finish_with_failure(&format!("compile failed: {}", e));
                 return EXIT_FAILURE;
             }
-            spinner.finish_with_success(&format!("{} ({}) → {}", benchmark.name, a.as_str(), out_dir.display()));
+            spinner.finish_with_success(&format!(
+                "{} ({}) → {}",
+                benchmark.name,
+                a.as_str(),
+                out_dir.display()
+            ));
         }
     }
 
@@ -388,7 +426,8 @@ pub fn bench_run(
                     if let Some(host_path) = benchmark.host_binary {
                         let host_bin = project_dir.join(host_path);
                         if host_bin.exists() {
-                            let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
+                            let spinner =
+                                Spinner::new(format!("Running {} (host)", benchmark.name));
                             match bench::run_host(&host_bin, runs) {
                                 Ok(result) => {
                                     spinner.finish_and_clear();
@@ -406,10 +445,13 @@ pub fn bench_run(
                 }
                 BenchmarkSource::Polkavm => {
                     // Build and run polkavm benchmark on host
-                    let host_lib = project_dir.join("bin/host").join(format!("{}.so", benchmark.name));
+                    let host_lib = project_dir
+                        .join("bin/host")
+                        .join(format!("{}.so", benchmark.name));
                     if !host_lib.exists() {
                         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
-                        if let Err(e) = polkavm::build_host_benchmark(&project_dir, benchmark.name) {
+                        if let Err(e) = polkavm::build_host_benchmark(&project_dir, benchmark.name)
+                        {
                             spinner.finish_with_failure(&format!("build failed: {}", e));
                             rows.push(bench::TableRow::error("host", "build failed".to_string()));
                         } else {
@@ -468,7 +510,9 @@ pub fn bench_run(
                     // Sort by overhead if available, otherwise by time
                     let a_key = a.overhead.or(a.time_secs.map(|t| t * 1000.0));
                     let b_key = b.overhead.or(b.time_secs.map(|t| t * 1000.0));
-                    a_key.partial_cmp(&b_key).unwrap_or(std::cmp::Ordering::Equal)
+                    a_key
+                        .partial_cmp(&b_key)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 }
             }
         });
@@ -512,7 +556,10 @@ fn run_single_arch(
     force: bool,
 ) -> Option<bench::TableRow> {
     // ELF path: bin/{arch}/{name}
-    let elf_path = project_dir.join("bin").join(arch.as_str()).join(benchmark.name);
+    let elf_path = project_dir
+        .join("bin")
+        .join(arch.as_str())
+        .join(benchmark.name);
     let out_dir = project_dir
         .join("target/benchmarks")
         .join(benchmark.name)
@@ -526,7 +573,8 @@ fn run_single_arch(
         match &benchmark.source {
             BenchmarkSource::Rust { path } => {
                 // Auto-build for Rust sources
-                let spinner = Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
+                let spinner =
+                    Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
                 let project_path = project_dir.join(path);
                 let result = build_rust_project(
                     &project_path,
@@ -541,17 +589,25 @@ fn run_single_arch(
                 );
                 if result != EXIT_SUCCESS {
                     spinner.finish_with_failure("build failed");
-                    return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
+                    return Some(bench::TableRow::error(
+                        &backend_name,
+                        "build failed".to_string(),
+                    ));
                 }
                 spinner.finish_and_clear();
                 tracing::debug!(arch = arch.as_str(), "build complete");
             }
             BenchmarkSource::Polkavm => {
                 // Auto-build using polkavm module
-                let spinner = Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
-                if let Err(e) = polkavm::build_benchmark(project_dir, benchmark.name, arch.as_str()) {
+                let spinner =
+                    Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
+                if let Err(e) = polkavm::build_benchmark(project_dir, benchmark.name, arch.as_str())
+                {
                     spinner.finish_with_failure(&format!("build failed: {}", e));
-                    return Some(bench::TableRow::error(&backend_name, "build failed".to_string()));
+                    return Some(bench::TableRow::error(
+                        &backend_name,
+                        "build failed".to_string(),
+                    ));
                 }
                 spinner.finish_and_clear();
                 tracing::debug!(arch = arch.as_str(), "build complete");
@@ -580,7 +636,10 @@ fn run_single_arch(
 
         if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
             spinner.finish_with_failure(&format!("compile failed: {}", e));
-            return Some(bench::TableRow::error(&backend_name, format!("compile failed: {}", e)));
+            return Some(bench::TableRow::error(
+                &backend_name,
+                format!("compile failed: {}", e),
+            ));
         }
         spinner.finish_and_clear();
         tracing::debug!(arch = arch.as_str(), "compile complete");

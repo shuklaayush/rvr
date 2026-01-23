@@ -109,23 +109,21 @@ pub fn build_rust_project(
     }
 
     for arch in &targets {
-        if let Err(code) = build_for_arch(
-            BuildParams {
-                arch,
-                project_path: &project_path,
-                target_dir: &target_dir,
-                link_x_path: &link_x_path,
-                crate_name,
-                bin_name,
-                toolchain,
-                features,
-                release,
-                output,
-                project_dir: &project_dir,
-                verbose,
-                quiet,
-            },
-        ) {
+        if let Err(code) = build_for_arch(BuildParams {
+            arch,
+            project_path: &project_path,
+            target_dir: &target_dir,
+            link_x_path: &link_x_path,
+            crate_name,
+            bin_name,
+            toolchain,
+            features,
+            release,
+            output,
+            project_dir: &project_dir,
+            verbose,
+            quiet,
+        }) {
             return code;
         }
     }
@@ -171,7 +169,10 @@ fn build_for_arch(p: BuildParams<'_>) -> Result<(), i32> {
 
     // Create spinner for build (unless quiet or verbose)
     let spinner = if !quiet && !verbose {
-        Some(Spinner::new(format!("Building {} for {}", crate_name, arch)))
+        Some(Spinner::new(format!(
+            "Building {} for {}",
+            crate_name, arch
+        )))
     } else if !quiet {
         eprintln!("Building {} for {}", crate_name, arch);
         None
@@ -215,7 +216,11 @@ fn build_for_arch(p: BuildParams<'_>) -> Result<(), i32> {
     if verbose {
         eprintln!();
         eprintln!("RUSTFLAGS=\"{}\" \\", rustflags);
-        eprint!("  cargo +{} build --target {}", toolchain, spec_path.display());
+        eprint!(
+            "  cargo +{} build --target {}",
+            toolchain,
+            spec_path.display()
+        );
         eprint!(" -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem");
         if release {
             eprint!(" --release");
@@ -296,7 +301,12 @@ fn build_for_arch(p: BuildParams<'_>) -> Result<(), i32> {
     }
 
     if let Some(s) = spinner {
-        s.finish_with_success(&format!("{} ({}) → {}", crate_name, arch, dest_path.display()));
+        s.finish_with_success(&format!(
+            "{} ({}) → {}",
+            crate_name,
+            arch,
+            dest_path.display()
+        ));
     } else if !quiet {
         terminal::path_output(&dest_path);
     }

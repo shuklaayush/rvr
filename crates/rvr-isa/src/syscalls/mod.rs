@@ -20,5 +20,5 @@ mod linux;
 mod table;
 
 pub use baremetal::{BareMetalHandler, RiscvTestsHandler};
-pub use linux::{syscall_nr, LinuxHandler};
+pub use linux::{LinuxHandler, syscall_nr};
 pub use table::{SyscallAbi, SyscallAction, SyscallEntry, SyscallHandler, SyscallTable};

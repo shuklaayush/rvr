@@ -221,11 +221,18 @@ impl<X: Xlen> CEmitter<X> {
                     // IR is responsible for masking shift amount per RISC-V spec
                     BinaryOp::Sll => format!("({} << {})", l, r),
                     BinaryOp::Srl => format!("({} >> {})", l, r),
-                    BinaryOp::Sra => format!("(({})(({}){}  >> {}))", self.reg_type, self.signed_type, l, r),
+                    BinaryOp::Sra => format!(
+                        "(({})(({}){}  >> {}))",
+                        self.reg_type, self.signed_type, l, r
+                    ),
                     BinaryOp::Eq => format!("{} == {}", l, r),
                     BinaryOp::Ne => format!("{} != {}", l, r),
-                    BinaryOp::Lt => format!("({}){} < ({}){}", self.signed_type, l, self.signed_type, r),
-                    BinaryOp::Ge => format!("({}){} >= ({}){}", self.signed_type, l, self.signed_type, r),
+                    BinaryOp::Lt => {
+                        format!("({}){} < ({}){}", self.signed_type, l, self.signed_type, r)
+                    }
+                    BinaryOp::Ge => {
+                        format!("({}){} >= ({}){}", self.signed_type, l, self.signed_type, r)
+                    }
                     BinaryOp::Ltu => format!("{} < {}", l, r),
                     BinaryOp::Geu => format!("{} >= {}", l, r),
                     BinaryOp::Div => {
@@ -256,16 +263,29 @@ impl<X: Xlen> CEmitter<X> {
                             format!("rv_remu({}, {})", l, r)
                         }
                     }
-                    BinaryOp::AddW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} + (uint32_t){}))", l, r),
-                    BinaryOp::SubW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} - (uint32_t){}))", l, r),
-                    BinaryOp::MulW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} * (uint32_t){}))", l, r),
+                    BinaryOp::AddW => format!(
+                        "((uint64_t)(int64_t)(int32_t)((uint32_t){} + (uint32_t){}))",
+                        l, r
+                    ),
+                    BinaryOp::SubW => format!(
+                        "((uint64_t)(int64_t)(int32_t)((uint32_t){} - (uint32_t){}))",
+                        l, r
+                    ),
+                    BinaryOp::MulW => format!(
+                        "((uint64_t)(int64_t)(int32_t)((uint32_t){} * (uint32_t){}))",
+                        l, r
+                    ),
                     BinaryOp::DivW => format!("rv_divw((int32_t){}, (int32_t){})", l, r),
                     BinaryOp::DivUW => format!("rv_divuw((uint32_t){}, (uint32_t){})", l, r),
                     BinaryOp::RemW => format!("rv_remw((int32_t){}, (int32_t){})", l, r),
                     BinaryOp::RemUW => format!("rv_remuw((uint32_t){}, (uint32_t){})", l, r),
                     // IR is responsible for masking shift amount per RISC-V spec
-                    BinaryOp::SllW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << {}))", l, r),
-                    BinaryOp::SrlW => format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> {}))", l, r),
+                    BinaryOp::SllW => {
+                        format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} << {}))", l, r)
+                    }
+                    BinaryOp::SrlW => {
+                        format!("((uint64_t)(int64_t)(int32_t)((uint32_t){} >> {}))", l, r)
+                    }
                     BinaryOp::SraW => format!("((uint64_t)(int64_t)((int32_t){} >> {}))", l, r),
                     BinaryOp::MulH => {
                         if X::VALUE == 64 {
@@ -290,13 +310,25 @@ impl<X: Xlen> CEmitter<X> {
                     }
                     BinaryOp::Pack => {
                         if X::VALUE == 64 {
-                            format!("(((uint64_t)(uint32_t){}) | ((uint64_t)(uint32_t){} << 32))", l, r)
+                            format!(
+                                "(((uint64_t)(uint32_t){}) | ((uint64_t)(uint32_t){} << 32))",
+                                l, r
+                            )
                         } else {
-                            format!("(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16))", l, r)
+                            format!(
+                                "(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16))",
+                                l, r
+                            )
                         }
                     }
-                    BinaryOp::Pack8 => format!("((({})(uint8_t){}) | (({})(uint8_t){} << 8))", self.reg_type, l, self.reg_type, r),
-                    BinaryOp::Pack16 => format!("((int64_t)(int32_t)(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16)))", l, r),
+                    BinaryOp::Pack8 => format!(
+                        "((({})(uint8_t){}) | (({})(uint8_t){} << 8))",
+                        self.reg_type, l, self.reg_type, r
+                    ),
+                    BinaryOp::Pack16 => format!(
+                        "((int64_t)(int32_t)(((uint32_t)(uint16_t){}) | ((uint32_t)(uint16_t){} << 16)))",
+                        l, r
+                    ),
                 }
             }
             Expr::Ternary {

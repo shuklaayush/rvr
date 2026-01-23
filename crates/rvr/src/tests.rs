@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{compile_with_options, CompileOptions, Runner};
+use crate::{CompileOptions, Runner, compile_with_options};
 
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[

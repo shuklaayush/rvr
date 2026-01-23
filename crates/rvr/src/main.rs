@@ -5,8 +5,8 @@ mod commands;
 mod terminal;
 
 use clap::Parser;
-use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::fmt::format::FmtSpan;
 
 use cli::{Cli, Commands};
 

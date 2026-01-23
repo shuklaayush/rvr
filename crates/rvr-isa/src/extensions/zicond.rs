@@ -6,8 +6,9 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_ZICOND, InstrArgs, OpClass, OpId, OpInfo,
     encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZICOND,
+    reg_name,
 };
 
 // Instruction OpIds
@@ -107,7 +108,7 @@ fn lift_czero_eqz<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // czero.eqz: rd = (rs2 == 0) ? 0 : rs1
@@ -133,7 +134,7 @@ fn lift_czero_nez<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // czero.nez: rd = (rs2 != 0) ? 0 : rs1

@@ -4,11 +4,12 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_I, InstrArgs, OpClass, OpId, OpInfo,
     encode::{
         decode_b_imm, decode_funct3, decode_funct7, decode_i_imm, decode_j_imm, decode_opcode,
         decode_rd, decode_rs1, decode_rs2, decode_s_imm, decode_u_imm,
     },
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_I,
+    reg_name,
 };
 
 // ===== OpId Constants =====

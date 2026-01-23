@@ -9,8 +9,9 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_ZBKB, InstrArgs, OpClass, OpId, OpInfo,
     encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBKB,
+    reg_name,
 };
 
 // Instruction OpIds
@@ -174,7 +175,7 @@ fn lift_pack<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // pack: rd = (rs2[XLEN/2-1:0] << (XLEN/2)) | rs1[XLEN/2-1:0]
@@ -199,7 +200,7 @@ fn lift_packh<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // packh: rd = (rs2[7:0] << 8) | rs1[7:0]
@@ -224,7 +225,7 @@ fn lift_packw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // packw: rd = sext((rs2[15:0] << 16) | rs1[15:0])
@@ -252,7 +253,7 @@ where
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     let result = op(Expr::reg(rs1));

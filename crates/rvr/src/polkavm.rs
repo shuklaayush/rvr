@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-use libloading::os::unix::{Library, Symbol, RTLD_NOW};
+use libloading::os::unix::{Library, RTLD_NOW, Symbol};
 
 /// Polkavm guest programs directory (relative to project root).
 const POLKAVM_GUEST_PROGRAMS: &str = "programs/polkavm/guest-programs";
@@ -96,7 +96,9 @@ pub fn build_benchmark(
         }
     }
 
-    let status = child.wait().map_err(|e| format!("cargo wait failed: {}", e))?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("cargo wait failed: {}", e))?;
     if !status.success() {
         return Err(format!("cargo build failed for {}/{}", benchmark, arch));
     }
@@ -112,8 +114,14 @@ pub fn build_benchmark(
         .map_err(|e| format!("failed to create {}: {}", dest_dir.display(), e))?;
 
     let dest = dest_dir.join(benchmark);
-    std::fs::copy(&src, &dest)
-        .map_err(|e| format!("failed to copy {} to {}: {}", src.display(), dest.display(), e))?;
+    std::fs::copy(&src, &dest).map_err(|e| {
+        format!(
+            "failed to copy {} to {}: {}",
+            src.display(),
+            dest.display(),
+            e
+        )
+    })?;
 
     Ok(dest)
 }
@@ -125,9 +133,7 @@ fn compile_entry(toolchain_dir: &Path, arch: &str) -> Result<PathBuf, String> {
 
     // Check if recompilation needed
     if entry_obj.exists() {
-        let src_time = std::fs::metadata(&entry_s)
-            .and_then(|m| m.modified())
-            .ok();
+        let src_time = std::fs::metadata(&entry_s).and_then(|m| m.modified()).ok();
         let obj_time = std::fs::metadata(&entry_obj)
             .and_then(|m| m.modified())
             .ok();
@@ -226,7 +232,9 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
         }
     }
 
-    let status = child.wait().map_err(|e| format!("cargo wait failed: {}", e))?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("cargo wait failed: {}", e))?;
     if !status.success() {
         return Err(format!("cargo build failed for {} (host)", benchmark));
     }
@@ -249,8 +257,7 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
         .map_err(|e| format!("failed to create {}: {}", dest_dir.display(), e))?;
 
     let dest = dest_dir.join(format!("{}.so", benchmark));
-    std::fs::copy(&lib_path, &dest)
-        .map_err(|e| format!("failed to copy: {}", e))?;
+    std::fs::copy(&lib_path, &dest).map_err(|e| format!("failed to copy: {}", e))?;
 
     Ok(dest)
 }

@@ -16,13 +16,13 @@ use rvr_ir::{BlockIR, Xlen};
 use tracing::{debug, info, trace};
 
 use crate::config::{EmitConfig, SyscallMode};
-use crate::dispatch::{gen_dispatch_file, DispatchConfig};
+use crate::dispatch::{DispatchConfig, gen_dispatch_file};
 use crate::emitter::CEmitter;
-use crate::header::{gen_blocks_header, gen_header, HeaderConfig};
-use crate::htif::{gen_htif_header, gen_htif_source, HtifConfig};
+use crate::header::{HeaderConfig, gen_blocks_header, gen_header};
+use crate::htif::{HtifConfig, gen_htif_header, gen_htif_source};
 use crate::inputs::EmitInputs;
-use crate::memory::{gen_memory_file_with_embed, gen_segment_bins, MemoryConfig, MemorySegment};
-use crate::syscalls::{gen_syscalls_source, SyscallsConfig};
+use crate::memory::{MemoryConfig, MemorySegment, gen_memory_file_with_embed, gen_segment_bins};
+use crate::syscalls::{SyscallsConfig, gen_syscalls_source};
 use crate::tracer::gen_tracer_header;
 
 /// Default instructions per partition.

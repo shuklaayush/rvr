@@ -4,8 +4,9 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_M, InstrArgs, OpClass, OpId, OpInfo,
     encode::{decode_funct3, decode_funct7, decode_opcode, decode_rd, decode_rs1, decode_rs2},
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_M,
+    reg_name,
 };
 
 // M extension OpId constants

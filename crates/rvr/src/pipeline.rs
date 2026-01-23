@@ -408,11 +408,7 @@ impl<X: Xlen> Pipeline<X> {
             }
         }
 
-        if block.is_empty() {
-            None
-        } else {
-            Some(block)
-        }
+        if block.is_empty() { None } else { Some(block) }
     }
 
     /// Emit C code to output directory using CProject.

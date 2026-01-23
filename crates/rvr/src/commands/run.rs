@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use tracing::error;
 
-use crate::cli::{OutputFormat, EXIT_FAILURE};
+use crate::cli::{EXIT_FAILURE, OutputFormat};
 use crate::commands::{print_multi_result, print_single_result};
 
 /// Handle the `run` command.

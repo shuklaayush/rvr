@@ -396,7 +396,7 @@ pub fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
                 return Err(format!(
                     "invalid tracer var kind '{}', expected ptr/index/value",
                     kind
-                ))
+                ));
             }
         };
         vars.push(var);

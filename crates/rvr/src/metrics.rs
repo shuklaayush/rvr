@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use metrics::{
-    counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram, Counter,
-    Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
+    Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit, counter,
+    describe_counter, describe_gauge, describe_histogram, gauge, histogram,
 };
 use parking_lot::RwLock;
 

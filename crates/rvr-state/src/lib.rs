@@ -29,10 +29,10 @@ mod state;
 mod suspender;
 mod tracer;
 
-pub use memory::{GuardedMemory, MemoryError, DEFAULT_MEMORY_SIZE, GUARD_SIZE};
+pub use memory::{DEFAULT_MEMORY_SIZE, GUARD_SIZE, GuardedMemory, MemoryError};
 pub use state::{
-    Rv32EState, Rv32State, Rv32StateWith, Rv64EState, Rv64State, Rv64StateWith, RvState, NUM_CSRS,
-    NUM_REGS_E, NUM_REGS_I,
+    NUM_CSRS, NUM_REGS_E, NUM_REGS_I, Rv32EState, Rv32State, Rv32StateWith, Rv64EState, Rv64State,
+    Rv64StateWith, RvState,
 };
 pub use suspender::{InstretSuspender, SuspenderState};
 pub use tracer::{

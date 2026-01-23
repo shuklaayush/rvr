@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use rvr::{CompileOptions, Compiler};
 use tracing::{error, info};
 
-use crate::cli::{build_tracer_config, InstretModeArg, SyscallModeArg, TracerArgs, EXIT_FAILURE, EXIT_SUCCESS};
+use crate::cli::{
+    EXIT_FAILURE, EXIT_SUCCESS, InstretModeArg, SyscallModeArg, TracerArgs, build_tracer_config,
+};
 
 /// Handle the `compile` command.
 pub fn cmd_compile(

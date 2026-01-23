@@ -3,7 +3,7 @@
 use rvr_ir::{InstrIR, Terminator, Xlen};
 
 use super::InstructionExtension;
-use crate::{encode::decode_funct3, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZIFENCEI};
+use crate::{DecodedInstr, EXT_ZIFENCEI, InstrArgs, OpClass, OpId, OpInfo, encode::decode_funct3};
 
 /// Zifencei instruction
 pub const OP_FENCE_I: OpId = OpId::new(EXT_ZIFENCEI, 0);

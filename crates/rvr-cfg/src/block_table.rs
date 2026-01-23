@@ -8,8 +8,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, trace, trace_span};
 
-use crate::analysis::ControlFlowAnalyzer;
 use crate::InstructionTable;
+use crate::analysis::ControlFlowAnalyzer;
 
 /// Basic block with start/end addresses.
 #[derive(Clone, Debug)]

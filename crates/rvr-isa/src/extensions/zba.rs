@@ -6,8 +6,9 @@ use rvr_ir::{Expr, InstrIR, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_ZBA, InstrArgs, OpClass, OpId, OpInfo,
     encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBA,
+    reg_name,
 };
 
 // Instruction indices
@@ -166,7 +167,7 @@ fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
 
@@ -194,7 +195,7 @@ fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
 
@@ -222,7 +223,7 @@ fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
 
@@ -251,7 +252,7 @@ fn lift_slli_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
 

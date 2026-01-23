@@ -8,7 +8,9 @@ mod compile;
 mod run;
 mod test;
 
-use crate::cli::{BenchCommands, Cli, Commands, OutputFormat, RiscvTestCommands, TestCommands, EXIT_SUCCESS};
+use crate::cli::{
+    BenchCommands, Cli, Commands, EXIT_SUCCESS, OutputFormat, RiscvTestCommands, TestCommands,
+};
 
 /// Dispatch CLI command to the appropriate handler.
 pub fn run_command(cli: &Cli) -> i32 {
@@ -25,8 +27,16 @@ pub fn run_command(cli: &Cli) -> i32 {
             linker,
             tracer,
         } => compile::cmd_compile(
-            input, output, *addr_check, *htif, *instret, *syscalls, *jobs, cc.as_deref(),
-            linker.as_deref(), tracer,
+            input,
+            output,
+            *addr_check,
+            *htif,
+            *instret,
+            *syscalls,
+            *jobs,
+            cc.as_deref(),
+            linker.as_deref(),
+            tracer,
         ),
         Commands::Lift {
             input,
@@ -38,7 +48,14 @@ pub fn run_command(cli: &Cli) -> i32 {
             syscalls,
             tracer,
         } => compile::cmd_lift(
-            input, output, *addr_check, *htif, *line_info, *instret, *syscalls, tracer,
+            input,
+            output,
+            *addr_check,
+            *htif,
+            *line_info,
+            *instret,
+            *syscalls,
+            tracer,
         ),
         Commands::Run {
             lib_dir,
@@ -71,16 +88,24 @@ pub fn run_command(cli: &Cli) -> i32 {
                 bench::bench_list();
                 EXIT_SUCCESS
             }
-            BenchCommands::Build { name, arch, no_host } => {
-                bench::bench_build(name.as_deref(), arch.as_deref(), *no_host)
-            }
+            BenchCommands::Build {
+                name,
+                arch,
+                no_host,
+            } => bench::bench_build(name.as_deref(), arch.as_deref(), *no_host),
             BenchCommands::Compile {
                 name,
                 arch,
                 fast,
                 cc,
                 linker,
-            } => bench::bench_compile(name.as_deref(), arch.as_deref(), *fast, cc, linker.as_deref()),
+            } => bench::bench_compile(
+                name.as_deref(),
+                arch.as_deref(),
+                *fast,
+                cc,
+                linker.as_deref(),
+            ),
             BenchCommands::Run {
                 name,
                 arch,
@@ -88,7 +113,14 @@ pub fn run_command(cli: &Cli) -> i32 {
                 fast,
                 compare_host,
                 force,
-            } => bench::bench_run(name.as_deref(), arch.as_deref(), *runs, *fast, *compare_host, *force),
+            } => bench::bench_run(
+                name.as_deref(),
+                arch.as_deref(),
+                *runs,
+                *fast,
+                *compare_host,
+                *force,
+            ),
         },
         Commands::Test { command } => match command {
             TestCommands::Riscv { command } => match command {

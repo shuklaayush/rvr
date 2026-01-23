@@ -3,7 +3,7 @@
 //! Provides a memory region with guard pages on each side to catch
 //! buffer overflows/underflows at the OS level.
 
-use nix::sys::mman::{mmap_anonymous, mprotect, munmap, MapFlags, ProtFlags};
+use nix::sys::mman::{MapFlags, ProtFlags, mmap_anonymous, mprotect, munmap};
 use std::ffi::c_void;
 use std::num::NonZeroUsize;
 use std::ptr::NonNull;

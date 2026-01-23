@@ -6,8 +6,9 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{
+    DecodedInstr, EXT_ZBS, InstrArgs, OpClass, OpId, OpInfo,
     encode::{decode_funct3, decode_funct7, decode_rd, decode_rs1, decode_rs2},
-    reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_ZBS,
+    reg_name,
 };
 
 // Instruction OpIds
@@ -180,7 +181,7 @@ fn lift_bclr<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 & ~(1 << (rs2 & (XLEN-1)))
@@ -208,7 +209,7 @@ fn lift_bclri<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 & ~(1 << shamt)
@@ -237,7 +238,7 @@ fn lift_bext<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = (rs1 >> (rs2 & (XLEN-1))) & 1
@@ -265,7 +266,7 @@ fn lift_bexti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = (rs1 >> shamt) & 1
@@ -291,7 +292,7 @@ fn lift_binv<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 ^ (1 << (rs2 & (XLEN-1)))
@@ -319,7 +320,7 @@ fn lift_binvi<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 ^ (1 << shamt)
@@ -348,7 +349,7 @@ fn lift_bset<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 | (1 << (rs2 & (XLEN-1)))
@@ -376,7 +377,7 @@ fn lift_bseti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.opid.pack(),
                 Vec::new(),
                 Terminator::trap("bad args"),
-            )
+            );
         }
     };
     // rd = rs1 | (1 << shamt)

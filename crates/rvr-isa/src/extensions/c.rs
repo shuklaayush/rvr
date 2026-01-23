@@ -3,7 +3,7 @@
 use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
-use crate::{reg_name, DecodedInstr, InstrArgs, OpClass, OpId, OpInfo, EXT_C};
+use crate::{DecodedInstr, EXT_C, InstrArgs, OpClass, OpId, OpInfo, reg_name};
 
 // Quadrant 0
 pub const OP_C_ADDI4SPN: OpId = OpId::new(EXT_C, 0);
