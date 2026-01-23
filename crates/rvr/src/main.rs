@@ -235,6 +235,10 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
+        /// Output binary name (default: crate name from Cargo.toml)
+        #[arg(short, long)]
+        name: Option<String>,
+
         /// Rust toolchain to use (default: nightly)
         #[arg(long, default_value = "nightly")]
         toolchain: String,
@@ -637,10 +641,11 @@ fn run_command(cli: &Cli) -> i32 {
             path,
             target,
             output,
+            name,
             toolchain,
             features,
             release,
-        } => build_rust_project(path, target, output.as_ref(), toolchain, features.as_deref(), *release),
+        } => build_rust_project(path, target, output.as_ref(), name.as_deref(), toolchain, features.as_deref(), *release),
         Commands::Bench { command } => match command {
             BenchCommands::List => {
                 bench_list();
@@ -707,6 +712,7 @@ fn build_rust_project(
     path: &PathBuf,
     target_str: &str,
     output: Option<&PathBuf>,
+    output_name: Option<&str>,
     toolchain: &str,
     features: Option<&str>,
     release: bool,
@@ -736,12 +742,15 @@ fn build_rust_project(
         }
     };
 
-    let project_name = cargo_content
+    let crate_name = cargo_content
         .lines()
         .find(|line| line.starts_with("name"))
         .and_then(|line| line.split('=').nth(1))
         .map(|s| s.trim().trim_matches('"'))
         .unwrap_or("unknown");
+
+    // Output name defaults to crate name
+    let bin_name = output_name.unwrap_or(crate_name);
 
     // Parse target architectures
     let targets: Vec<&str> = target_str.split(',').map(|s| s.trim()).collect();
@@ -777,7 +786,7 @@ fn build_rust_project(
             return EXIT_FAILURE;
         }
 
-        eprintln!("Building {} for {}", project_name, arch);
+        eprintln!("Building {} for {}", crate_name, arch);
 
         // Determine RUSTFLAGS
         let cpu = if arch.starts_with("rv64") {
@@ -830,7 +839,7 @@ fn build_rust_project(
             .join("target")
             .join(arch)
             .join(profile)
-            .join(project_name);
+            .join(crate_name);
 
         let dest_dir = match output {
             Some(o) => o.join(arch),
@@ -842,7 +851,7 @@ fn build_rust_project(
             return EXIT_FAILURE;
         }
 
-        let dest_path = dest_dir.join(project_name);
+        let dest_path = dest_dir.join(bin_name);
         if let Err(e) = std::fs::copy(&build_output, &dest_path) {
             eprintln!(
                 "Error copying {} to {}: {}",
@@ -1122,6 +1131,7 @@ fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32 {
                     &project_path,
                     arch_str,
                     None, // Use default output (bin/{arch}/)
+                    Some(benchmark.name), // Use benchmark name as output name
                     "nightly",
                     None,
                     true,
