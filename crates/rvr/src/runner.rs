@@ -4,6 +4,8 @@
 //! Uses trait-based type erasure to support RV32/RV64 × I/E × Tracer variants.
 
 use std::ffi::c_void;
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Read as IoRead, Write as IoWrite};
 use std::path::Path;
 use std::time::Instant;
 
@@ -49,6 +51,9 @@ pub enum RunError {
 
     #[error("tracer setup failed: {0}")]
     TracerSetupFailed(String),
+
+    #[error("state file error: {0}")]
+    StateError(String),
 }
 
 /// C API - only the execution function is required.
@@ -1385,6 +1390,130 @@ impl Runner {
         // Return value is in a0 (register 10)
         let result = self.inner.get_register(10);
         Ok(result)
+    }
+
+    /// Save the current machine state to a file.
+    ///
+    /// Format: magic (4 bytes) + version (4) + xlen (1) + num_regs (1) +
+    ///         memory_size (8) + pc (8) + instret (8) + registers + memory
+    pub fn save_state(&self, path: impl AsRef<Path>) -> Result<(), RunError> {
+        const MAGIC: &[u8; 4] = b"RVR\0";
+        const VERSION: u32 = 1;
+
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+
+        // Header
+        writer.write_all(MAGIC)?;
+        writer.write_all(&VERSION.to_le_bytes())?;
+        writer.write_all(&[self.inner.xlen()])?;
+        writer.write_all(&[self.inner.num_regs() as u8])?;
+        writer.write_all(&(self.inner.memory_size() as u64).to_le_bytes())?;
+
+        // State
+        writer.write_all(&self.inner.get_pc().to_le_bytes())?;
+        writer.write_all(&self.inner.instret().to_le_bytes())?;
+
+        // Registers
+        for i in 0..self.inner.num_regs() {
+            writer.write_all(&self.inner.get_register(i).to_le_bytes())?;
+        }
+
+        // Memory
+        let mem_size = self.inner.memory_size();
+        let mut buf = vec![0u8; 64 * 1024]; // 64KB chunks
+        let mut offset = 0;
+        while offset < mem_size {
+            let chunk_size = buf.len().min(mem_size - offset);
+            self.inner.read_memory(offset as u64, &mut buf[..chunk_size]);
+            writer.write_all(&buf[..chunk_size])?;
+            offset += chunk_size;
+        }
+
+        writer.flush()?;
+        debug!(size = mem_size, "state saved");
+        Ok(())
+    }
+
+    /// Load machine state from a file.
+    ///
+    /// Note: The library must be compatible (same xlen, num_regs, memory_size).
+    pub fn load_state(&mut self, path: impl AsRef<Path>) -> Result<(), RunError> {
+        const MAGIC: &[u8; 4] = b"RVR\0";
+
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+
+        // Header
+        let mut magic = [0u8; 4];
+        reader.read_exact(&mut magic)?;
+        if &magic != MAGIC {
+            return Err(RunError::StateError("invalid state file magic".to_string()));
+        }
+
+        let mut version = [0u8; 4];
+        reader.read_exact(&mut version)?;
+        let version = u32::from_le_bytes(version);
+        if version != 1 {
+            return Err(RunError::StateError(format!("unsupported state version: {}", version)));
+        }
+
+        let mut xlen = [0u8; 1];
+        reader.read_exact(&mut xlen)?;
+        if xlen[0] != self.inner.xlen() {
+            return Err(RunError::StateError(format!(
+                "xlen mismatch: file has {}, runner has {}",
+                xlen[0], self.inner.xlen()
+            )));
+        }
+
+        let mut num_regs = [0u8; 1];
+        reader.read_exact(&mut num_regs)?;
+        if num_regs[0] as usize != self.inner.num_regs() {
+            return Err(RunError::StateError(format!(
+                "num_regs mismatch: file has {}, runner has {}",
+                num_regs[0], self.inner.num_regs()
+            )));
+        }
+
+        let mut mem_size_bytes = [0u8; 8];
+        reader.read_exact(&mut mem_size_bytes)?;
+        let file_mem_size = u64::from_le_bytes(mem_size_bytes) as usize;
+        if file_mem_size != self.inner.memory_size() {
+            return Err(RunError::StateError(format!(
+                "memory size mismatch: file has {}, runner has {}",
+                file_mem_size, self.inner.memory_size()
+            )));
+        }
+
+        // State
+        let mut pc = [0u8; 8];
+        reader.read_exact(&mut pc)?;
+        self.inner.set_pc(u64::from_le_bytes(pc));
+
+        let mut instret = [0u8; 8];
+        reader.read_exact(&mut instret)?;
+        // Note: We can't directly set instret through the trait, but we can clear and run
+
+        // Registers
+        for i in 0..self.inner.num_regs() {
+            let mut reg = [0u8; 8];
+            reader.read_exact(&mut reg)?;
+            self.inner.set_register(i, u64::from_le_bytes(reg));
+        }
+
+        // Memory
+        let mut buf = vec![0u8; 64 * 1024]; // 64KB chunks
+        let mut offset = 0;
+        while offset < file_mem_size {
+            let chunk_size = buf.len().min(file_mem_size - offset);
+            reader.read_exact(&mut buf[..chunk_size])?;
+            self.inner.write_memory(offset as u64, &buf[..chunk_size]);
+            offset += chunk_size;
+        }
+
+        debug!(size = file_mem_size, "state loaded");
+        Ok(())
     }
 
     /// Run multiple times with hardware performance counters.
