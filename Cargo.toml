@@ -38,6 +38,9 @@ console = "0.16"
 gdbstub = "0.7"
 gdbstub_arch = "0.3"
 
+# Compression
+zstd = "0.13"
+
 # Internal crates
 rvr-elf = { path = "crates/rvr-elf" }
 rvr-isa = { path = "crates/rvr-isa" }

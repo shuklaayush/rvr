@@ -1455,10 +1455,11 @@ impl Runner {
         Ok(result)
     }
 
-    /// Save the current machine state to a file.
+    /// Save the current machine state to a file (zstd compressed).
     ///
-    /// Format: magic (4 bytes) + version (4) + xlen (1) + num_regs (1) +
-    ///         memory_size (8) + pc (8) + instret (8) + registers + memory
+    /// Format: header (uncompressed) + data (zstd compressed)
+    /// - Header: magic (4) + version (4) + xlen (1) + num_regs (1) + memory_size (8)
+    /// - Data: pc (8) + instret (8) + registers + memory
     pub fn save_state(&self, path: impl AsRef<Path>) -> Result<(), RunError> {
         const MAGIC: &[u8; 4] = b"RVR\0";
         const VERSION: u32 = 1;
@@ -1466,20 +1467,23 @@ impl Runner {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
 
-        // Header
+        // Header (uncompressed)
         writer.write_all(MAGIC)?;
         writer.write_all(&VERSION.to_le_bytes())?;
         writer.write_all(&[self.inner.xlen()])?;
         writer.write_all(&[self.inner.num_regs() as u8])?;
         writer.write_all(&(self.inner.memory_size() as u64).to_le_bytes())?;
 
+        // Data (zstd compressed)
+        let mut encoder = zstd::stream::Encoder::new(&mut writer, 3)?;
+
         // State
-        writer.write_all(&self.inner.get_pc().to_le_bytes())?;
-        writer.write_all(&self.inner.instret().to_le_bytes())?;
+        encoder.write_all(&self.inner.get_pc().to_le_bytes())?;
+        encoder.write_all(&self.inner.instret().to_le_bytes())?;
 
         // Registers
         for i in 0..self.inner.num_regs() {
-            writer.write_all(&self.inner.get_register(i).to_le_bytes())?;
+            encoder.write_all(&self.inner.get_register(i).to_le_bytes())?;
         }
 
         // Memory
@@ -1489,11 +1493,11 @@ impl Runner {
         while offset < mem_size {
             let chunk_size = buf.len().min(mem_size - offset);
             self.inner.read_memory(offset as u64, &mut buf[..chunk_size]);
-            writer.write_all(&buf[..chunk_size])?;
+            encoder.write_all(&buf[..chunk_size])?;
             offset += chunk_size;
         }
 
-        writer.flush()?;
+        encoder.finish()?;
         debug!(size = mem_size, "state saved");
         Ok(())
     }
@@ -1503,11 +1507,12 @@ impl Runner {
     /// Note: The library must be compatible (same xlen, num_regs, memory_size).
     pub fn load_state(&mut self, path: impl AsRef<Path>) -> Result<(), RunError> {
         const MAGIC: &[u8; 4] = b"RVR\0";
+        const VERSION: u32 = 1;
 
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
 
-        // Header
+        // Header (uncompressed)
         let mut magic = [0u8; 4];
         reader.read_exact(&mut magic)?;
         if &magic != MAGIC {
@@ -1516,9 +1521,8 @@ impl Runner {
 
         let mut version = [0u8; 4];
         reader.read_exact(&mut version)?;
-        let version = u32::from_le_bytes(version);
-        if version != 1 {
-            return Err(RunError::StateError(format!("unsupported state version: {}", version)));
+        if u32::from_le_bytes(version) != VERSION {
+            return Err(RunError::StateError("unsupported state version".to_string()));
         }
 
         let mut xlen = [0u8; 1];
@@ -1549,19 +1553,21 @@ impl Runner {
             )));
         }
 
+        // Data (zstd compressed)
+        let mut decoder = zstd::stream::Decoder::new(reader)?;
+
         // State
         let mut pc = [0u8; 8];
-        reader.read_exact(&mut pc)?;
+        decoder.read_exact(&mut pc)?;
         self.inner.set_pc(u64::from_le_bytes(pc));
 
         let mut instret = [0u8; 8];
-        reader.read_exact(&mut instret)?;
-        // Note: We can't directly set instret through the trait, but we can clear and run
+        decoder.read_exact(&mut instret)?;
 
         // Registers
         for i in 0..self.inner.num_regs() {
             let mut reg = [0u8; 8];
-            reader.read_exact(&mut reg)?;
+            decoder.read_exact(&mut reg)?;
             self.inner.set_register(i, u64::from_le_bytes(reg));
         }
 
@@ -1570,7 +1576,7 @@ impl Runner {
         let mut offset = 0;
         while offset < file_mem_size {
             let chunk_size = buf.len().min(file_mem_size - offset);
-            reader.read_exact(&mut buf[..chunk_size])?;
+            decoder.read_exact(&mut buf[..chunk_size])?;
             self.inner.write_memory(offset as u64, &buf[..chunk_size]);
             offset += chunk_size;
         }
