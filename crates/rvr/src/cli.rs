@@ -149,6 +149,10 @@ pub enum Commands {
         /// Save state to file after execution
         #[arg(long)]
         save_state: Option<PathBuf>,
+
+        /// Interactive debugger mode (requires --instret suspend at compile time)
+        #[arg(long, conflicts_with_all = ["gdb", "runs"])]
+        debug: bool,
     },
     /// Build Rust project to RISC-V ELF
     Build {

@@ -68,6 +68,7 @@ pub fn run_command(cli: &Cli) -> i32 {
             gdb,
             load_state,
             save_state,
+            debug,
         } => run::cmd_run(
             lib_dir,
             elf_path,
@@ -79,6 +80,7 @@ pub fn run_command(cli: &Cli) -> i32 {
             gdb.as_deref(),
             load_state.as_ref(),
             save_state.as_ref(),
+            *debug,
         ),
         Commands::Build {
             path,
