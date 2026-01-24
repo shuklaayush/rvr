@@ -827,7 +827,11 @@ fn get_successors<X: Xlen>(
             }
 
             if !resolved {
-                unresolved_dynamic_jumps.insert(pc);
+                // Only track true indirect jumps (not returns, not calls) as unresolved
+                // Returns and indirect calls are handled conservatively and are fine
+                if decoded.is_indirect_jump() {
+                    unresolved_dynamic_jumps.insert(pc);
+                }
                 if decoded.is_return() {
                     if let Some(func_start) = binary_search_le(sorted_function_entries, pc) {
                         if let Some(returns) = call_return_map.get(&func_start) {
