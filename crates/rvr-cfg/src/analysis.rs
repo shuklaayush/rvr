@@ -449,15 +449,6 @@ impl ControlFlowAnalyzer {
             "CFG analysis complete"
         );
 
-        // Unresolved indirect jumps are handled conservatively by connecting them
-        // to all function entries and internal targets - no warning needed
-        if !unresolved_dynamic_jumps.is_empty() {
-            debug!(
-                count = unresolved_dynamic_jumps.len(),
-                "indirect jumps handled conservatively (targets over-approximated)"
-            );
-        }
-
         let mut block_to_function = FxHashMap::default();
         for leader in &leaders {
             if let Some(func) = binary_search_le(&sorted_function_entries, *leader) {
