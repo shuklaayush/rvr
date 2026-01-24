@@ -2,7 +2,7 @@
 
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tracing::{debug, trace, trace_span, warn};
+use tracing::{debug, trace, trace_span};
 
 use rvr_isa::{
     DecodedInstr, InstrArgs, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT, OP_BLTU,
