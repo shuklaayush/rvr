@@ -134,6 +134,10 @@ pub enum Commands {
         #[arg(long)]
         max_insns: Option<u64>,
 
+        /// Call a function by name instead of running from entry point (requires --export-functions at compile time)
+        #[arg(long)]
+        call: Option<String>,
+
         /// Start GDB server on specified address (e.g., :1234 or 127.0.0.1:1234)
         #[arg(long)]
         gdb: Option<String>,

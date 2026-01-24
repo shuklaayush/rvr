@@ -15,6 +15,7 @@ pub fn cmd_run(
     runs: usize,
     memory_bits: u8,
     max_insns: Option<u64>,
+    call_func: Option<&str>,
     gdb_addr: Option<&str>,
 ) -> i32 {
     let memory_size = 1usize << memory_bits;
@@ -41,8 +42,25 @@ pub fn cmd_run(
         return cmd_run_gdb(runner, addr);
     }
 
+    // If --call is specified, call the function instead of running from entry point
+    if let Some(func_name) = call_func {
+        if !runner.has_export_functions() {
+            warn!("--call requires library compiled with --export-functions");
+            return EXIT_FAILURE;
+        }
+        match runner.call(func_name, &[]) {
+            Ok(result) => {
+                println!("{}", result);
+                EXIT_SUCCESS
+            }
+            Err(e) => {
+                error!(error = %e, "call failed");
+                EXIT_FAILURE
+            }
+        }
+    }
     // Normal execution
-    if runs <= 1 {
+    else if runs <= 1 {
         match runner.run() {
             Ok(result) => {
                 print_single_result(format, &result);
