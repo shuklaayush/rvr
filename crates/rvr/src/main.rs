@@ -24,10 +24,16 @@ fn main() {
     // Initialize metric descriptions
     rvr::metrics::init();
 
-    // Initialize tracing with appropriate level based on command
-    let default_level = match &cli.command {
-        Commands::Bench { .. } | Commands::Test { .. } => "rvr=warn",
-        _ => "rvr=info",
+    // Initialize tracing with appropriate level based on flags and command
+    let default_level = if cli.verbose {
+        "rvr=debug"
+    } else if cli.silent {
+        "rvr=error"
+    } else {
+        match &cli.command {
+            Commands::Bench { .. } | Commands::Test { .. } => "rvr=warn",
+            _ => "rvr=info",
+        }
     };
     tracing_subscriber::fmt()
         .with_env_filter(

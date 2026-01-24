@@ -20,6 +20,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub metrics: bool,
 
+    /// Enable verbose output (sets RUST_LOG=debug)
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
+
+    /// Suppress output (only show errors)
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    pub silent: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
