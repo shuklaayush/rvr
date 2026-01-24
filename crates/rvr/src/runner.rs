@@ -199,6 +199,12 @@ trait RunnerImpl {
     /// Set the program counter.
     fn set_pc(&mut self, pc: u64);
 
+    /// Get a CSR value.
+    fn get_csr(&self, csr: u16) -> u64;
+
+    /// Set a CSR value.
+    fn set_csr(&mut self, csr: u16, value: u64);
+
     /// Read memory at the given address into the buffer.
     /// Returns the number of bytes read.
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize;
@@ -308,6 +314,14 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
 
     fn set_pc(&mut self, pc: u64) {
         self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn get_csr(&self, csr: u16) -> u64 {
+        X::to_u64(self.state.csrs[csr as usize])
+    }
+
+    fn set_csr(&mut self, csr: u16, value: u64) {
+        self.state.csrs[csr as usize] = X::from_u64(value);
     }
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
@@ -435,6 +449,14 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
         self.state.set_pc(X::from_u64(pc));
     }
 
+    fn get_csr(&self, csr: u16) -> u64 {
+        X::to_u64(self.state.csrs[csr as usize])
+    }
+
+    fn set_csr(&mut self, csr: u16, value: u64) {
+        self.state.csrs[csr as usize] = X::from_u64(value);
+    }
+
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         let mem_size = self.memory.size();
         let addr = addr as usize;
@@ -552,6 +574,14 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for StatsRunner<X, NUM_REGS> {
 
     fn set_pc(&mut self, pc: u64) {
         self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn get_csr(&self, csr: u16) -> u64 {
+        X::to_u64(self.state.csrs[csr as usize])
+    }
+
+    fn set_csr(&mut self, csr: u16, value: u64) {
+        self.state.csrs[csr as usize] = X::from_u64(value);
     }
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
@@ -675,6 +705,14 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for DebugRunner<X, NUM_REGS> {
         self.state.set_pc(X::from_u64(pc));
     }
 
+    fn get_csr(&self, csr: u16) -> u64 {
+        X::to_u64(self.state.csrs[csr as usize])
+    }
+
+    fn set_csr(&mut self, csr: u16, value: u64) {
+        self.state.csrs[csr as usize] = X::from_u64(value);
+    }
+
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         let mem_size = self.memory.size();
         let addr = addr as usize;
@@ -794,6 +832,14 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for SuspendRunner<X, NUM_REGS> {
 
     fn set_pc(&mut self, pc: u64) {
         self.state.set_pc(X::from_u64(pc));
+    }
+
+    fn get_csr(&self, csr: u16) -> u64 {
+        X::to_u64(self.state.csrs[csr as usize])
+    }
+
+    fn set_csr(&mut self, csr: u16, value: u64) {
+        self.state.csrs[csr as usize] = X::from_u64(value);
     }
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
@@ -1169,6 +1215,23 @@ impl Runner {
     /// Set the program counter.
     pub fn set_pc(&mut self, pc: u64) {
         self.inner.set_pc(pc);
+    }
+
+    /// Get a CSR (Control and Status Register) value.
+    ///
+    /// Common CSRs:
+    /// - 0xC00 (CYCLE): Cycle counter
+    /// - 0xC01 (TIME): Wall-clock time (can be set by host)
+    /// - 0xC02 (INSTRET): Instructions retired
+    pub fn get_csr(&self, csr: u16) -> u64 {
+        self.inner.get_csr(csr)
+    }
+
+    /// Set a CSR (Control and Status Register) value.
+    ///
+    /// The TIME CSR (0xC01) can be set to provide wall-clock time to guest programs.
+    pub fn set_csr(&mut self, csr: u16, value: u64) {
+        self.inner.set_csr(csr, value);
     }
 
     /// Read memory at the given address into the buffer.

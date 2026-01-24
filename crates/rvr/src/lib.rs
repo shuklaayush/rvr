@@ -201,6 +201,9 @@ pub use rvr_elf::{ElfImage, get_elf_xlen};
 pub use rvr_emit::{Compiler, EmitConfig, InstretMode, SyscallMode, TracerConfig};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
+// CSR constants for use with Runner::get_csr/set_csr
+pub use rvr_isa::extensions::{CSR_CYCLE, CSR_INSTRET, CSR_TIME};
+
 mod perf;
 mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
