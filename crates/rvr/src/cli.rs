@@ -130,6 +130,10 @@ pub enum Commands {
         #[arg(long, default_value = "32")]
         memory_bits: u8,
 
+        /// Maximum instructions to execute before stopping (requires --instret suspend at compile time)
+        #[arg(long)]
+        max_insns: Option<u64>,
+
         /// Start GDB server on specified address (e.g., :1234 or 127.0.0.1:1234)
         #[arg(long)]
         gdb: Option<String>,

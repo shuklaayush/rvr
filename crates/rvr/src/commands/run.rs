@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS, OutputFormat};
 use crate::commands::{print_multi_result, print_single_result};
@@ -14,10 +14,11 @@ pub fn cmd_run(
     format: OutputFormat,
     runs: usize,
     memory_bits: u8,
+    max_insns: Option<u64>,
     gdb_addr: Option<&str>,
 ) -> i32 {
     let memory_size = 1usize << memory_bits;
-    let runner = match rvr::Runner::load_with_memory(lib_dir, elf_path, memory_size) {
+    let mut runner = match rvr::Runner::load_with_memory(lib_dir, elf_path, memory_size) {
         Ok(r) => r,
         Err(e) => {
             error!(error = %e, path = %lib_dir.display(), "failed to load library");
@@ -25,13 +26,22 @@ pub fn cmd_run(
         }
     };
 
+    // Set up instruction limit if specified
+    if let Some(limit) = max_insns {
+        if runner.supports_suspend() {
+            runner.set_target_instret(limit);
+        } else {
+            warn!("--max-insns requires library compiled with --instret suspend");
+            return EXIT_FAILURE;
+        }
+    }
+
     // If --gdb is specified, start GDB server instead of running normally
     if let Some(addr) = gdb_addr {
         return cmd_run_gdb(runner, addr);
     }
 
     // Normal execution
-    let mut runner = runner;
     if runs <= 1 {
         match runner.run() {
             Ok(result) => {
