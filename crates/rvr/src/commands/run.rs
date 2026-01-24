@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS, OutputFormat};
 use crate::commands::{print_multi_result, print_single_result};
@@ -17,6 +17,8 @@ pub fn cmd_run(
     max_insns: Option<u64>,
     call_func: Option<&str>,
     gdb_addr: Option<&str>,
+    load_state_path: Option<&PathBuf>,
+    save_state_path: Option<&PathBuf>,
 ) -> i32 {
     let memory_size = 1usize << memory_bits;
     let mut runner = match rvr::Runner::load_with_memory(lib_dir, elf_path, memory_size) {
@@ -26,6 +28,19 @@ pub fn cmd_run(
             return EXIT_FAILURE;
         }
     };
+
+    // Load state from file if specified
+    if let Some(path) = load_state_path {
+        match runner.load_state(path) {
+            Ok(()) => {
+                info!(path = %path.display(), "loaded state");
+            }
+            Err(e) => {
+                error!(error = %e, path = %path.display(), "failed to load state");
+                return EXIT_FAILURE;
+            }
+        }
+    }
 
     // Set up instruction limit if specified
     if let Some(limit) = max_insns {
@@ -43,7 +58,7 @@ pub fn cmd_run(
     }
 
     // If --call is specified, call the function instead of running from entry point
-    if let Some(func_name) = call_func {
+    let exit_code = if let Some(func_name) = call_func {
         if !runner.has_export_functions() {
             warn!("--call requires library compiled with --export-functions");
             return EXIT_FAILURE;
@@ -86,7 +101,22 @@ pub fn cmd_run(
                 EXIT_FAILURE
             }
         }
+    };
+
+    // Save state to file if specified
+    if let Some(path) = save_state_path {
+        match runner.save_state(path) {
+            Ok(()) => {
+                info!(path = %path.display(), "saved state");
+            }
+            Err(e) => {
+                error!(error = %e, path = %path.display(), "failed to save state");
+                return EXIT_FAILURE;
+            }
+        }
     }
+
+    exit_code
 }
 
 /// Run with GDB server.

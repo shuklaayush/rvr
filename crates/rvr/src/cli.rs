@@ -141,6 +141,14 @@ pub enum Commands {
         /// Start GDB server on specified address (e.g., :1234 or 127.0.0.1:1234)
         #[arg(long)]
         gdb: Option<String>,
+
+        /// Load state from file before execution
+        #[arg(long)]
+        load_state: Option<PathBuf>,
+
+        /// Save state to file after execution
+        #[arg(long)]
+        save_state: Option<PathBuf>,
     },
     /// Build Rust project to RISC-V ELF
     Build {
