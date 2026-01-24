@@ -32,6 +32,9 @@ pub enum RunError {
     #[error("failed to find symbol '{0}': {1}")]
     SymbolNotFound(String, libloading::Error),
 
+    #[error("function not found: {0}")]
+    FunctionNotFound(String),
+
     #[error("memory allocation failed: {0}")]
     MemoryAllocationFailed(#[from] rvr_state::MemoryError),
 
@@ -1330,6 +1333,58 @@ impl Runner {
         crate::metrics::record_run("unknown", &result, perf.as_ref());
 
         Ok(RunResultWithPerf { result, perf })
+    }
+
+    /// Call a guest function by name with the given arguments.
+    ///
+    /// Sets up arguments in a0-a7 (registers 10-17) per RISC-V calling convention,
+    /// then executes the function. Returns the value in a0 after execution.
+    ///
+    /// # Requirements
+    /// - The library must be compiled with `--export-functions` to have function symbols
+    /// - Maximum 8 integer arguments (a0-a7)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let result = runner.call("add", &[1, 2])?;
+    /// assert_eq!(result, 3);
+    /// ```
+    pub fn call(&mut self, name: &str, args: &[u64]) -> Result<u64, RunError> {
+        let addr = self
+            .lookup_symbol(name)
+            .ok_or_else(|| RunError::FunctionNotFound(name.to_string()))?;
+        self.call_addr(addr, args)
+    }
+
+    /// Call a guest function by address with the given arguments.
+    ///
+    /// Like `call()`, but takes a direct address instead of looking up a symbol.
+    pub fn call_addr(&mut self, addr: u64, args: &[u64]) -> Result<u64, RunError> {
+        if args.len() > 8 {
+            return Err(RunError::TracerSetupFailed(
+                "too many arguments (max 8)".to_string(),
+            ));
+        }
+
+        // Prepare state
+        self.inner.load_segments();
+        self.inner.reset();
+
+        // Set up arguments in a0-a7 (registers 10-17)
+        for (i, &arg) in args.iter().enumerate() {
+            self.inner.set_register(10 + i, arg);
+        }
+
+        // Set ra (register 1) to 0 - this will trap when the function returns
+        self.inner.set_register(1, 0);
+
+        // Execute from function address
+        debug!(addr = format!("{:#x}", addr), "calling guest function");
+        unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), addr) };
+
+        // Return value is in a0 (register 10)
+        let result = self.inner.get_register(10);
+        Ok(result)
     }
 
     /// Run multiple times with hardware performance counters.
