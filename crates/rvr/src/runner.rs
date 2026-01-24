@@ -852,8 +852,9 @@ fn create_runner_impl(
     elf_data: &[u8],
     tracer_kind: TracerKind,
     instret_mode: InstretMode,
+    memory_size: usize,
 ) -> Result<Box<dyn RunnerImpl>, RunError> {
-    let memory = GuardedMemory::new(DEFAULT_MEMORY_SIZE)?;
+    let memory = GuardedMemory::new(memory_size)?;
     let xlen = get_elf_xlen(elf_data)?;
 
     match xlen {
@@ -1041,8 +1042,17 @@ pub struct Runner {
 }
 
 impl Runner {
-    /// Load a compiled shared library and its corresponding ELF.
+    /// Load a compiled shared library and its corresponding ELF with default memory size.
     pub fn load(lib_dir: impl AsRef<Path>, elf_path: impl AsRef<Path>) -> Result<Self, RunError> {
+        Self::load_with_memory(lib_dir, elf_path, DEFAULT_MEMORY_SIZE)
+    }
+
+    /// Load a compiled shared library and its corresponding ELF with specified memory size.
+    pub fn load_with_memory(
+        lib_dir: impl AsRef<Path>,
+        elf_path: impl AsRef<Path>,
+        memory_size: usize,
+    ) -> Result<Self, RunError> {
         let lib_dir = lib_dir.as_ref();
         let elf_path = elf_path.as_ref();
 
@@ -1071,12 +1081,13 @@ impl Runner {
 
         // Load ELF and create typed runner
         let elf_data = std::fs::read(elf_path)?;
-        let inner = create_runner_impl(&elf_data, tracer_kind, instret_mode)?;
+        let inner = create_runner_impl(&elf_data, tracer_kind, instret_mode, memory_size)?;
 
         trace!(
             entry_point = format!("{:#x}", inner.entry_point()),
             tracer_kind = ?tracer_kind,
             instret_mode = ?instret_mode,
+            memory_size = memory_size,
             "loaded runner"
         );
 

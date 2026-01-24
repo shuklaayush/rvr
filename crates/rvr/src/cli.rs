@@ -118,6 +118,10 @@ pub enum Commands {
         #[arg(long, default_value = "1")]
         runs: usize,
 
+        /// Memory size as power of 2 (e.g., 30 = 1 GiB, 32 = 4 GiB)
+        #[arg(long, default_value = "32")]
+        memory_bits: u8,
+
         /// Start GDB server on specified address (e.g., :1234 or 127.0.0.1:1234)
         #[arg(long)]
         gdb: Option<String>,

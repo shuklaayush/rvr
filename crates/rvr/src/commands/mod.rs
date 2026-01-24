@@ -62,8 +62,9 @@ pub fn run_command(cli: &Cli) -> i32 {
             elf_path,
             format,
             runs,
+            memory_bits,
             gdb,
-        } => run::cmd_run(lib_dir, elf_path, *format, *runs, gdb.as_deref()),
+        } => run::cmd_run(lib_dir, elf_path, *format, *runs, *memory_bits, gdb.as_deref()),
         Commands::Build {
             path,
             target,

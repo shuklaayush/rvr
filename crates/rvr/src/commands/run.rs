@@ -13,9 +13,11 @@ pub fn cmd_run(
     elf_path: &PathBuf,
     format: OutputFormat,
     runs: usize,
+    memory_bits: u8,
     gdb_addr: Option<&str>,
 ) -> i32 {
-    let runner = match rvr::Runner::load(lib_dir, elf_path) {
+    let memory_size = 1usize << memory_bits;
+    let runner = match rvr::Runner::load_with_memory(lib_dir, elf_path, memory_size) {
         Ok(r) => r,
         Err(e) => {
             error!(error = %e, path = %lib_dir.display(), "failed to load library");
