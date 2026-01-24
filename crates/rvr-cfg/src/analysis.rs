@@ -449,18 +449,13 @@ impl ControlFlowAnalyzer {
             "CFG analysis complete"
         );
 
-        // Warn about unresolved dynamic jumps - these can cause runtime failures
+        // Unresolved indirect jumps are handled conservatively by connecting them
+        // to all function entries and internal targets - no warning needed
         if !unresolved_dynamic_jumps.is_empty() {
-            warn!(
+            debug!(
                 count = unresolved_dynamic_jumps.len(),
-                "unresolved indirect jumps detected - jump table targets may be missing"
+                "indirect jumps handled conservatively (targets over-approximated)"
             );
-            for &pc in unresolved_dynamic_jumps.iter().take(10) {
-                debug!(pc = format!("{:#x}", pc), "unresolved jump at");
-            }
-            if unresolved_dynamic_jumps.len() > 10 {
-                debug!("... and {} more", unresolved_dynamic_jumps.len() - 10);
-            }
         }
 
         let mut block_to_function = FxHashMap::default();
