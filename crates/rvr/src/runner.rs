@@ -258,6 +258,10 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> TypedRunner<X, T, NUM_REGS>
     fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
         let mut state = RvState::new();
         state.set_memory(memory.as_ptr());
+        // Initialize brk for programs using malloc
+        let brk = elf_image.get_initial_program_break();
+        state.brk = brk;
+        state.start_brk = brk;
         Self {
             state,
             memory,
@@ -383,6 +387,10 @@ impl<X: Xlen, const NUM_REGS: usize> PreflightRunner<X, NUM_REGS> {
     fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
         let mut state = RvState::new();
         state.set_memory(memory.as_ptr());
+        // Initialize brk for programs using malloc
+        let brk = elf_image.get_initial_program_break();
+        state.brk = brk;
+        state.start_brk = brk;
         Self {
             state,
             memory,
@@ -516,6 +524,10 @@ impl<X: Xlen, const NUM_REGS: usize> StatsRunner<X, NUM_REGS> {
         let words = STATS_ADDR_BITMAP_BYTES / 8;
         let mut state = RvState::new();
         state.set_memory(memory.as_ptr());
+        // Initialize brk for programs using malloc
+        let brk = elf_image.get_initial_program_break();
+        state.brk = brk;
+        state.start_brk = brk;
         Self {
             state,
             memory,
@@ -644,6 +656,10 @@ impl<X: Xlen, const NUM_REGS: usize> DebugRunner<X, NUM_REGS> {
     fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
         let mut state = RvState::new();
         state.set_memory(memory.as_ptr());
+        // Initialize brk for programs using malloc
+        let brk = elf_image.get_initial_program_break();
+        state.brk = brk;
+        state.start_brk = brk;
         Self {
             state,
             memory,
@@ -773,6 +789,10 @@ impl<X: Xlen, const NUM_REGS: usize> SuspendRunner<X, NUM_REGS> {
     fn new(elf_image: ElfImage<X>, memory: GuardedMemory) -> Self {
         let mut state: RvState<X, (), InstretSuspender, NUM_REGS> = RvState::new();
         state.set_memory(memory.as_ptr());
+        // Initialize brk for programs using malloc
+        let brk = elf_image.get_initial_program_break();
+        state.brk = brk;
+        state.start_brk = brk;
         // Initialize suspender to not suspend (max u64)
         state.suspender.disable();
         Self {
