@@ -551,9 +551,9 @@ impl<X: Xlen> CEmitter<X> {
                             _ => (self.render_expr(addr), 0i16),
                         };
 
-                        // Check for tohost handling on 32-bit stores
-                        if self.config.htif_enabled && *width == 4 {
-                            self.render_mem_write_tohost(&base, offset, &value_str, indent);
+                        // Check for tohost handling on 32/64-bit stores
+                        if self.config.htif_enabled && (*width == 4 || *width == 8) {
+                            self.render_mem_write_tohost(&base, offset, &value_str, *width, indent);
                         } else if self.config.has_tracing() {
                             let store_fn = match width {
                                 1 => "twr_mem_u8",
@@ -662,7 +662,14 @@ impl<X: Xlen> CEmitter<X> {
     /// Render memory write with tohost check.
     ///
     /// When writing to TOHOST address, calls handle_tohost_write and checks for exit.
-    fn render_mem_write_tohost(&mut self, base: &str, offset: i16, value: &str, indent: usize) {
+    fn render_mem_write_tohost(
+        &mut self,
+        base: &str,
+        offset: i16,
+        value: &str,
+        width: u8,
+        indent: usize,
+    ) {
         let pc_lit = self.fmt_addr(self.current_pc);
         let save_to_state = self.sig.save_to_state.clone();
 
@@ -700,21 +707,28 @@ impl<X: Xlen> CEmitter<X> {
         self.writeln(indent + 2, "return;");
         self.writeln(indent + 1, "}");
         self.writeln(indent, "} else {");
+
+        // Select correct store function based on width
+        let (store_fn, tstore_fn) = match width {
+            4 => ("wr_mem_u32", "twr_mem_u32"),
+            8 => ("wr_mem_u64", "twr_mem_u64"),
+            _ => ("wr_mem_u32", "twr_mem_u32"),
+        };
+
         if self.config.has_tracing() {
             let pc_lit = self.fmt_addr(self.current_pc);
             let op_lit = self.current_op;
             self.writeln(
                 indent + 1,
                 &format!(
-                    "twr_mem_u32(&state->tracer, {}, {}, memory, {}, {}, {});",
-                    pc_lit, op_lit, base, offset, value
+                    "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
+                    tstore_fn, pc_lit, op_lit, base, offset, value
                 ),
             );
         } else {
-            // Use direct wr_mem_u32 when tracing disabled
             self.writeln(
                 indent + 1,
-                &format!("wr_mem_u32(memory, {}, {}, {});", base, offset, value),
+                &format!("{}(memory, {}, {}, {});", store_fn, base, offset, value),
             );
         }
         self.writeln(indent, "}");
