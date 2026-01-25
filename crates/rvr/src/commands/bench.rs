@@ -131,6 +131,103 @@ fn build_riscv_tests_benchmark(
     Ok(out_path)
 }
 
+/// Build a riscv-tests benchmark for the host using the system compiler.
+fn build_riscv_tests_host_benchmark(
+    project_dir: &std::path::Path,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
+    let common_dir = bench_dir.join("common");
+    let out_dir = project_dir.join("bin/host");
+    let toolchain_dir = project_dir.join("toolchain");
+
+    let src_dir = bench_dir.join(name);
+    if !src_dir.exists() {
+        return Err(format!("benchmark source not found: {}", src_dir.display()));
+    }
+
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("failed to create output dir: {}", e))?;
+
+    let mut c_files: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
+        let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("c") {
+            c_files.push(path);
+        }
+    }
+
+    if c_files.is_empty() {
+        return Err(format!("no C files found in {}", src_dir.display()));
+    }
+
+    let out_path = out_dir.join(name);
+    let host_syscalls = toolchain_dir.join("bench_host_syscalls.c");
+
+    let mut cmd = Command::new("cc");
+    cmd.args(["-O3", "-DPREALLOCATE=1"])
+        .arg(format!("-I{}", common_dir.display()))
+        .arg(&host_syscalls);
+
+    for f in &c_files {
+        cmd.arg(f);
+    }
+
+    cmd.arg("-o").arg(&out_path);
+
+    let output = cmd
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run cc: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("cc failed: {}", stderr));
+    }
+
+    Ok(out_path)
+}
+
+/// Run a riscv-tests host benchmark and parse its timing output.
+fn run_riscv_tests_host_benchmark(
+    host_bin: &std::path::Path,
+    runs: usize,
+) -> Result<f64, String> {
+    let runs = runs.max(1);
+    let mut total_nanos = 0u64;
+
+    for _ in 0..runs {
+        let output = Command::new(host_bin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("failed to run host: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!("host exited with code {:?}", output.status.code()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Parse "host_nanos = 12345" from output
+        for line in stdout.lines() {
+            if let Some(rest) = line.strip_prefix("host_nanos = ") {
+                if let Ok(nanos) = rest.trim().parse::<u64>() {
+                    total_nanos += nanos;
+                    break;
+                }
+            }
+        }
+    }
+
+    if total_nanos == 0 {
+        return Err("no timing output from host benchmark".to_string());
+    }
+
+    let avg_secs = (total_nanos as f64 / runs as f64) / 1_000_000_000.0;
+    Ok(avg_secs)
+}
+
 // ============================================================================
 // Benchmark registry
 // ============================================================================
@@ -687,7 +784,38 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::RiscvTests => {
-                    // No host comparison for riscv-tests benchmarks
+                    // Build and run host version, parsing its timing output
+                    let host_bin = project_dir.join("bin/host").join(benchmark.name);
+                    if !host_bin.exists() || force {
+                        let spinner =
+                            Spinner::new(format!("Building {} (host)", benchmark.name));
+                        if let Err(e) =
+                            build_riscv_tests_host_benchmark(&project_dir, benchmark.name)
+                        {
+                            spinner.finish_with_failure(&format!("build failed: {}", e));
+                            rows.push(bench::TableRow::error("host", "build failed".to_string()));
+                        } else {
+                            spinner.finish_and_clear();
+                        }
+                    }
+                    if host_bin.exists() {
+                        let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
+                        match run_riscv_tests_host_benchmark(&host_bin, runs) {
+                            Ok(time_secs) => {
+                                spinner.finish_and_clear();
+                                host_time = Some(time_secs);
+                                let result = bench::HostResult {
+                                    time_secs: Some(time_secs),
+                                    perf: None,
+                                };
+                                rows.push(bench::TableRow::host("host", &result));
+                            }
+                            Err(e) => {
+                                spinner.finish_with_failure(&e);
+                                rows.push(bench::TableRow::error("host", e));
+                            }
+                        }
+                    }
                 }
             }
         }
