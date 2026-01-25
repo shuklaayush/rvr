@@ -1492,7 +1492,8 @@ impl Runner {
         let mut offset = 0;
         while offset < mem_size {
             let chunk_size = buf.len().min(mem_size - offset);
-            self.inner.read_memory(offset as u64, &mut buf[..chunk_size]);
+            self.inner
+                .read_memory(offset as u64, &mut buf[..chunk_size]);
             encoder.write_all(&buf[..chunk_size])?;
             offset += chunk_size;
         }
@@ -1522,7 +1523,9 @@ impl Runner {
         let mut version = [0u8; 4];
         reader.read_exact(&mut version)?;
         if u32::from_le_bytes(version) != VERSION {
-            return Err(RunError::StateError("unsupported state version".to_string()));
+            return Err(RunError::StateError(
+                "unsupported state version".to_string(),
+            ));
         }
 
         let mut xlen = [0u8; 1];
@@ -1530,7 +1533,8 @@ impl Runner {
         if xlen[0] != self.inner.xlen() {
             return Err(RunError::StateError(format!(
                 "xlen mismatch: file has {}, runner has {}",
-                xlen[0], self.inner.xlen()
+                xlen[0],
+                self.inner.xlen()
             )));
         }
 
@@ -1539,7 +1543,8 @@ impl Runner {
         if num_regs[0] as usize != self.inner.num_regs() {
             return Err(RunError::StateError(format!(
                 "num_regs mismatch: file has {}, runner has {}",
-                num_regs[0], self.inner.num_regs()
+                num_regs[0],
+                self.inner.num_regs()
             )));
         }
 
@@ -1549,7 +1554,8 @@ impl Runner {
         if file_mem_size != self.inner.memory_size() {
             return Err(RunError::StateError(format!(
                 "memory size mismatch: file has {}, runner has {}",
-                file_mem_size, self.inner.memory_size()
+                file_mem_size,
+                self.inner.memory_size()
             )));
         }
 

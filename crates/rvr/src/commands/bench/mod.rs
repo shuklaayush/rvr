@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use rvr::bench::{self, Arch};
-use rvr::{CompileOptions, Compiler, InstretMode};
+use rvr::{CompileOptions, Compiler, InstretMode, SyscallMode};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
@@ -146,7 +146,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         default_archs: "rv64i",
         source: BenchmarkSource::RiscvTests,
     },
-    // libriscv benchmarks
+    // libriscv benchmarks (use Linux syscalls, not HTIF)
     BenchmarkInfo {
         name: "fib",
         description: "Fibonacci (recursive tail-call)",
@@ -464,8 +464,8 @@ pub fn bench_compile(
 
     let suffix = if fast { "fast" } else { "base" };
 
-    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
-        terminal::error(&format!("{}", e));
+    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
+        terminal::error(&e);
         std::process::exit(EXIT_FAILURE);
     });
     if let Some(ld) = linker {
@@ -508,11 +508,14 @@ pub fn bench_compile(
             if fast {
                 options = options.with_instret_mode(InstretMode::Off);
             }
-            if matches!(
-                benchmark.source,
-                BenchmarkSource::RiscvTests | BenchmarkSource::Libriscv
-            ) {
-                options = options.with_htif(true);
+            match &benchmark.source {
+                BenchmarkSource::RiscvTests => {
+                    options = options.with_htif(true);
+                }
+                BenchmarkSource::Libriscv => {
+                    options = options.with_syscall_mode(SyscallMode::Linux);
+                }
+                _ => {}
             }
 
             if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
@@ -628,8 +631,7 @@ pub fn bench_run(
                 BenchmarkSource::RiscvTests => {
                     let host_bin = project_dir.join("bin/host").join(benchmark.name);
                     if !host_bin.exists() || force {
-                        let spinner =
-                            Spinner::new(format!("Building {} (host)", benchmark.name));
+                        let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
                         if let Err(e) =
                             riscv_tests::build_host_benchmark(&project_dir, benchmark.name)
                         {
@@ -640,8 +642,7 @@ pub fn bench_run(
                         }
                     }
                     if host_bin.exists() {
-                        let spinner =
-                            Spinner::new(format!("Running {} (host)", benchmark.name));
+                        let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                         match riscv_tests::run_host_benchmark(&host_bin, runs) {
                             Ok(time_secs) => {
                                 spinner.finish_and_clear();
@@ -660,7 +661,37 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::Libriscv => {
-                    // No host comparison for libriscv benchmarks yet
+                    let host_lib = project_dir
+                        .join("bin/host")
+                        .join(format!("{}.so", benchmark.name));
+                    if !host_lib.exists() || force {
+                        let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
+                        if let Err(e) = libriscv::build_host_benchmark(&project_dir, benchmark.name)
+                        {
+                            spinner.finish_with_failure(&format!("build failed: {}", e));
+                            rows.push(bench::TableRow::error("host", "build failed".to_string()));
+                        } else {
+                            spinner.finish_and_clear();
+                        }
+                    }
+                    if host_lib.exists() {
+                        let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
+                        match libriscv::run_host_benchmark(&host_lib, runs) {
+                            Ok(time_secs) => {
+                                spinner.finish_and_clear();
+                                host_time = Some(time_secs);
+                                let result = bench::HostResult {
+                                    time_secs: Some(time_secs),
+                                    perf: None,
+                                };
+                                rows.push(bench::TableRow::host("host", &result));
+                            }
+                            Err(e) => {
+                                spinner.finish_with_failure(&e);
+                                rows.push(bench::TableRow::error("host", e));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -681,18 +712,16 @@ pub fn bench_run(
             }
         }
 
-        rows.sort_by(|a, b| {
-            match (&a.error, &b.error) {
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                (Some(_), Some(_)) => std::cmp::Ordering::Equal,
-                (None, None) => {
-                    let a_key = a.overhead.or(a.time_secs.map(|t| t * 1000.0));
-                    let b_key = b.overhead.or(b.time_secs.map(|t| t * 1000.0));
-                    a_key
-                        .partial_cmp(&b_key)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }
+        rows.sort_by(|a, b| match (&a.error, &b.error) {
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), Some(_)) => std::cmp::Ordering::Equal,
+            (None, None) => {
+                let a_key = a.overhead.or(a.time_secs.map(|t| t * 1000.0));
+                let b_key = b.overhead.or(b.time_secs.map(|t| t * 1000.0));
+                a_key
+                    .partial_cmp(&b_key)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             }
         });
 
@@ -834,11 +863,15 @@ fn run_single_arch(
         if fast {
             options = options.with_instret_mode(InstretMode::Off);
         }
-        if matches!(
-            benchmark.source,
-            BenchmarkSource::RiscvTests | BenchmarkSource::Libriscv
-        ) {
-            options = options.with_htif(true);
+        match &benchmark.source {
+            BenchmarkSource::RiscvTests => {
+                options = options.with_htif(true);
+            }
+            BenchmarkSource::Libriscv => {
+                // libriscv benchmarks use Linux syscall conventions
+                options = options.with_syscall_mode(SyscallMode::Linux);
+            }
+            _ => {}
         }
 
         if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {

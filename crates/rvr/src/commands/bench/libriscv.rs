@@ -2,26 +2,14 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Instant;
+
+use libloading::os::unix::{Library, RTLD_NOW, Symbol};
 
 use rvr::bench::Arch;
 
-/// Wrapper for fib.c - includes original source and calls fib() directly.
-const FIB_WRAPPER_C: &str = r#"
-// Wrapper for libriscv fib benchmark.
-// Renames _start to avoid conflict with CRT, then calls fib() directly.
-
-#define _start _unused_original_start
-#include "fib.c"
-#undef _start
-
-int main(void) {
-    // Use 50M iterations (reduced from original 256M for practical runtime)
-    const volatile long n = 50000000;
-    return (int)(fib(n, 0, 1) & 0xFF);
-}
-"#;
-
-/// Build a libriscv benchmark using riscv-gcc with riscv-tests runtime.
+/// Build a libriscv benchmark directly from source.
+/// These benchmarks use Linux syscall conventions (syscall 93 for exit).
 pub fn build_benchmark(
     project_dir: &std::path::Path,
     name: &str,
@@ -32,34 +20,19 @@ pub fn build_benchmark(
 
     let gcc = format!("{}gcc", toolchain);
     let out_dir = project_dir.join("bin").join(arch.as_str());
-    let build_dir = project_dir.join("target/libriscv-build").join(name);
-
-    // Use riscv-tests common infrastructure
-    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
-    let common_dir = bench_dir.join("common");
-    let env_dir = project_dir.join("programs/riscv-tests/env");
-    let link_ld = common_dir.join("test.ld");
-    let crt_s = common_dir.join("crt.S");
-    let syscalls_c = common_dir.join("syscalls.c");
-
-    // libriscv source directories
     let libriscv_dir = project_dir.join("programs/libriscv/binaries");
 
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
-    std::fs::create_dir_all(&build_dir)
-        .map_err(|e| format!("failed to create build dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
 
-    // Get wrapper content and source include path for this benchmark
-    let (wrapper_content, src_include_dir) = match name {
-        "fib" => (FIB_WRAPPER_C, libriscv_dir.join("measure_mips")),
+    // Get the source file path
+    let src_path = match name {
+        "fib" => libriscv_dir.join("measure_mips/fib.c"),
         _ => return Err(format!("unknown libriscv benchmark: {}", name)),
     };
 
-    // Write wrapper to build directory
-    let wrapper_path = build_dir.join(format!("{}_wrapper.c", name));
-    std::fs::write(&wrapper_path, wrapper_content)
-        .map_err(|e| format!("failed to write wrapper: {}", e))?;
+    if !src_path.exists() {
+        return Err(format!("source not found: {}", src_path.display()));
+    }
 
     let (march, mabi) = match arch {
         Arch::Rv32i | Arch::Rv32e => ("rv32im_zicsr", "ilp32"),
@@ -68,20 +41,13 @@ pub fn build_benchmark(
 
     let out_path = out_dir.join(name);
 
+    // Build directly - fib.c has its own _start and uses syscall 93 (Linux exit)
     let mut cmd = Command::new(&gcc);
     cmd.arg(format!("-march={}", march))
         .arg(format!("-mabi={}", mabi))
-        .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
-        .args(["-nostdlib", "-nostartfiles"])
-        .args(["-std=gnu99", "-O3", "-fno-common", "-fno-builtin-printf"])
-        .arg(format!("-I{}", common_dir.display()))
-        .arg(format!("-I{}", env_dir.display()))
-        .arg(format!("-I{}", src_include_dir.display()))
-        .arg(format!("-T{}", link_ld.display()))
-        .arg(&crt_s)
-        .arg(&syscalls_c)
-        .arg(&wrapper_path)
-        .arg("-lgcc")
+        .args(["-static", "-nostdlib", "-nostartfiles"])
+        .args(["-O3", "-fno-builtin"])
+        .arg(&src_path)
         .arg("-o")
         .arg(&out_path);
 
@@ -96,4 +62,84 @@ pub fn build_benchmark(
     }
 
     Ok(out_path)
+}
+
+/// Header to make RISC-V code compile on host.
+/// - Renames syscall to _host_syscall (so function definition compiles)
+/// - Stubs out asm/register bindings (so the function body compiles)
+/// - Stores result in global to prevent optimizer removing fib call
+const HOST_COMPAT_H: &str = r#"
+long __host_result;
+#define syscall _host_syscall
+#define asm(x) /* removed */
+"#;
+
+/// Build a libriscv benchmark as a shared library for the host.
+pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {
+    let libriscv_dir = project_dir.join("programs/libriscv/binaries");
+    let out_dir = project_dir.join("bin/host");
+
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
+
+    let src_path = match name {
+        "fib" => libriscv_dir.join("measure_mips/fib.c"),
+        _ => return Err(format!("unknown libriscv benchmark: {}", name)),
+    };
+
+    if !src_path.exists() {
+        return Err(format!("source not found: {}", src_path.display()));
+    }
+
+    // Write compat header
+    let compat_h = out_dir.join("_host_compat.h");
+    std::fs::write(&compat_h, HOST_COMPAT_H)
+        .map_err(|e| format!("failed to write compat header: {}", e))?;
+
+    let out_path = out_dir.join(format!("{}.so", name));
+
+    // Use sed to remove __asm__ volatile lines, then compile with compat header
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            r#"sed 's/__asm__ volatile[^;]*;/__host_result = a0;/' {} | cc -shared -fPIC -O3 -include{} -x c - -o {}"#,
+            src_path.display(),
+            compat_h.display(),
+            out_path.display()
+        ))
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run cc: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("cc failed: {}", stderr));
+    }
+
+    Ok(out_path)
+}
+
+/// Run a libriscv host benchmark by calling _start via dlopen.
+pub fn run_host_benchmark(lib_path: &std::path::Path, runs: usize) -> Result<f64, String> {
+    let lib = unsafe {
+        Library::open(Some(lib_path), RTLD_NOW)
+            .map_err(|e| format!("failed to load {}: {}", lib_path.display(), e))?
+    };
+
+    type StartFn = unsafe extern "C" fn();
+
+    let start: Symbol<StartFn> = unsafe {
+        lib.get(b"_start")
+            .map_err(|e| format!("_start symbol not found: {}", e))?
+    };
+
+    let runs = runs.max(1);
+    let mut total_time = std::time::Duration::ZERO;
+
+    for _ in 0..runs {
+        let t = Instant::now();
+        unsafe { start() };
+        total_time += t.elapsed();
+    }
+
+    Ok(total_time.as_secs_f64() / runs as f64)
 }

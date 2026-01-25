@@ -224,7 +224,12 @@ fn cmd_run_debug(mut runner: rvr::Runner) -> i32 {
             "reg" => {
                 if let Some(n) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
                     if n < runner.num_regs() {
-                        println!("x{} = 0x{:x} ({})", n, runner.get_register(n), runner.get_register(n));
+                        println!(
+                            "x{} = 0x{:x} ({})",
+                            n,
+                            runner.get_register(n),
+                            runner.get_register(n)
+                        );
                     } else {
                         println!("Invalid register number");
                     }
@@ -305,7 +310,11 @@ fn execute_step(runner: &mut rvr::Runner, count: u64, _breakpoints: &[u64]) -> b
             if runner.exit_code() == 0 {
                 println!("Program exited with code 0");
             } else {
-                println!("Execution stopped: {} (exit code: {})", e, runner.exit_code());
+                println!(
+                    "Execution stopped: {} (exit code: {})",
+                    e,
+                    runner.exit_code()
+                );
             }
             false
         }

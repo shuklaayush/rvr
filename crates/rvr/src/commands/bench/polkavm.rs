@@ -2,7 +2,6 @@
 //!
 //! Handles building polkavm benchmarks for RISC-V targets and native host.
 
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
@@ -63,7 +62,7 @@ pub fn build_benchmark(
         }
     }
 
-    let mut child = cmd
+    let status = cmd
         .arg("+nightly")
         .arg("build")
         .arg("--manifest-path")
@@ -79,26 +78,10 @@ pub fn build_benchmark(
         .arg(&bench_name)
         .arg("-p")
         .arg(&bench_name)
-        .stderr(Stdio::piped())
-        .spawn()
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("failed to run cargo: {}", e))?;
-
-    // Filter stderr to remove "multiple build targets" warnings
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            if !line.contains("found to be present in multiple build targets")
-                && !line.contains("`lib` target")
-                && !line.contains("`bin` target")
-            {
-                eprintln!("{}", line);
-            }
-        }
-    }
-
-    let status = child
-        .wait()
-        .map_err(|e| format!("cargo wait failed: {}", e))?;
     if !status.success() {
         return Err(format!("cargo build failed for {}/{}", benchmark, arch));
     }
@@ -205,7 +188,7 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
         }
     }
 
-    let mut child = cmd
+    let status = cmd
         .arg("build")
         .arg("--manifest-path")
         .arg(guest_programs.join("Cargo.toml"))
@@ -215,26 +198,10 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
         .arg("--lib")
         .arg("-p")
         .arg(&bench_name)
-        .stderr(Stdio::piped())
-        .spawn()
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("failed to run cargo: {}", e))?;
-
-    // Filter stderr to remove "multiple build targets" warnings
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            if !line.contains("found to be present in multiple build targets")
-                && !line.contains("`lib` target")
-                && !line.contains("`bin` target")
-            {
-                eprintln!("{}", line);
-            }
-        }
-    }
-
-    let status = child
-        .wait()
-        .map_err(|e| format!("cargo wait failed: {}", e))?;
     if !status.success() {
         return Err(format!("cargo build failed for {} (host)", benchmark));
     }
@@ -267,8 +234,6 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
 pub struct HostBenchResult {
     /// Average time per run in seconds.
     pub time_secs: f64,
-    /// Number of runs.
-    pub runs: usize,
 }
 
 /// Run a polkavm benchmark on the host.
@@ -312,7 +277,7 @@ pub fn run_host_benchmark(lib_path: &Path, runs: usize) -> Result<HostBenchResul
 
     let time_secs = elapsed.as_secs_f64() / runs as f64;
 
-    Ok(HostBenchResult { time_secs, runs })
+    Ok(HostBenchResult { time_secs })
 }
 
 #[cfg(test)]

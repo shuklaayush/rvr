@@ -54,8 +54,7 @@ pub fn build_benchmark(
         return Err(format!("benchmark source not found: {}", src_dir.display()));
     }
 
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
 
     let mut c_files: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
@@ -86,7 +85,13 @@ pub fn build_benchmark(
         .arg(format!("-mabi={}", mabi))
         .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
         .args(["-nostdlib", "-nostartfiles"])
-        .args(["-std=gnu99", "-O2", "-ffast-math", "-fno-common", "-fno-builtin-printf"])
+        .args([
+            "-std=gnu99",
+            "-O2",
+            "-ffast-math",
+            "-fno-common",
+            "-fno-builtin-printf",
+        ])
         .args(["-fno-tree-loop-distribute-patterns"])
         .args(["-Wno-implicit-function-declaration", "-Wno-implicit-int"])
         .arg("-DPREALLOCATE=1")
@@ -115,10 +120,7 @@ pub fn build_benchmark(
 }
 
 /// Build a riscv-tests benchmark for the host using the system compiler.
-pub fn build_host_benchmark(
-    project_dir: &std::path::Path,
-    name: &str,
-) -> Result<PathBuf, String> {
+pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {
     let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
     let common_dir = bench_dir.join("common");
     let out_dir = project_dir.join("bin/host");
@@ -128,8 +130,7 @@ pub fn build_host_benchmark(
         return Err(format!("benchmark source not found: {}", src_dir.display()));
     }
 
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
 
     let mut c_files: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
@@ -152,7 +153,7 @@ pub fn build_host_benchmark(
     let out_path = out_dir.join(name);
 
     let mut cmd = Command::new("cc");
-    cmd.args(["-O3", "-std=gnu89", "-DPREALLOCATE=1"])
+    cmd.args(["-O3", "-std=gnu99", "-DPREALLOCATE=1"])
         .args(["-Wno-implicit-int", "-Wno-implicit-function-declaration"])
         .arg(format!("-I{}", common_dir.display()));
 
