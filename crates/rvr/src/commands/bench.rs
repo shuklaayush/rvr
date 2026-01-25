@@ -51,10 +51,7 @@ fn build_riscv_tests_benchmark(
     let gcc = format!("{}gcc", toolchain);
     let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
     let common_dir = bench_dir.join("common");
-    // Put binaries in arch-specific directories
-    let out_dir = project_dir
-        .join("bin/riscv-tests-bench")
-        .join(arch.as_str());
+    let out_dir = project_dir.join("bin").join(arch.as_str());
 
     // Check source exists
     let src_dir = bench_dir.join(name);
@@ -538,23 +535,10 @@ pub fn bench_compile(
         };
 
         for a in &archs {
-            // ELF path depends on source type
-            let elf_path = match benchmark.source {
-                BenchmarkSource::RiscvTests => {
-                    // riscv-tests benchmarks go to bin/riscv-tests-bench/{arch}/{name}
-                    project_dir
-                        .join("bin/riscv-tests-bench")
-                        .join(a.as_str())
-                        .join(benchmark.name)
-                }
-                _ => {
-                    // Other benchmarks: bin/{arch}/{name}
-                    project_dir
-                        .join("bin")
-                        .join(a.as_str())
-                        .join(benchmark.name)
-                }
-            };
+            let elf_path = project_dir
+                .join("bin")
+                .join(a.as_str())
+                .join(benchmark.name);
 
             if !elf_path.exists() {
                 terminal::warning(&format!("{} not found, skipping", elf_path.display()));
@@ -780,20 +764,10 @@ fn run_single_arch(
     host_time: Option<f64>,
     force: bool,
 ) -> Option<bench::TableRow> {
-    // ELF path depends on source type
-    let elf_path = match &benchmark.source {
-        BenchmarkSource::RiscvTests => {
-            // riscv-tests benchmarks go to bin/riscv-tests-bench/{arch}/{name}
-            project_dir
-                .join("bin/riscv-tests-bench")
-                .join(arch.as_str())
-                .join(benchmark.name)
-        }
-        _ => {
-            // Other benchmarks: bin/{arch}/{name}
-            project_dir.join("bin").join(arch.as_str()).join(benchmark.name)
-        }
-    };
+    let elf_path = project_dir
+        .join("bin")
+        .join(arch.as_str())
+        .join(benchmark.name);
     let out_dir = project_dir
         .join("target/benchmarks")
         .join(benchmark.name)
