@@ -5,25 +5,19 @@ use std::process::{Command, Stdio};
 
 use rvr::bench::Arch;
 
-/// Fib benchmark from libriscv - adapted for riscv-tests runtime.
-const FIB_C: &str = r#"
-// Fibonacci benchmark from libriscv, adapted for riscv-tests runtime.
-// Original: programs/libriscv/binaries/measure_mips/fib.c
+/// Wrapper for fib.c - includes original source and calls fib() directly.
+const FIB_WRAPPER_C: &str = r#"
+// Wrapper for libriscv fib benchmark.
+// Renames _start to avoid conflict with CRT, then calls fib() directly.
 
-static long fib(long n, long acc, long prev)
-{
-    if (n == 0)
-        return acc;
-    else
-        return fib(n - 1, prev + acc, acc);
-}
+#define _start _unused_original_start
+#include "fib.c"
+#undef _start
 
-int main(void)
-{
-    // Reduced from original 256M to run in reasonable time
+int main(void) {
+    // Use 50M iterations (reduced from original 256M for practical runtime)
     const volatile long n = 50000000;
-    long result = fib(n, 0, 1);
-    return (int)(result & 0xFF);
+    return (int)(fib(n, 0, 1) & 0xFF);
 }
 "#;
 
@@ -48,19 +42,24 @@ pub fn build_benchmark(
     let crt_s = common_dir.join("crt.S");
     let syscalls_c = common_dir.join("syscalls.c");
 
+    // libriscv source directories
+    let libriscv_dir = project_dir.join("programs/libriscv/binaries");
+
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("failed to create output dir: {}", e))?;
     std::fs::create_dir_all(&build_dir)
         .map_err(|e| format!("failed to create build dir: {}", e))?;
 
-    // Write the benchmark source to build directory
-    let src_path = build_dir.join(format!("{}.c", name));
-    let src_content = match name {
-        "fib" => FIB_C,
+    // Get wrapper content and source include path for this benchmark
+    let (wrapper_content, src_include_dir) = match name {
+        "fib" => (FIB_WRAPPER_C, libriscv_dir.join("measure_mips")),
         _ => return Err(format!("unknown libriscv benchmark: {}", name)),
     };
-    std::fs::write(&src_path, src_content)
-        .map_err(|e| format!("failed to write source: {}", e))?;
+
+    // Write wrapper to build directory
+    let wrapper_path = build_dir.join(format!("{}_wrapper.c", name));
+    std::fs::write(&wrapper_path, wrapper_content)
+        .map_err(|e| format!("failed to write wrapper: {}", e))?;
 
     let (march, mabi) = match arch {
         Arch::Rv32i | Arch::Rv32e => ("rv32im_zicsr", "ilp32"),
@@ -77,10 +76,11 @@ pub fn build_benchmark(
         .args(["-std=gnu99", "-O3", "-fno-common", "-fno-builtin-printf"])
         .arg(format!("-I{}", common_dir.display()))
         .arg(format!("-I{}", env_dir.display()))
+        .arg(format!("-I{}", src_include_dir.display()))
         .arg(format!("-T{}", link_ld.display()))
         .arg(&crt_s)
         .arg(&syscalls_c)
-        .arg(&src_path)
+        .arg(&wrapper_path)
         .arg("-lgcc")
         .arg("-o")
         .arg(&out_path);
