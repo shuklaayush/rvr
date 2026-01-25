@@ -169,8 +169,15 @@ fn build_riscv_tests_host_benchmark(
     cmd.args(["-O3", "-std=gnu89", "-DPREALLOCATE=1"])
         // Allow old K&R C style (dhrystone uses implicit int and old declarations)
         .args(["-Wno-implicit-int", "-Wno-implicit-function-declaration"])
-        .arg(format!("-I{}", common_dir.display()))
-        .arg(&host_syscalls);
+        .arg(format!("-I{}", common_dir.display()));
+
+    // For dhrystone, include fix header to avoid times() code path issues
+    if name == "dhrystone" {
+        let fix_header = toolchain_dir.join("dhrystone_fix.h");
+        cmd.arg(format!("-include{}", fix_header.display()));
+    }
+
+    cmd.arg(&host_syscalls);
 
     for f in &c_files {
         cmd.arg(f);
@@ -786,44 +793,36 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::RiscvTests => {
-                    // Skip host comparison for benchmarks with K&R C issues
-                    if benchmark.name == "dhrystone" {
-                        // dhrystone uses old K&R C that doesn't compile on modern hosts
-                    } else {
-                        // Build and run host version, parsing its timing output
-                        let host_bin = project_dir.join("bin/host").join(benchmark.name);
-                        if !host_bin.exists() || force {
-                            let spinner =
-                                Spinner::new(format!("Building {} (host)", benchmark.name));
-                            if let Err(e) =
-                                build_riscv_tests_host_benchmark(&project_dir, benchmark.name)
-                            {
-                                spinner.finish_with_failure(&format!("build failed: {}", e));
-                                rows.push(bench::TableRow::error(
-                                    "host",
-                                    "build failed".to_string(),
-                                ));
-                            } else {
-                                spinner.finish_and_clear();
-                            }
+                    // Build and run host version, parsing its timing output
+                    let host_bin = project_dir.join("bin/host").join(benchmark.name);
+                    if !host_bin.exists() || force {
+                        let spinner =
+                            Spinner::new(format!("Building {} (host)", benchmark.name));
+                        if let Err(e) =
+                            build_riscv_tests_host_benchmark(&project_dir, benchmark.name)
+                        {
+                            spinner.finish_with_failure(&format!("build failed: {}", e));
+                            rows.push(bench::TableRow::error("host", "build failed".to_string()));
+                        } else {
+                            spinner.finish_and_clear();
                         }
-                        if host_bin.exists() {
-                            let spinner =
-                                Spinner::new(format!("Running {} (host)", benchmark.name));
-                            match run_riscv_tests_host_benchmark(&host_bin, runs) {
-                                Ok(time_secs) => {
-                                    spinner.finish_and_clear();
-                                    host_time = Some(time_secs);
-                                    let result = bench::HostResult {
-                                        time_secs: Some(time_secs),
-                                        perf: None,
-                                    };
-                                    rows.push(bench::TableRow::host("host", &result));
-                                }
-                                Err(e) => {
-                                    spinner.finish_with_failure(&e);
-                                    rows.push(bench::TableRow::error("host", e));
-                                }
+                    }
+                    if host_bin.exists() {
+                        let spinner =
+                            Spinner::new(format!("Running {} (host)", benchmark.name));
+                        match run_riscv_tests_host_benchmark(&host_bin, runs) {
+                            Ok(time_secs) => {
+                                spinner.finish_and_clear();
+                                host_time = Some(time_secs);
+                                let result = bench::HostResult {
+                                    time_secs: Some(time_secs),
+                                    perf: None,
+                                };
+                                rows.push(bench::TableRow::host("host", &result));
+                            }
+                            Err(e) => {
+                                spinner.finish_with_failure(&e);
+                                rows.push(bench::TableRow::error("host", e));
                             }
                         }
                     }
