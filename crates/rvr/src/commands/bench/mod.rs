@@ -617,7 +617,7 @@ pub fn bench_run(
                                 host_time = Some(result.time_secs);
                                 let host_result = bench::HostResult {
                                     time_secs: Some(result.time_secs),
-                                    perf: None,
+                                    perf: result.perf,
                                 };
                                 rows.push(bench::TableRow::host("host", &host_result));
                             }
@@ -644,14 +644,14 @@ pub fn bench_run(
                     if host_bin.exists() {
                         let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                         match riscv_tests::run_host_benchmark(&host_bin, runs) {
-                            Ok(time_secs) => {
+                            Ok(result) => {
                                 spinner.finish_and_clear();
-                                host_time = Some(time_secs);
-                                let result = bench::HostResult {
-                                    time_secs: Some(time_secs),
-                                    perf: None,
+                                host_time = Some(result.time_secs);
+                                let host_result = bench::HostResult {
+                                    time_secs: Some(result.time_secs),
+                                    perf: result.perf,
                                 };
-                                rows.push(bench::TableRow::host("host", &result));
+                                rows.push(bench::TableRow::host("host", &host_result));
                             }
                             Err(e) => {
                                 spinner.finish_with_failure(&e);
@@ -677,14 +677,14 @@ pub fn bench_run(
                     if host_lib.exists() {
                         let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
                         match libriscv::run_host_benchmark(&host_lib, runs) {
-                            Ok(time_secs) => {
+                            Ok(result) => {
                                 spinner.finish_and_clear();
-                                host_time = Some(time_secs);
-                                let result = bench::HostResult {
-                                    time_secs: Some(time_secs),
-                                    perf: None,
+                                host_time = Some(result.time_secs);
+                                let host_result = bench::HostResult {
+                                    time_secs: Some(result.time_secs),
+                                    perf: result.perf,
                                 };
-                                rows.push(bench::TableRow::host("host", &result));
+                                rows.push(bench::TableRow::host("host", &host_result));
                             }
                             Err(e) => {
                                 spinner.finish_with_failure(&e);

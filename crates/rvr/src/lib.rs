@@ -204,7 +204,7 @@ pub use rvr_isa::{Rv32, Rv64, Xlen};
 // CSR constants for use with Runner::get_csr/set_csr
 pub use rvr_isa::extensions::{CSR_CYCLE, CSR_INSTRET, CSR_TIME};
 
-mod perf;
+pub mod perf;
 mod pipeline;
 pub use pipeline::{Pipeline, PipelineStats};
 

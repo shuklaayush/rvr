@@ -2,8 +2,11 @@
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
+use rvr::PerfCounters;
 use rvr::bench::Arch;
+use rvr::perf::HostPerfCounters;
 
 /// Host-compatible setStats() for riscv-tests benchmarks.
 /// Uses clock_gettime instead of CSRs, prints timing in parseable format.
@@ -186,37 +189,65 @@ pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result
     Ok(out_path)
 }
 
-/// Run a riscv-tests host benchmark and parse its timing output.
-pub fn run_host_benchmark(host_bin: &std::path::Path, runs: usize) -> Result<f64, String> {
-    let runs = runs.max(1);
-    let mut total_nanos = 0u64;
+/// Result of running a host benchmark.
+#[derive(Debug, Clone)]
+pub struct HostBenchResult {
+    /// Average time per run in seconds.
+    pub time_secs: f64,
+    /// Hardware perf counters (if available).
+    pub perf: Option<PerfCounters>,
+}
 
+/// Run a riscv-tests host benchmark and collect timing + perf counters.
+pub fn run_host_benchmark(
+    host_bin: &std::path::Path,
+    runs: usize,
+) -> Result<HostBenchResult, String> {
+    let runs = runs.max(1);
+
+    // Set up perf counters
+    let mut perf_counters = HostPerfCounters::new();
+    let mut total_cycles = 0u64;
+    let mut total_instructions = 0u64;
+    let mut total_branches = 0u64;
+    let mut total_branch_misses = 0u64;
+    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
+
+    let start = Instant::now();
     for _ in 0..runs {
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.enable();
+        }
+
         let output = Command::new(host_bin)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output()
             .map_err(|e| format!("failed to run host: {}", e))?;
 
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.disable();
+            let delta = counters.read_delta(&prev_snapshot);
+            total_cycles += delta.cycles.unwrap_or(0);
+            total_instructions += delta.instructions.unwrap_or(0);
+            total_branches += delta.branches.unwrap_or(0);
+            total_branch_misses += delta.branch_misses.unwrap_or(0);
+            prev_snapshot = counters.read();
+        }
+
         if !output.status.success() {
             return Err(format!("host exited with code {:?}", output.status.code()));
         }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if let Some(rest) = line.strip_prefix("host_nanos = ") {
-                if let Ok(nanos) = rest.trim().parse::<u64>() {
-                    total_nanos += nanos;
-                    break;
-                }
-            }
-        }
     }
+    let elapsed = start.elapsed();
 
-    if total_nanos == 0 {
-        return Err("no timing output from host benchmark".to_string());
-    }
+    let time_secs = elapsed.as_secs_f64() / runs as f64;
+    let perf = perf_counters.map(|_| PerfCounters {
+        cycles: Some(total_cycles / runs as u64),
+        instructions: Some(total_instructions / runs as u64),
+        branches: Some(total_branches / runs as u64),
+        branch_misses: Some(total_branch_misses / runs as u64),
+    });
 
-    let avg_secs = (total_nanos as f64 / runs as f64) / 1_000_000_000.0;
-    Ok(avg_secs)
+    Ok(HostBenchResult { time_secs, perf })
 }

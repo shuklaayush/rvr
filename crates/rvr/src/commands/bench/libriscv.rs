@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use libloading::os::unix::{Library, RTLD_NOW, Symbol};
 
+use rvr::PerfCounters;
 use rvr::bench::Arch;
+use rvr::perf::HostPerfCounters;
 
 /// Build a libriscv benchmark directly from source.
 /// These benchmarks use Linux syscall conventions (syscall 93 for exit).
@@ -118,8 +120,20 @@ pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result
     Ok(out_path)
 }
 
+/// Result of running a host benchmark.
+#[derive(Debug, Clone)]
+pub struct HostBenchResult {
+    /// Average time per run in seconds.
+    pub time_secs: f64,
+    /// Hardware perf counters (if available).
+    pub perf: Option<PerfCounters>,
+}
+
 /// Run a libriscv host benchmark by calling _start via dlopen.
-pub fn run_host_benchmark(lib_path: &std::path::Path, runs: usize) -> Result<f64, String> {
+pub fn run_host_benchmark(
+    lib_path: &std::path::Path,
+    runs: usize,
+) -> Result<HostBenchResult, String> {
     let lib = unsafe {
         Library::open(Some(lib_path), RTLD_NOW)
             .map_err(|e| format!("failed to load {}: {}", lib_path.display(), e))?
@@ -127,19 +141,51 @@ pub fn run_host_benchmark(lib_path: &std::path::Path, runs: usize) -> Result<f64
 
     type StartFn = unsafe extern "C" fn();
 
-    let start: Symbol<StartFn> = unsafe {
+    let start_fn: Symbol<StartFn> = unsafe {
         lib.get(b"_start")
             .map_err(|e| format!("_start symbol not found: {}", e))?
     };
 
     let runs = runs.max(1);
-    let mut total_time = std::time::Duration::ZERO;
 
-    for _ in 0..runs {
-        let t = Instant::now();
-        unsafe { start() };
-        total_time += t.elapsed();
+    // Warm up
+    for _ in 0..10 {
+        unsafe { start_fn() };
     }
 
-    Ok(total_time.as_secs_f64() / runs as f64)
+    // Set up perf counters
+    let mut perf_counters = HostPerfCounters::new();
+    let mut total_cycles = 0u64;
+    let mut total_instructions = 0u64;
+    let mut total_branches = 0u64;
+    let mut total_branch_misses = 0u64;
+    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
+
+    let start = Instant::now();
+    for _ in 0..runs {
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.enable();
+        }
+        unsafe { start_fn() };
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.disable();
+            let delta = counters.read_delta(&prev_snapshot);
+            total_cycles += delta.cycles.unwrap_or(0);
+            total_instructions += delta.instructions.unwrap_or(0);
+            total_branches += delta.branches.unwrap_or(0);
+            total_branch_misses += delta.branch_misses.unwrap_or(0);
+            prev_snapshot = counters.read();
+        }
+    }
+    let elapsed = start.elapsed();
+
+    let time_secs = elapsed.as_secs_f64() / runs as f64;
+    let perf = perf_counters.map(|_| PerfCounters {
+        cycles: Some(total_cycles / runs as u64),
+        instructions: Some(total_instructions / runs as u64),
+        branches: Some(total_branches / runs as u64),
+        branch_misses: Some(total_branch_misses / runs as u64),
+    });
+
+    Ok(HostBenchResult { time_secs, perf })
 }

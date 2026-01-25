@@ -8,6 +8,9 @@ use std::time::Instant;
 
 use libloading::os::unix::{Library, RTLD_NOW, Symbol};
 
+use rvr::PerfCounters;
+use rvr::perf::HostPerfCounters;
+
 /// Polkavm guest programs directory (relative to project root).
 const POLKAVM_GUEST_PROGRAMS: &str = "programs/polkavm/guest-programs";
 
@@ -53,7 +56,6 @@ pub fn build_benchmark(
     // Start with fresh env, keeping only essential vars
     let mut cmd = Command::new("cargo");
     cmd.current_dir(&guest_programs);
-    cmd.env("RUSTFLAGS", &rustflags);
 
     // Preserve only essential env vars (PATH, HOME, etc.)
     for (key, _) in std::env::vars() {
@@ -62,8 +64,10 @@ pub fn build_benchmark(
         }
     }
 
+    cmd.env("RUSTFLAGS", &rustflags);
+
     let status = cmd
-        .arg("+nightly")
+        .arg("+nightly-2025-05-10")
         .arg("build")
         .arg("--manifest-path")
         .arg(guest_programs.join("Cargo.toml"))
@@ -234,6 +238,8 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
 pub struct HostBenchResult {
     /// Average time per run in seconds.
     pub time_secs: f64,
+    /// Hardware perf counters (if available).
+    pub perf: Option<PerfCounters>,
 }
 
 /// Run a polkavm benchmark on the host.
@@ -268,16 +274,42 @@ pub fn run_host_benchmark(lib_path: &Path, runs: usize) -> Result<HostBenchResul
         unsafe { run() };
     }
 
-    // Timed runs
+    // Set up perf counters
+    let mut perf_counters = HostPerfCounters::new();
+    let mut total_cycles = 0u64;
+    let mut total_instructions = 0u64;
+    let mut total_branches = 0u64;
+    let mut total_branch_misses = 0u64;
+    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
+
+    // Timed runs with perf
     let start = Instant::now();
     for _ in 0..runs {
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.enable();
+        }
         unsafe { run() };
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.disable();
+            let delta = counters.read_delta(&prev_snapshot);
+            total_cycles += delta.cycles.unwrap_or(0);
+            total_instructions += delta.instructions.unwrap_or(0);
+            total_branches += delta.branches.unwrap_or(0);
+            total_branch_misses += delta.branch_misses.unwrap_or(0);
+            prev_snapshot = counters.read();
+        }
     }
     let elapsed = start.elapsed();
 
     let time_secs = elapsed.as_secs_f64() / runs as f64;
+    let perf = perf_counters.map(|_| PerfCounters {
+        cycles: Some(total_cycles / runs as u64),
+        instructions: Some(total_instructions / runs as u64),
+        branches: Some(total_branches / runs as u64),
+        branch_misses: Some(total_branch_misses / runs as u64),
+    });
 
-    Ok(HostBenchResult { time_secs })
+    Ok(HostBenchResult { time_secs, perf })
 }
 
 #[cfg(test)]
