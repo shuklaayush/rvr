@@ -13,6 +13,9 @@ programs/*/target/
 /bin/reth/
 /bin/riscv/tests/
 
+# Generated host benchmark support files
+/bin/host/
+
 # Perf data
 perf.data
 perf.data.old
