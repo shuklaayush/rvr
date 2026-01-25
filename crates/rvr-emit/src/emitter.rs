@@ -817,13 +817,11 @@ impl<X: Xlen> CEmitter<X> {
         }
 
         // Emit #line directive for source-level debugging
-        if self.config.emit_line_info {
-            if let Some(ref loc) = ir.source_loc {
-                if loc.is_valid() {
+        if self.config.emit_line_info
+            && let Some(ref loc) = ir.source_loc
+                && loc.is_valid() {
                     self.writeln(indent, &format!("#line {} \"{}\"", loc.line, loc.file));
                 }
-            }
-        }
 
         self.emit_trace_pc();
 

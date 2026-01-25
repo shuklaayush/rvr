@@ -221,12 +221,11 @@ pub fn run_host_benchmark(
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
-            if let Some(rest) = line.strip_prefix("host_nanos = ") {
-                if let Ok(nanos) = rest.trim().parse::<u64>() {
+            if let Some(rest) = line.strip_prefix("host_nanos = ")
+                && let Ok(nanos) = rest.trim().parse::<u64>() {
                     total_nanos += nanos;
                     break;
                 }
-            }
         }
     }
 
@@ -237,5 +236,8 @@ pub fn run_host_benchmark(
     let time_secs = (total_nanos as f64 / runs as f64) / 1_000_000_000.0;
 
     // No perf counters for subprocess - they'd include fork/exec overhead
-    Ok(HostBenchResult { time_secs, perf: None })
+    Ok(HostBenchResult {
+        time_secs,
+        perf: None,
+    })
 }

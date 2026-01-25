@@ -16,6 +16,7 @@ use crate::InstructionTable;
 const NUM_REGS: usize = 32;
 const MAX_VALUES: usize = 16;
 const MAX_ITERATIONS_MULTIPLIER: usize = 20;
+const MAX_JUMP_TABLE_SCAN: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ValueKind {
@@ -589,14 +590,13 @@ fn collect_potential_targets<X: Xlen>(
                 }
             }
             InstrKind::Jalr => {
-                if let Some(rs1) = decoded.rs1 {
-                    if let Some(base) = regs[rs1 as usize] {
+                if let Some(rs1) = decoded.rs1
+                    && let Some(base) = regs[rs1 as usize] {
                         let target = add_signed(base, decoded.imm) & !1u64;
                         if instruction_table.is_valid_pc(target) {
                             function_entries.insert(target);
                         }
                     }
-                }
                 if decoded.is_call() {
                     return_sites.insert(pc + size);
                 }
@@ -769,6 +769,69 @@ fn worklist<X: Xlen>(
 
 // Many parameters needed for inter-procedural analysis context
 #[allow(clippy::too_many_arguments)]
+/// Scan forward from an indirect jump to find jump table targets.
+///
+/// This handles Duff's device patterns where a computed jump lands at various
+/// points within a sequential instruction sequence. For example, optimized
+/// memset/memcpy implementations compute an offset and jump into the middle
+/// of a series of store instructions.
+///
+/// We scan forward collecting all instruction addresses until we hit a terminator
+/// (ret, unconditional jump, or another indirect jump).
+fn scan_jump_table_targets<X: Xlen>(
+    instruction_table: &InstructionTable<X>,
+    start_pc: u64,
+) -> FxHashSet<u64> {
+    let mut targets = FxHashSet::default();
+    let mut pc = start_pc;
+    let end = instruction_table.end_address();
+
+    let mut count = 0;
+
+    while pc < end && count < MAX_JUMP_TABLE_SCAN {
+        if !instruction_table.is_valid_pc(pc) {
+            break;
+        }
+
+        let size = instruction_table.instruction_size_at_pc(pc) as u64;
+        if size == 0 {
+            break;
+        }
+
+        let instr = match instruction_table.get_at_pc(pc) {
+            Some(instr) => instr,
+            None => break,
+        };
+
+        // This instruction is a valid jump target
+        targets.insert(pc);
+
+        let decoded = DecodedInstruction::from_instr(instr);
+
+        // Stop at terminators
+        if decoded.is_return() {
+            break;
+        }
+        if decoded.kind == InstrKind::Jal && decoded.rd == Some(0) {
+            // Unconditional jump (j instruction) - include target and stop
+            let target = add_signed(pc, decoded.imm);
+            if instruction_table.is_valid_pc(target) {
+                targets.insert(target);
+            }
+            break;
+        }
+        if decoded.is_indirect_jump() {
+            // Another computed jump - stop here
+            break;
+        }
+
+        pc += size;
+        count += 1;
+    }
+
+    targets
+}
+
 fn get_successors<X: Xlen>(
     instruction_table: &InstructionTable<X>,
     pc: u64,
@@ -813,11 +876,6 @@ fn get_successors<X: Xlen>(
             }
 
             if !resolved {
-                // Only track true indirect jumps (not returns, not calls) as unresolved
-                // Returns and indirect calls are handled conservatively and are fine
-                if decoded.is_indirect_jump() {
-                    unresolved_dynamic_jumps.insert(pc);
-                }
                 if decoded.is_return() {
                     if let Some(func_start) = binary_search_le(sorted_function_entries, pc) {
                         if let Some(returns) = call_return_map.get(&func_start) {
@@ -832,12 +890,19 @@ fn get_successors<X: Xlen>(
                     result.extend(function_entries.iter().copied());
                     result.insert(pc + size);
                 } else if decoded.is_indirect_jump() {
-                    if let Some(func_start) = binary_search_le(sorted_function_entries, pc) {
-                        if let Some(targets) = func_internal_targets.get(&func_start) {
-                            result.extend(targets.iter().copied());
-                        }
+                    // Scan forward to find jump table targets (Duff's device pattern)
+                    let jump_targets = scan_jump_table_targets(instruction_table, pc + size);
+                    if jump_targets.is_empty() {
+                        // Fallback: couldn't find targets, mark as unresolved
+                        unresolved_dynamic_jumps.insert(pc);
+                        if let Some(func_start) = binary_search_le(sorted_function_entries, pc)
+                            && let Some(targets) = func_internal_targets.get(&func_start) {
+                                result.extend(targets.iter().copied());
+                            }
+                        result.extend(function_entries.iter().copied());
+                    } else {
+                        result.extend(jump_targets);
                     }
-                    result.extend(function_entries.iter().copied());
                 }
             }
         }

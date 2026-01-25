@@ -580,9 +580,8 @@ impl<X: Xlen> BlockTable<X> {
                 && start_to_idx.contains_key(&taken_pc)
                 && !absorbed.contains(&taken_pc)
                 && !merge_targets.contains(&taken_pc)
-            {
-                if let Some(preds) = self.predecessors.get(&taken_pc) {
-                    if preds.len() == 1 {
+                && let Some(preds) = self.predecessors.get(&taken_pc)
+                    && preds.len() == 1 {
                         let taken_idx = start_to_idx[&taken_pc];
                         let taken_block = &self.blocks[taken_idx];
                         if taken_block.instruction_count <= DEFAULT_TAKEN_INLINE_SIZE {
@@ -601,8 +600,6 @@ impl<X: Xlen> BlockTable<X> {
                             }
                         }
                     }
-                }
-            }
 
             // Get fall-through target
             let fall_pc = block.end;
@@ -629,11 +626,10 @@ impl<X: Xlen> BlockTable<X> {
                 }
 
                 // Check for multiple predecessors
-                if let Some(preds) = self.predecessors.get(&current_pc) {
-                    if preds.len() > 1 {
+                if let Some(preds) = self.predecessors.get(&current_pc)
+                    && preds.len() > 1 {
                         break;
                     }
-                }
 
                 let current_idx = start_to_idx[&current_pc];
                 let current_block = &self.blocks[current_idx];

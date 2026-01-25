@@ -32,7 +32,7 @@ pub fn build_benchmark(
         "fib-asm" => {
             // Assembly version is RV64 only (uses lui for 256M constant)
             if !matches!(arch, Arch::Rv64i | Arch::Rv64e) {
-                return Err(format!("fib-asm only supports rv64i/rv64e"));
+                return Err("fib-asm only supports rv64i/rv64e".to_string());
             }
             (libriscv_dir.join("measure_mips/fib64.S"), true)
         }

@@ -32,13 +32,10 @@ fn find_project_root() -> PathBuf {
     if let Ok(output) = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
-    {
-        if output.status.success() {
-            if let Ok(path) = String::from_utf8(output.stdout) {
+        && output.status.success()
+            && let Ok(path) = String::from_utf8(output.stdout) {
                 return PathBuf::from(path.trim());
             }
-        }
-    }
     std::env::current_dir().expect("failed to get current directory")
 }
 
@@ -74,6 +71,10 @@ pub struct BenchmarkInfo {
     pub host_binary: Option<&'static str>,
     /// Default architectures for this benchmark.
     pub default_archs: &'static str,
+    /// Supported architectures (None = all, Some = only those listed).
+    pub supported_archs: Option<&'static str>,
+    /// Whether a host version can be built.
+    pub has_host: bool,
     /// How to build this benchmark.
     pub source: BenchmarkSource,
 }
@@ -88,6 +89,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -96,6 +99,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -104,6 +109,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -112,6 +119,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -120,6 +129,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -128,6 +139,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -136,6 +149,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     BenchmarkInfo {
@@ -144,6 +159,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::RiscvTests,
     },
     // libriscv benchmarks (use Linux syscalls, not HTIF)
@@ -153,6 +170,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::Libriscv,
     },
     BenchmarkInfo {
@@ -161,6 +180,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: Some("rv64i,rv64e"), // RV64 assembly only
+        has_host: false,                      // Can't compile assembly for host
         source: BenchmarkSource::Libriscv,
     },
     // polkavm benchmarks
@@ -170,6 +191,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
@@ -178,6 +201,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
@@ -186,6 +211,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::Polkavm,
     },
     BenchmarkInfo {
@@ -194,6 +221,8 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: true,
         host_binary: None,
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::Polkavm,
     },
     // rust benchmarks
@@ -203,11 +232,25 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         uses_exports: false,
         host_binary: Some("programs/reth/target/release/reth-validator"),
         default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
         source: BenchmarkSource::Rust {
             path: "programs/reth",
         },
     },
 ];
+
+impl BenchmarkInfo {
+    /// Check if this benchmark supports the given architecture.
+    fn supports_arch(&self, arch: &Arch) -> bool {
+        match self.supported_archs {
+            None => true,
+            Some(archs) => Arch::parse_list(archs)
+                .map(|list| list.contains(arch))
+                .unwrap_or(false),
+        }
+    }
+}
 
 /// Find benchmark by name.
 fn find_benchmark(name: &str) -> Option<&'static BenchmarkInfo> {
@@ -416,6 +459,10 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 };
 
                 for a in archs {
+                    // Skip unsupported architectures
+                    if !benchmark.supports_arch(&a) {
+                        continue;
+                    }
                     let spinner = Spinner::new(format!(
                         "Building {} ({}, libriscv)",
                         benchmark.name,
@@ -669,34 +716,44 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::Libriscv => {
-                    let host_lib = project_dir
-                        .join("bin/host")
-                        .join(format!("{}.so", benchmark.name));
-                    if !host_lib.exists() || force {
-                        let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
-                        if let Err(e) = libriscv::build_host_benchmark(&project_dir, benchmark.name)
-                        {
-                            spinner.finish_with_failure(&format!("build failed: {}", e));
-                            rows.push(bench::TableRow::error("host", "build failed".to_string()));
-                        } else {
-                            spinner.finish_and_clear();
-                        }
-                    }
-                    if host_lib.exists() {
-                        let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
-                        match libriscv::run_host_benchmark(&host_lib, runs) {
-                            Ok(result) => {
+                    if !benchmark.has_host {
+                        // Skip - no host version available
+                    } else {
+                        let host_lib = project_dir
+                            .join("bin/host")
+                            .join(format!("{}.so", benchmark.name));
+                        if !host_lib.exists() || force {
+                            let spinner =
+                                Spinner::new(format!("Building {} (host)", benchmark.name));
+                            if let Err(e) =
+                                libriscv::build_host_benchmark(&project_dir, benchmark.name)
+                            {
+                                spinner.finish_with_failure(&format!("build failed: {}", e));
+                                rows.push(bench::TableRow::error(
+                                    "host",
+                                    "build failed".to_string(),
+                                ));
+                            } else {
                                 spinner.finish_and_clear();
-                                host_time = Some(result.time_secs);
-                                let host_result = bench::HostResult {
-                                    time_secs: Some(result.time_secs),
-                                    perf: result.perf,
-                                };
-                                rows.push(bench::TableRow::host("host", &host_result));
                             }
-                            Err(e) => {
-                                spinner.finish_with_failure(&e);
-                                rows.push(bench::TableRow::error("host", e));
+                        }
+                        if host_lib.exists() {
+                            let spinner =
+                                Spinner::new(format!("Running {} (host)", benchmark.name));
+                            match libriscv::run_host_benchmark(&host_lib, runs) {
+                                Ok(result) => {
+                                    spinner.finish_and_clear();
+                                    host_time = Some(result.time_secs);
+                                    let host_result = bench::HostResult {
+                                        time_secs: Some(result.time_secs),
+                                        perf: result.perf,
+                                    };
+                                    rows.push(bench::TableRow::host("host", &host_result));
+                                }
+                                Err(e) => {
+                                    spinner.finish_with_failure(&e);
+                                    rows.push(bench::TableRow::error("host", e));
+                                }
                             }
                         }
                     }
@@ -769,6 +826,11 @@ fn run_single_arch(
     host_time: Option<f64>,
     force: bool,
 ) -> Option<bench::TableRow> {
+    // Skip unsupported architectures
+    if !benchmark.supports_arch(arch) {
+        return None;
+    }
+
     let elf_path = project_dir
         .join("bin")
         .join(arch.as_str())

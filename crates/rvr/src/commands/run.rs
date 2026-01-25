@@ -338,7 +338,7 @@ fn print_all_registers(runner: &rvr::Runner) {
             println!();
         }
     }
-    if num_regs % 4 != 0 {
+    if !num_regs.is_multiple_of(4) {
         println!();
     }
     println!("pc  = 0x{:016x}", runner.get_pc());
