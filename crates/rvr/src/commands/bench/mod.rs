@@ -1,5 +1,8 @@
 //! Benchmark commands and registry.
 
+mod libriscv;
+mod riscv_tests;
+
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -11,56 +14,9 @@ use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
 use crate::terminal::{self, Spinner};
 
-/// Host-compatible setStats() for riscv-tests benchmarks.
-/// Uses clock_gettime instead of CSRs, prints timing in parseable format.
-const HOST_SYSCALLS_C: &str = r#"
-#include <stdint.h>
-#include <stdio.h>
-#include <time.h>
-
-static uint64_t start_nanos;
-static uint64_t elapsed_nanos;
-
-static uint64_t get_nanos(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-}
-
-void setStats(int enable) {
-    if (enable) {
-        start_nanos = get_nanos();
-    } else {
-        elapsed_nanos = get_nanos() - start_nanos;
-        printf("host_nanos = %lu\n", (unsigned long)elapsed_nanos);
-    }
-}
-"#;
-
-/// Fix header for dhrystone - uses TIME code path to avoid multiple definition issues.
-const DHRYSTONE_FIX_H: &str = "#define TIME 1\n";
-
-/// Fib benchmark from libriscv - adapted for riscv-tests runtime.
-const LIBRISCV_FIB_C: &str = r#"
-// Fibonacci benchmark from libriscv, adapted for riscv-tests runtime.
-// Original: programs/libriscv/binaries/measure_mips/fib.c
-
-static long fib(long n, long acc, long prev)
-{
-    if (n == 0)
-        return acc;
-    else
-        return fib(n - 1, prev + acc, acc);
-}
-
-int main(void)
-{
-    // Reduced from original 256M to run in reasonable time
-    const volatile long n = 50000000;
-    long result = fib(n, 0, 1);
-    return (int)(result & 0xFF);
-}
-"#;
+// ============================================================================
+// Helpers
+// ============================================================================
 
 /// Helper to run a command silently and return success/failure.
 fn run_silent(cmd: &mut Command) -> bool {
@@ -73,7 +29,6 @@ fn run_silent(cmd: &mut Command) -> bool {
 
 /// Find the project root directory (git root or cwd).
 fn find_project_root() -> PathBuf {
-    // Try to find git root first
     if let Ok(output) = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .output()
@@ -84,286 +39,7 @@ fn find_project_root() -> PathBuf {
             }
         }
     }
-    // Fall back to current directory
     std::env::current_dir().expect("failed to get current directory")
-}
-
-/// Build a riscv-tests benchmark using riscv-gcc.
-/// Returns the path to the built ELF on success.
-fn build_riscv_tests_benchmark(
-    project_dir: &std::path::Path,
-    name: &str,
-    arch: &bench::Arch,
-) -> Result<PathBuf, String> {
-    // Find riscv-gcc toolchain (reuse from tests module)
-    let toolchain = rvr::tests::find_toolchain()
-        .ok_or_else(|| "RISC-V toolchain not found (need riscv64-unknown-elf-gcc)".to_string())?;
-
-    let gcc = format!("{}gcc", toolchain);
-    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
-    let common_dir = bench_dir.join("common");
-    let out_dir = project_dir.join("bin").join(arch.as_str());
-
-    // Check source exists
-    let src_dir = bench_dir.join(name);
-    if !src_dir.exists() {
-        return Err(format!("benchmark source not found: {}", src_dir.display()));
-    }
-
-    // Create output directory
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
-
-    // Find all C source files in the benchmark directory
-    let mut c_files: Vec<PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
-        let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("c") {
-            c_files.push(path);
-        }
-    }
-
-    if c_files.is_empty() {
-        return Err(format!("no C files found in {}", src_dir.display()));
-    }
-
-    let out_path = out_dir.join(name);
-    // Use original riscv-tests files from common/
-    // Note: test.ld has a bug where it uses section flags (SHF_*) instead of
-    // program header flags (PF_*), so the ELF won't have PF_X set. rvr handles
-    // this by falling back to checking section flags (SHF_EXECINSTR).
-    let link_ld = common_dir.join("test.ld");
-    let crt_s = common_dir.join("crt.S");
-    let syscalls_c = common_dir.join("syscalls.c");
-    let env_dir = project_dir.join("programs/riscv-tests/env");
-
-    // Select march/mabi based on target architecture
-    // Use im_zicsr (no FPU) since rvr doesn't support F/D extensions yet
-    let (march, mabi) = match arch {
-        bench::Arch::Rv32i | bench::Arch::Rv32e => ("rv32im_zicsr", "ilp32"),
-        bench::Arch::Rv64i | bench::Arch::Rv64e => ("rv64im_zicsr", "lp64"),
-    };
-
-    // Build command: compile with original CRT and syscalls from common/
-    let mut cmd = Command::new(&gcc);
-    cmd.arg(format!("-march={}", march))
-        .arg(format!("-mabi={}", mabi))
-        .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
-        .args(["-nostdlib", "-nostartfiles"])
-        .args(["-std=gnu99", "-O2", "-ffast-math", "-fno-common", "-fno-builtin-printf"])
-        .args(["-fno-tree-loop-distribute-patterns"])
-        .args(["-Wno-implicit-function-declaration", "-Wno-implicit-int"])
-        .arg("-DPREALLOCATE=1")
-        .arg(format!("-I{}", common_dir.display()))
-        .arg(format!("-I{}", env_dir.display()))
-        .arg(format!("-T{}", link_ld.display()))
-        .arg(&crt_s)
-        .arg(&syscalls_c);
-
-    for f in &c_files {
-        cmd.arg(f);
-    }
-
-    // Add libgcc for 64-bit operations on rv32
-    cmd.arg("-lgcc");
-
-    cmd.arg("-o").arg(&out_path);
-
-    let status = cmd
-        .stderr(Stdio::piped())
-        .status()
-        .map_err(|e| format!("failed to run gcc: {}", e))?;
-
-    if !status.success() {
-        return Err(format!("gcc failed with exit code {:?}", status.code()));
-    }
-
-    Ok(out_path)
-}
-
-/// Build a libriscv benchmark using riscv-gcc with riscv-tests runtime.
-/// Uses the same crt.S, test.ld, and syscalls.c as riscv-tests benchmarks.
-fn build_libriscv_benchmark(
-    project_dir: &std::path::Path,
-    name: &str,
-    arch: &bench::Arch,
-) -> Result<PathBuf, String> {
-    let toolchain = rvr::tests::find_toolchain()
-        .ok_or_else(|| "RISC-V toolchain not found (need riscv64-unknown-elf-gcc)".to_string())?;
-
-    let gcc = format!("{}gcc", toolchain);
-    let out_dir = project_dir.join("bin").join(arch.as_str());
-    let build_dir = project_dir.join("target/libriscv-build").join(name);
-
-    // Use riscv-tests common infrastructure
-    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
-    let common_dir = bench_dir.join("common");
-    let env_dir = project_dir.join("programs/riscv-tests/env");
-    let link_ld = common_dir.join("test.ld");
-    let crt_s = common_dir.join("crt.S");
-    let syscalls_c = common_dir.join("syscalls.c");
-
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
-    std::fs::create_dir_all(&build_dir)
-        .map_err(|e| format!("failed to create build dir: {}", e))?;
-
-    // Write the benchmark source to build directory
-    let src_path = build_dir.join(format!("{}.c", name));
-    let src_content = match name {
-        "fib" => LIBRISCV_FIB_C,
-        _ => return Err(format!("unknown libriscv benchmark: {}", name)),
-    };
-    std::fs::write(&src_path, src_content)
-        .map_err(|e| format!("failed to write source: {}", e))?;
-
-    let (march, mabi) = match arch {
-        bench::Arch::Rv32i | bench::Arch::Rv32e => ("rv32im_zicsr", "ilp32"),
-        bench::Arch::Rv64i | bench::Arch::Rv64e => ("rv64im_zicsr", "lp64"),
-    };
-
-    let out_path = out_dir.join(name);
-
-    // Build using same flags as riscv-tests benchmarks
-    let mut cmd = Command::new(&gcc);
-    cmd.arg(format!("-march={}", march))
-        .arg(format!("-mabi={}", mabi))
-        .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
-        .args(["-nostdlib", "-nostartfiles"])
-        .args(["-std=gnu99", "-O3", "-fno-common", "-fno-builtin-printf"])
-        .arg(format!("-I{}", common_dir.display()))
-        .arg(format!("-I{}", env_dir.display()))
-        .arg(format!("-T{}", link_ld.display()))
-        .arg(&crt_s)
-        .arg(&syscalls_c)
-        .arg(&src_path)
-        .arg("-lgcc")
-        .arg("-o")
-        .arg(&out_path);
-
-    let output = cmd
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to run gcc: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gcc failed: {}", stderr));
-    }
-
-    Ok(out_path)
-}
-
-/// Build a riscv-tests benchmark for the host using the system compiler.
-fn build_riscv_tests_host_benchmark(
-    project_dir: &std::path::Path,
-    name: &str,
-) -> Result<PathBuf, String> {
-    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
-    let common_dir = bench_dir.join("common");
-    let out_dir = project_dir.join("bin/host");
-
-    let src_dir = bench_dir.join(name);
-    if !src_dir.exists() {
-        return Err(format!("benchmark source not found: {}", src_dir.display()));
-    }
-
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
-
-    let mut c_files: Vec<PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
-        let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("c") {
-            c_files.push(path);
-        }
-    }
-
-    if c_files.is_empty() {
-        return Err(format!("no C files found in {}", src_dir.display()));
-    }
-
-    // Write embedded support files to out_dir
-    let host_syscalls = out_dir.join("_host_syscalls.c");
-    std::fs::write(&host_syscalls, HOST_SYSCALLS_C)
-        .map_err(|e| format!("failed to write host syscalls: {}", e))?;
-
-    let out_path = out_dir.join(name);
-
-    let mut cmd = Command::new("cc");
-    cmd.args(["-O3", "-std=gnu89", "-DPREALLOCATE=1"])
-        // Allow old K&R C style (dhrystone uses implicit int and old declarations)
-        .args(["-Wno-implicit-int", "-Wno-implicit-function-declaration"])
-        .arg(format!("-I{}", common_dir.display()));
-
-    // For dhrystone, include fix header to avoid times() code path issues
-    if name == "dhrystone" {
-        let fix_header = out_dir.join("_dhrystone_fix.h");
-        std::fs::write(&fix_header, DHRYSTONE_FIX_H)
-            .map_err(|e| format!("failed to write dhrystone fix: {}", e))?;
-        cmd.arg(format!("-include{}", fix_header.display()));
-    }
-
-    cmd.arg(&host_syscalls);
-
-    for f in &c_files {
-        cmd.arg(f);
-    }
-
-    cmd.arg("-o").arg(&out_path);
-
-    let output = cmd
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to run cc: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cc failed: {}", stderr));
-    }
-
-    Ok(out_path)
-}
-
-/// Run a riscv-tests host benchmark and parse its timing output.
-fn run_riscv_tests_host_benchmark(
-    host_bin: &std::path::Path,
-    runs: usize,
-) -> Result<f64, String> {
-    let runs = runs.max(1);
-    let mut total_nanos = 0u64;
-
-    for _ in 0..runs {
-        let output = Command::new(host_bin)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("failed to run host: {}", e))?;
-
-        if !output.status.success() {
-            return Err(format!("host exited with code {:?}", output.status.code()));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Parse "host_nanos = 12345" from output
-        for line in stdout.lines() {
-            if let Some(rest) = line.strip_prefix("host_nanos = ") {
-                if let Ok(nanos) = rest.trim().parse::<u64>() {
-                    total_nanos += nanos;
-                    break;
-                }
-            }
-        }
-    }
-
-    if total_nanos == 0 {
-        return Err("no timing output from host benchmark".to_string());
-    }
-
-    let avg_secs = (total_nanos as f64 / runs as f64) / 1_000_000_000.0;
-    Ok(avg_secs)
 }
 
 // ============================================================================
@@ -393,10 +69,8 @@ pub struct BenchmarkInfo {
     /// Short description.
     pub description: &'static str,
     /// Whether benchmark uses export_functions mode (initialize/run pattern).
-    /// If false, runs from ELF entry point.
     pub uses_exports: bool,
     /// Path to host binary relative to project root (for comparison).
-    /// None if no host binary available.
     pub host_binary: Option<&'static str>,
     /// Default architectures for this benchmark.
     pub default_archs: &'static str,
@@ -405,7 +79,6 @@ pub struct BenchmarkInfo {
 }
 
 /// All registered benchmarks.
-/// Ordered: riscv-tests first, then polkavm, then rust (reth).
 /// ELF binaries are at: bin/{arch}/{name}
 const BENCHMARKS: &[BenchmarkInfo] = &[
     // riscv-tests benchmarks (C-based)
@@ -473,7 +146,6 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         default_archs: "rv64i",
         source: BenchmarkSource::RiscvTests,
     },
-    // Note: spmv fails verification due to FP precision, mm needs threading
     // libriscv benchmarks
     BenchmarkInfo {
         name: "fib",
@@ -573,7 +245,6 @@ pub fn bench_list() {
 pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32 {
     let project_dir = find_project_root();
 
-    // Determine which benchmarks to build
     let benchmarks: Vec<&BenchmarkInfo> = match name {
         Some(n) => match find_benchmark(n) {
             Some(b) => vec![b],
@@ -587,12 +258,10 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
     };
 
     for benchmark in &benchmarks {
-        // Determine architectures
         let arch_str = arch.unwrap_or(benchmark.default_archs);
 
         match benchmark.source {
             BenchmarkSource::Rust { path } => {
-                // Build host binary first (unless --no-host)
                 if !no_host && benchmark.host_binary.is_some() {
                     let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
                     let mut cmd = Command::new("cargo");
@@ -612,7 +281,6 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                     }
                 }
 
-                // Build RISC-V ELFs using rvr build
                 let archs = match Arch::parse_list(arch_str) {
                     Ok(a) => a,
                     Err(e) => {
@@ -634,7 +302,7 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                         None,
                         true,
                         false,
-                        true, // quiet mode
+                        true,
                     );
 
                     if result == EXIT_SUCCESS {
@@ -659,7 +327,6 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 }
             }
             BenchmarkSource::Polkavm => {
-                // Build for each architecture
                 let archs = match Arch::parse_list(arch_str) {
                     Ok(a) => a,
                     Err(e) => {
@@ -696,7 +363,6 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 }
             }
             BenchmarkSource::RiscvTests => {
-                // Build C benchmark for each architecture using riscv-gcc
                 let archs = match Arch::parse_list(arch_str) {
                     Ok(a) => a,
                     Err(e) => {
@@ -711,7 +377,7 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                         benchmark.name,
                         a.as_str()
                     ));
-                    match build_riscv_tests_benchmark(&project_dir, benchmark.name, &a) {
+                    match riscv_tests::build_benchmark(&project_dir, benchmark.name, &a) {
                         Ok(path) => {
                             spinner.finish_with_success(&format!(
                                 "{} ({}) → {}",
@@ -733,7 +399,6 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 }
             }
             BenchmarkSource::Libriscv => {
-                // Build C benchmark from libriscv using riscv-tests runtime
                 let archs = match Arch::parse_list(arch_str) {
                     Ok(a) => a,
                     Err(e) => {
@@ -748,7 +413,7 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                         benchmark.name,
                         a.as_str()
                     ));
-                    match build_libriscv_benchmark(&project_dir, benchmark.name, &a) {
+                    match libriscv::build_benchmark(&project_dir, benchmark.name, &a) {
                         Ok(path) => {
                             spinner.finish_with_success(&format!(
                                 "{} ({}) → {}",
@@ -786,7 +451,6 @@ pub fn bench_compile(
 ) -> i32 {
     let project_dir = find_project_root();
 
-    // Determine which benchmarks to compile
     let benchmarks: Vec<&BenchmarkInfo> = match name {
         Some(n) => match find_benchmark(n) {
             Some(b) => vec![b],
@@ -844,7 +508,6 @@ pub fn bench_compile(
             if fast {
                 options = options.with_instret_mode(InstretMode::Off);
             }
-            // Enable HTIF for riscv-tests and libriscv benchmarks
             if matches!(
                 benchmark.source,
                 BenchmarkSource::RiscvTests | BenchmarkSource::Libriscv
@@ -880,7 +543,6 @@ pub fn bench_run(
 ) -> i32 {
     let project_dir = find_project_root();
 
-    // Determine which benchmarks to run
     let benchmarks: Vec<&BenchmarkInfo> = match name {
         Some(n) => match find_benchmark(n) {
             Some(b) => vec![b],
@@ -893,8 +555,6 @@ pub fn bench_run(
     };
 
     let suffix = if fast { "fast" } else { "base" };
-
-    // Default compiler for auto-compilation
     let compiler: Compiler = "clang".parse().unwrap();
 
     for benchmark in &benchmarks {
@@ -907,15 +567,12 @@ pub fn bench_run(
             }
         };
 
-        // Collect all rows first, then sort by overhead/time
         let mut rows: Vec<bench::TableRow> = Vec::new();
-
-        // Run host baseline if requested and available
         let mut host_time: Option<f64> = None;
+
         if compare_host {
             match &benchmark.source {
                 BenchmarkSource::Rust { .. } => {
-                    // Use prebuilt host binary if available
                     if let Some(host_path) = benchmark.host_binary {
                         let host_bin = project_dir.join(host_path);
                         if host_bin.exists() {
@@ -924,7 +581,6 @@ pub fn bench_run(
                             match bench::run_host(&host_bin, runs) {
                                 Ok(result) => {
                                     spinner.finish_and_clear();
-                                    tracing::debug!("host run complete");
                                     host_time = result.time_secs;
                                     rows.push(bench::TableRow::host("host", &result));
                                 }
@@ -937,7 +593,6 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::Polkavm => {
-                    // Build and run polkavm benchmark on host
                     let host_lib = project_dir
                         .join("bin/host")
                         .join(format!("{}.so", benchmark.name));
@@ -949,7 +604,6 @@ pub fn bench_run(
                             rows.push(bench::TableRow::error("host", "build failed".to_string()));
                         } else {
                             spinner.finish_and_clear();
-                            tracing::debug!("host build complete");
                         }
                     }
                     if host_lib.exists() {
@@ -957,9 +611,7 @@ pub fn bench_run(
                         match polkavm::run_host_benchmark(&host_lib, runs) {
                             Ok(result) => {
                                 spinner.finish_and_clear();
-                                tracing::debug!("host run complete");
                                 host_time = Some(result.time_secs);
-                                // Create a HostResult-like row
                                 let host_result = bench::HostResult {
                                     time_secs: Some(result.time_secs),
                                     perf: None,
@@ -974,13 +626,12 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::RiscvTests => {
-                    // Build and run host version, parsing its timing output
                     let host_bin = project_dir.join("bin/host").join(benchmark.name);
                     if !host_bin.exists() || force {
                         let spinner =
                             Spinner::new(format!("Building {} (host)", benchmark.name));
                         if let Err(e) =
-                            build_riscv_tests_host_benchmark(&project_dir, benchmark.name)
+                            riscv_tests::build_host_benchmark(&project_dir, benchmark.name)
                         {
                             spinner.finish_with_failure(&format!("build failed: {}", e));
                             rows.push(bench::TableRow::error("host", "build failed".to_string()));
@@ -991,7 +642,7 @@ pub fn bench_run(
                     if host_bin.exists() {
                         let spinner =
                             Spinner::new(format!("Running {} (host)", benchmark.name));
-                        match run_riscv_tests_host_benchmark(&host_bin, runs) {
+                        match riscv_tests::run_host_benchmark(&host_bin, runs) {
                             Ok(time_secs) => {
                                 spinner.finish_and_clear();
                                 host_time = Some(time_secs);
@@ -1014,7 +665,6 @@ pub fn bench_run(
             }
         }
 
-        // Run each architecture
         for a in &archs {
             if let Some(row) = run_single_arch(
                 benchmark,
@@ -1031,14 +681,12 @@ pub fn bench_run(
             }
         }
 
-        // Sort by overhead (ascending), then by time. Errors go last.
         rows.sort_by(|a, b| {
             match (&a.error, &b.error) {
                 (Some(_), None) => std::cmp::Ordering::Greater,
                 (None, Some(_)) => std::cmp::Ordering::Less,
                 (Some(_), Some(_)) => std::cmp::Ordering::Equal,
                 (None, None) => {
-                    // Sort by overhead if available, otherwise by time
                     let a_key = a.overhead.or(a.time_secs.map(|t| t * 1000.0));
                     let b_key = b.overhead.or(b.time_secs.map(|t| t * 1000.0));
                     a_key
@@ -1048,7 +696,6 @@ pub fn bench_run(
             }
         });
 
-        // Print header and sorted rows
         bench::print_bench_header(benchmark.name, benchmark.description, runs);
         for row in &rows {
             bench::print_table_row(row);
@@ -1065,12 +712,11 @@ fn needs_recompile(elf_path: &std::path::Path, lib_path: &std::path::Path) -> bo
     if !lib_path.exists() {
         return true;
     }
-    // Check if ELF is newer than the compiled library
     let elf_time = elf_path.metadata().and_then(|m| m.modified()).ok();
     let lib_time = lib_path.metadata().and_then(|m| m.modified()).ok();
     match (elf_time, lib_time) {
         (Some(elf), Some(lib)) => elf > lib,
-        _ => true, // If we can't determine, recompile to be safe
+        _ => true,
     }
 }
 
@@ -1098,11 +744,10 @@ fn run_single_arch(
 
     let backend_name = format!("rvr-{}", arch.as_str());
 
-    // Check if ELF exists, try to build if missing
+    // Auto-build if ELF missing
     if !elf_path.exists() {
         match &benchmark.source {
             BenchmarkSource::Rust { path } => {
-                // Auto-build for Rust sources
                 let spinner =
                     Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
                 let project_path = project_dir.join(path);
@@ -1115,7 +760,7 @@ fn run_single_arch(
                     None,
                     true,
                     false,
-                    true, // quiet mode - spinner handles output
+                    true,
                 );
                 if result != EXIT_SUCCESS {
                     spinner.finish_with_failure("build failed");
@@ -1125,10 +770,8 @@ fn run_single_arch(
                     ));
                 }
                 spinner.finish_and_clear();
-                tracing::debug!(arch = arch.as_str(), "build complete");
             }
             BenchmarkSource::Polkavm => {
-                // Auto-build using polkavm module
                 let spinner =
                     Spinner::new(format!("Building {} ({})", benchmark.name, arch.as_str()));
                 if let Err(e) = polkavm::build_benchmark(project_dir, benchmark.name, arch.as_str())
@@ -1140,13 +783,14 @@ fn run_single_arch(
                     ));
                 }
                 spinner.finish_and_clear();
-                tracing::debug!(arch = arch.as_str(), "build complete");
             }
             BenchmarkSource::RiscvTests => {
-                // Auto-build using riscv-gcc
-                let spinner =
-                    Spinner::new(format!("Building {} ({}, riscv-tests)", benchmark.name, arch.as_str()));
-                if let Err(e) = build_riscv_tests_benchmark(project_dir, benchmark.name, arch) {
+                let spinner = Spinner::new(format!(
+                    "Building {} ({}, riscv-tests)",
+                    benchmark.name,
+                    arch.as_str()
+                ));
+                if let Err(e) = riscv_tests::build_benchmark(project_dir, benchmark.name, arch) {
                     spinner.finish_with_failure(&format!("build failed: {}", e));
                     return Some(bench::TableRow::error(
                         &backend_name,
@@ -1154,13 +798,14 @@ fn run_single_arch(
                     ));
                 }
                 spinner.finish_and_clear();
-                tracing::debug!(name = benchmark.name, arch = arch.as_str(), "riscv-tests build complete");
             }
             BenchmarkSource::Libriscv => {
-                // Auto-build using riscv-tests runtime
-                let spinner =
-                    Spinner::new(format!("Building {} ({}, libriscv)", benchmark.name, arch.as_str()));
-                if let Err(e) = build_libriscv_benchmark(project_dir, benchmark.name, arch) {
+                let spinner = Spinner::new(format!(
+                    "Building {} ({}, libriscv)",
+                    benchmark.name,
+                    arch.as_str()
+                ));
+                if let Err(e) = libriscv::build_benchmark(project_dir, benchmark.name, arch) {
                     spinner.finish_with_failure(&format!("build failed: {}", e));
                     return Some(bench::TableRow::error(
                         &backend_name,
@@ -1168,17 +813,15 @@ fn run_single_arch(
                     ));
                 }
                 spinner.finish_and_clear();
-                tracing::debug!(name = benchmark.name, arch = arch.as_str(), "libriscv build complete");
             }
         }
     }
 
-    // Check if .so exists and is up-to-date, compile if missing/stale/forced
+    // Compile if needed
     let lib_path = out_dir.join(format!("lib{}.so", suffix));
     let should_compile = force || needs_recompile(&elf_path, &lib_path);
 
     if should_compile {
-        // Delete old output directory if forcing recompile
         if force && out_dir.exists() {
             let _ = std::fs::remove_dir_all(&out_dir);
         }
@@ -1191,7 +834,6 @@ fn run_single_arch(
         if fast {
             options = options.with_instret_mode(InstretMode::Off);
         }
-        // Enable HTIF for riscv-tests and libriscv benchmarks
         if matches!(
             benchmark.source,
             BenchmarkSource::RiscvTests | BenchmarkSource::Libriscv
@@ -1207,15 +849,13 @@ fn run_single_arch(
             ));
         }
         spinner.finish_and_clear();
-        tracing::debug!(arch = arch.as_str(), "compile complete");
     }
 
-    // Run the benchmark
+    // Run
     let spinner = Spinner::new(format!("Running {} ({})", benchmark.name, arch.as_str()));
     match bench::run_bench_auto(&out_dir, &elf_path, runs) {
         Ok((result, _mode)) => {
             spinner.finish_and_clear();
-            tracing::debug!(arch = arch.as_str(), "run complete");
             Some(bench::TableRow::backend(&backend_name, &result, host_time))
         }
         Err(e) => {
