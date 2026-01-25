@@ -131,6 +131,69 @@ fn build_riscv_tests_benchmark(
     Ok(out_path)
 }
 
+/// Build a riscv-tests benchmark for the host using the system compiler.
+/// Returns the path to the built binary on success.
+fn build_riscv_tests_host_benchmark(
+    project_dir: &std::path::Path,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
+    let common_dir = bench_dir.join("common");
+    let out_dir = project_dir.join("bin/host");
+    let toolchain_dir = project_dir.join("toolchain");
+
+    // Check source exists
+    let src_dir = bench_dir.join(name);
+    if !src_dir.exists() {
+        return Err(format!("benchmark source not found: {}", src_dir.display()));
+    }
+
+    // Create output directory
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("failed to create output dir: {}", e))?;
+
+    // Find all C source files in the benchmark directory
+    let mut c_files: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
+        let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("c") {
+            c_files.push(path);
+        }
+    }
+
+    if c_files.is_empty() {
+        return Err(format!("no C files found in {}", src_dir.display()));
+    }
+
+    let out_path = out_dir.join(name);
+    let host_syscalls = toolchain_dir.join("bench_host_syscalls.c");
+
+    // Build with system compiler
+    let mut cmd = Command::new("cc");
+    cmd.args(["-O2", "-DPREALLOCATE=1"])
+        .arg(format!("-I{}", common_dir.display()))
+        .arg(&host_syscalls);
+
+    for f in &c_files {
+        cmd.arg(f);
+    }
+
+    cmd.arg("-o").arg(&out_path);
+
+    let output = cmd
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run cc: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("cc failed: {}", stderr));
+    }
+
+    Ok(out_path)
+}
+
 // ============================================================================
 // Benchmark registry
 // ============================================================================
@@ -687,7 +750,35 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::RiscvTests => {
-                    // No host comparison for riscv-tests benchmarks
+                    // Build and run host version of riscv-tests benchmark
+                    let host_bin = project_dir.join("bin/host").join(benchmark.name);
+                    if !host_bin.exists() || force {
+                        let spinner =
+                            Spinner::new(format!("Building {} (host)", benchmark.name));
+                        if let Err(e) = build_riscv_tests_host_benchmark(&project_dir, benchmark.name)
+                        {
+                            spinner.finish_with_failure(&format!("build failed: {}", e));
+                            rows.push(bench::TableRow::error("host", "build failed".to_string()));
+                        } else {
+                            spinner.finish_and_clear();
+                            tracing::debug!("host build complete");
+                        }
+                    }
+                    if host_bin.exists() {
+                        let spinner = Spinner::new(format!("Running {} (host)", benchmark.name));
+                        match bench::run_host(&host_bin, runs) {
+                            Ok(result) => {
+                                spinner.finish_and_clear();
+                                tracing::debug!("host run complete");
+                                host_time = result.time_secs;
+                                rows.push(bench::TableRow::host("host", &result));
+                            }
+                            Err(e) => {
+                                spinner.finish_with_failure(&e);
+                                rows.push(bench::TableRow::error("host", e));
+                            }
+                        }
+                    }
                 }
             }
         }
