@@ -7,8 +7,9 @@
 use rvr_ir::Xlen;
 
 // HTIF constants matching riscv-tests expectations
+// tohost at 0x80001000, fromhost at 0x80001008 (sequential in .tohost section)
 const TOHOST_ADDR: u64 = 0x80001000;
-const FROMHOST_ADDR: u64 = 0x80001040;
+const FROMHOST_ADDR: u64 = 0x80001008;
 const SYS_WRITE: u64 = 64;
 const STDOUT_FD: u64 = 1;
 
@@ -16,6 +17,7 @@ const STDOUT_FD: u64 = 1;
 pub struct HtifConfig {
     pub base_name: String,
     pub enabled: bool,
+    pub verbose: bool,
 }
 
 impl HtifConfig {
@@ -23,7 +25,13 @@ impl HtifConfig {
         Self {
             base_name: base_name.to_string(),
             enabled,
+            verbose: false,
         }
+    }
+
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
     }
 }
 
@@ -83,6 +91,19 @@ pub fn gen_htif_source<X: Xlen>(cfg: &HtifConfig) -> String {
     }
 
     let addr_type = addr_type::<X>();
+
+    let print_code = if cfg.verbose {
+        format!(
+            r#"for ({addr_type} i = 0; i < length; ++i) {{
+            fputc((int)(state->memory[buffer_addr + i] & 0xFFu), stdout);
+        }}
+        fflush(stdout);"#,
+            addr_type = addr_type
+        )
+    } else {
+        String::new()
+    };
+
     format!(
         r#"#include "{base_name}.h"
 #include "{base_name}_htif.h"
@@ -115,10 +136,8 @@ void handle_tohost_write(RvState* restrict state, {addr_type} value) {{
     if (likely(syscall_num == HTIF_SYS_WRITE && arg0 == HTIF_STDOUT_FD)) {{
         {addr_type} buffer_addr = ({addr_type})arg1;
         {addr_type} length = ({addr_type})arg2;
-        for ({addr_type} i = 0; i < length; ++i) {{
-            fputc((int)(state->memory[buffer_addr + i] & 0xFFu), stdout);
-        }}
-        fflush(stdout);
+
+        {print_code}
 
         /* Write return value and signal completion */
         memcpy(&state->memory[value], &length, sizeof({addr_type}));
@@ -133,6 +152,7 @@ void handle_tohost_write(RvState* restrict state, {addr_type} value) {{
 "#,
         base_name = cfg.base_name,
         addr_type = addr_type,
+        print_code = print_code,
     )
 }
 

@@ -390,6 +390,8 @@ pub struct CompileOptions {
     pub addr_check: bool,
     /// Enable HTIF (Host-Target Interface) for riscv-tests.
     pub htif: bool,
+    /// Print HTIF stdout (guest console output).
+    pub htif_verbose: bool,
     /// Emit #line directives with source locations (requires debug info in ELF).
     pub line_info: bool,
     /// Export functions mode: compile for calling exported functions rather than running from entry point.
@@ -424,6 +426,12 @@ impl CompileOptions {
     /// Set HTIF enabled.
     pub fn with_htif(mut self, enabled: bool) -> Self {
         self.htif = enabled;
+        self
+    }
+
+    /// Set HTIF verbose (print guest stdout).
+    pub fn with_htif_verbose(mut self, verbose: bool) -> Self {
+        self.htif_verbose = verbose;
         self
     }
 
@@ -482,6 +490,7 @@ impl CompileOptions {
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
         config.htif_enabled = self.htif;
+        config.htif_verbose = self.htif_verbose;
         config.emit_line_info = self.line_info;
         config.instret_mode = self.instret_mode;
         config.tracer_config = self.tracer_config.clone();

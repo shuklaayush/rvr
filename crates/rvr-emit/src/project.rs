@@ -397,7 +397,8 @@ impl<X: Xlen> CProject<X> {
 
     /// Write HTIF files.
     pub fn write_htif(&self) -> std::io::Result<()> {
-        let htif_cfg = HtifConfig::new(&self.base_name, self.config.htif_enabled);
+        let htif_cfg = HtifConfig::new(&self.base_name, self.config.htif_enabled)
+            .with_verbose(self.config.htif_verbose);
 
         let htif_header = gen_htif_header::<X>(&htif_cfg);
         let header_path = self.htif_header_path();

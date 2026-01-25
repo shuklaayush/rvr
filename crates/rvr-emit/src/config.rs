@@ -244,6 +244,8 @@ pub struct EmitConfig<X: Xlen> {
     pub emit_line_info: bool,
     /// Enable HTIF (Host-Target Interface) for riscv-tests.
     pub htif_enabled: bool,
+    /// Print HTIF stdout (guest console output).
+    pub htif_verbose: bool,
     /// Memory address bits (default 32).
     pub memory_bits: u8,
     /// Tracer configuration.
@@ -274,6 +276,7 @@ impl<X: Xlen> EmitConfig<X> {
             emit_comments: true,
             emit_line_info: false,
             htif_enabled: false,
+            htif_verbose: false,
             memory_bits: 32,
             tracer_config: TracerConfig::none(),
             compiler: Compiler::default(),
@@ -369,6 +372,12 @@ impl<X: Xlen> EmitConfig<X> {
     /// Set tohost enabled.
     pub fn with_tohost(mut self, enabled: bool) -> Self {
         self.htif_enabled = enabled;
+        self
+    }
+
+    /// Set HTIF verbose (print guest stdout).
+    pub fn with_htif_verbose(mut self, verbose: bool) -> Self {
+        self.htif_verbose = verbose;
         self
     }
 
