@@ -41,9 +41,30 @@ impl<X: Xlen> MemorySegment<X> {
         (self.flags & PF_W) == 0
     }
 
-    /// Check if segment is executable.
+    /// Check if segment is executable (has PF_X flag).
     pub fn is_executable(&self) -> bool {
         (self.flags & PF_X) != 0
+    }
+
+    /// Check if segment might be executable based on section flags.
+    /// This is a fallback for ELFs with buggy linker scripts that don't set PF_X.
+    pub fn has_executable_sections(&self, sections: &[LoadedSection<X>]) -> bool {
+        let seg_start = X::to_u64(self.virtual_start);
+        let seg_end = X::to_u64(self.virtual_end);
+
+        for section in sections {
+            // Check if section overlaps with this segment
+            let sec_start = X::to_u64(section.addr);
+            let sec_end = sec_start + X::to_u64(section.size);
+
+            if sec_start < seg_end && sec_end > seg_start {
+                // Section overlaps - check if it has SHF_EXECINSTR
+                if (section.flags & SHF_EXECINSTR) != 0 {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 

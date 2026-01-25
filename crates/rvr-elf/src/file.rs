@@ -324,6 +324,7 @@ impl<X: Xlen> ElfFile<X> {
                     name,
                     addr: section.addr,
                     size: section.size,
+                    flags: X::to_u64(section.flags),
                     data: section_data,
                 });
             }

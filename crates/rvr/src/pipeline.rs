@@ -144,13 +144,33 @@ impl<X: Xlen> Pipeline<X> {
 
         let entry_pc = X::to_u64(self.image.entry_point);
 
-        // Collect all executable segments
-        let exec_segments: Vec<_> = self
+        // Collect all executable segments (check PF_X flag first)
+        let mut exec_segments: Vec<_> = self
             .image
             .memory_segments
             .iter()
             .filter(|seg| seg.is_executable())
             .collect();
+
+        // Fallback: if no segments have PF_X, check section flags (SHF_EXECINSTR)
+        // This handles buggy linker scripts that use section flags instead of program header flags
+        // TODO: Fix upstream riscv-tests/benchmarks/common/test.ld to use FLAGS(5) instead of FLAGS(SHF_ALLOC | SHF_EXECINSTR)
+        if exec_segments.is_empty() {
+            exec_segments = self
+                .image
+                .memory_segments
+                .iter()
+                .filter(|seg| seg.has_executable_sections(&self.image.sections))
+                .collect();
+
+            if !exec_segments.is_empty() {
+                debug!(
+                    "No segments have PF_X flag, but found {} segment(s) with executable sections (SHF_EXECINSTR). \
+                     This is likely due to a buggy linker script using section flags instead of program header flags.",
+                    exec_segments.len()
+                );
+            }
+        }
 
         if exec_segments.is_empty() {
             return Err(Error::NoCodeSegment(entry_pc));

@@ -57,6 +57,7 @@ pub struct LoadedSection<X: Xlen> {
     pub name: String,
     pub addr: X::Reg,
     pub size: X::Reg,
+    pub flags: u64,
     pub data: Vec<u8>,
 }
 
