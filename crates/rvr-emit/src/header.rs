@@ -838,21 +838,32 @@ fn gen_syscall_declarations<X: Xlen>() -> String {
 }
 
 fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
-    // Compute mask for dispatch_index
     let entry = cfg.entry_point;
-    let mask = if entry.is_power_of_two() {
-        entry - 1
-    } else {
-        // Round up to next power of 2 minus 1
-        (1u64 << (64 - entry.leading_zeros())) - 1
-    };
-
     let rtype = crate::signature::reg_type::<X>();
 
+    // Fast path: power-of-2 entry allows single AND instruction
+    // Slow path: subtraction needed for arbitrary entry points
+    let (dispatch_body, comment) = if entry.is_power_of_two() {
+        let mask = entry - 1;
+        (
+            format!("return (pc & {mask:#x}) >> 1;"),
+            "/* Dispatch: (pc & mask) >> 1 */",
+        )
+    } else {
+        tracing::debug!(
+            entry = format_args!("{:#x}", entry),
+            "entry_point is not power of 2, using slower dispatch"
+        );
+        (
+            format!("return (pc - {entry:#x}) >> 1;"),
+            "/* Dispatch: (pc - entry) >> 1 (slower, non-power-of-2 entry) */",
+        )
+    };
+
     format!(
-        r#"/* Dispatch: (pc & MASK) >> 1 */
+        r#"{comment}
 static inline uint64_t dispatch_index({rtype} pc) {{
-    return (pc & {mask:#x}) >> 1;
+    {dispatch_body}
 }}
 
 extern const rv_fn dispatch_table[];
@@ -864,8 +875,6 @@ int rv_execute_from(RvState* state, {rtype} start_pc);
 extern const uint32_t RV_TRACER_KIND;
 
 "#,
-        rtype = rtype,
-        mask = mask,
     )
 }
 
