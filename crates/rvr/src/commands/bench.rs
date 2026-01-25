@@ -40,6 +40,28 @@ void setStats(int enable) {
 /// Fix header for dhrystone - uses TIME code path to avoid multiple definition issues.
 const DHRYSTONE_FIX_H: &str = "#define TIME 1\n";
 
+/// Fib benchmark from libriscv - adapted for riscv-tests runtime.
+const LIBRISCV_FIB_C: &str = r#"
+// Fibonacci benchmark from libriscv, adapted for riscv-tests runtime.
+// Original: programs/libriscv/binaries/measure_mips/fib.c
+
+static long fib(long n, long acc, long prev)
+{
+    if (n == 0)
+        return acc;
+    else
+        return fib(n - 1, prev + acc, acc);
+}
+
+int main(void)
+{
+    // Reduced from original 256M to run in reasonable time
+    const volatile long n = 50000000;
+    long result = fib(n, 0, 1);
+    return (int)(result & 0xFF);
+}
+"#;
+
 /// Helper to run a command silently and return success/failure.
 fn run_silent(cmd: &mut Command) -> bool {
     cmd.stdout(Stdio::null())
@@ -155,6 +177,79 @@ fn build_riscv_tests_benchmark(
 
     if !status.success() {
         return Err(format!("gcc failed with exit code {:?}", status.code()));
+    }
+
+    Ok(out_path)
+}
+
+/// Build a libriscv benchmark using riscv-gcc with riscv-tests runtime.
+/// Uses the same crt.S, test.ld, and syscalls.c as riscv-tests benchmarks.
+fn build_libriscv_benchmark(
+    project_dir: &std::path::Path,
+    name: &str,
+    arch: &bench::Arch,
+) -> Result<PathBuf, String> {
+    let toolchain = rvr::tests::find_toolchain()
+        .ok_or_else(|| "RISC-V toolchain not found (need riscv64-unknown-elf-gcc)".to_string())?;
+
+    let gcc = format!("{}gcc", toolchain);
+    let out_dir = project_dir.join("bin").join(arch.as_str());
+    let build_dir = project_dir.join("target/libriscv-build").join(name);
+
+    // Use riscv-tests common infrastructure
+    let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
+    let common_dir = bench_dir.join("common");
+    let env_dir = project_dir.join("programs/riscv-tests/env");
+    let link_ld = common_dir.join("test.ld");
+    let crt_s = common_dir.join("crt.S");
+    let syscalls_c = common_dir.join("syscalls.c");
+
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("failed to create output dir: {}", e))?;
+    std::fs::create_dir_all(&build_dir)
+        .map_err(|e| format!("failed to create build dir: {}", e))?;
+
+    // Write the benchmark source to build directory
+    let src_path = build_dir.join(format!("{}.c", name));
+    let src_content = match name {
+        "fib" => LIBRISCV_FIB_C,
+        _ => return Err(format!("unknown libriscv benchmark: {}", name)),
+    };
+    std::fs::write(&src_path, src_content)
+        .map_err(|e| format!("failed to write source: {}", e))?;
+
+    let (march, mabi) = match arch {
+        bench::Arch::Rv32i | bench::Arch::Rv32e => ("rv32im_zicsr", "ilp32"),
+        bench::Arch::Rv64i | bench::Arch::Rv64e => ("rv64im_zicsr", "lp64"),
+    };
+
+    let out_path = out_dir.join(name);
+
+    // Build using same flags as riscv-tests benchmarks
+    let mut cmd = Command::new(&gcc);
+    cmd.arg(format!("-march={}", march))
+        .arg(format!("-mabi={}", mabi))
+        .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
+        .args(["-nostdlib", "-nostartfiles"])
+        .args(["-std=gnu99", "-O3", "-fno-common", "-fno-builtin-printf"])
+        .arg(format!("-I{}", common_dir.display()))
+        .arg(format!("-I{}", env_dir.display()))
+        .arg(format!("-T{}", link_ld.display()))
+        .arg(&crt_s)
+        .arg(&syscalls_c)
+        .arg(&src_path)
+        .arg("-lgcc")
+        .arg("-o")
+        .arg(&out_path);
+
+    let output = cmd
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run gcc: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("gcc failed: {}", stderr));
     }
 
     Ok(out_path)
@@ -287,6 +382,8 @@ pub enum BenchmarkSource {
     Polkavm,
     /// C benchmark from riscv-tests - build with riscv-gcc
     RiscvTests,
+    /// C benchmark from libriscv - build with riscv-gcc using riscv-tests runtime
+    Libriscv,
 }
 
 /// Benchmark metadata.
@@ -377,6 +474,15 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         source: BenchmarkSource::RiscvTests,
     },
     // Note: spmv fails verification due to FP precision, mm needs threading
+    // libriscv benchmarks
+    BenchmarkInfo {
+        name: "fib",
+        description: "Fibonacci (recursive tail-call)",
+        uses_exports: false,
+        host_binary: None,
+        default_archs: "rv64i",
+        source: BenchmarkSource::Libriscv,
+    },
     // polkavm benchmarks
     BenchmarkInfo {
         name: "minimal",
@@ -442,6 +548,7 @@ pub fn bench_list() {
             BenchmarkSource::Rust { .. } => markers.push("rust"),
             BenchmarkSource::Polkavm => markers.push("polkavm"),
             BenchmarkSource::RiscvTests => markers.push("riscv-tests"),
+            BenchmarkSource::Libriscv => markers.push("libriscv"),
         }
         if b.host_binary.is_some() {
             markers.push("has host");
@@ -625,6 +732,43 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                     }
                 }
             }
+            BenchmarkSource::Libriscv => {
+                // Build C benchmark from libriscv using riscv-tests runtime
+                let archs = match Arch::parse_list(arch_str) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        terminal::error(&e);
+                        return EXIT_FAILURE;
+                    }
+                };
+
+                for a in archs {
+                    let spinner = Spinner::new(format!(
+                        "Building {} ({}, libriscv)",
+                        benchmark.name,
+                        a.as_str()
+                    ));
+                    match build_libriscv_benchmark(&project_dir, benchmark.name, &a) {
+                        Ok(path) => {
+                            spinner.finish_with_success(&format!(
+                                "{} ({}) → {}",
+                                benchmark.name,
+                                a.as_str(),
+                                path.display()
+                            ));
+                        }
+                        Err(e) => {
+                            spinner.finish_with_failure(&format!(
+                                "{} ({}): {}",
+                                benchmark.name,
+                                a.as_str(),
+                                e
+                            ));
+                            return EXIT_FAILURE;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -700,8 +844,11 @@ pub fn bench_compile(
             if fast {
                 options = options.with_instret_mode(InstretMode::Off);
             }
-            // Enable HTIF for riscv-tests benchmarks
-            if matches!(benchmark.source, BenchmarkSource::RiscvTests) {
+            // Enable HTIF for riscv-tests and libriscv benchmarks
+            if matches!(
+                benchmark.source,
+                BenchmarkSource::RiscvTests | BenchmarkSource::Libriscv
+            ) {
                 options = options.with_htif(true);
             }
 
@@ -861,6 +1008,9 @@ pub fn bench_run(
                         }
                     }
                 }
+                BenchmarkSource::Libriscv => {
+                    // No host comparison for libriscv benchmarks yet
+                }
             }
         }
 
@@ -1006,6 +1156,20 @@ fn run_single_arch(
                 spinner.finish_and_clear();
                 tracing::debug!(name = benchmark.name, arch = arch.as_str(), "riscv-tests build complete");
             }
+            BenchmarkSource::Libriscv => {
+                // Auto-build using riscv-tests runtime
+                let spinner =
+                    Spinner::new(format!("Building {} ({}, libriscv)", benchmark.name, arch.as_str()));
+                if let Err(e) = build_libriscv_benchmark(project_dir, benchmark.name, arch) {
+                    spinner.finish_with_failure(&format!("build failed: {}", e));
+                    return Some(bench::TableRow::error(
+                        &backend_name,
+                        "build failed".to_string(),
+                    ));
+                }
+                spinner.finish_and_clear();
+                tracing::debug!(name = benchmark.name, arch = arch.as_str(), "libriscv build complete");
+            }
         }
     }
 
@@ -1027,8 +1191,11 @@ fn run_single_arch(
         if fast {
             options = options.with_instret_mode(InstretMode::Off);
         }
-        // Enable HTIF for riscv-tests benchmarks
-        if matches!(benchmark.source, BenchmarkSource::RiscvTests) {
+        // Enable HTIF for riscv-tests and libriscv benchmarks
+        if matches!(
+            benchmark.source,
+            BenchmarkSource::RiscvTests | BenchmarkSource::Libriscv
+        ) {
             options = options.with_htif(true);
         }
 
