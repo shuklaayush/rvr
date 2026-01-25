@@ -155,36 +155,30 @@ pub fn run_host_benchmark(
 
     // Set up perf counters
     let mut perf_counters = HostPerfCounters::new();
-    let mut total_cycles = 0u64;
-    let mut total_instructions = 0u64;
-    let mut total_branches = 0u64;
-    let mut total_branch_misses = 0u64;
-    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
+    let snapshot_before = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
 
+    // Timed runs with perf (enable once for all runs to avoid per-call overhead)
+    if let Some(ref mut counters) = perf_counters {
+        let _ = counters.enable();
+    }
     let start = Instant::now();
     for _ in 0..runs {
-        if let Some(ref mut counters) = perf_counters {
-            let _ = counters.enable();
-        }
         unsafe { start_fn() };
-        if let Some(ref mut counters) = perf_counters {
-            let _ = counters.disable();
-            let delta = counters.read_delta(&prev_snapshot);
-            total_cycles += delta.cycles.unwrap_or(0);
-            total_instructions += delta.instructions.unwrap_or(0);
-            total_branches += delta.branches.unwrap_or(0);
-            total_branch_misses += delta.branch_misses.unwrap_or(0);
-            prev_snapshot = counters.read();
-        }
     }
     let elapsed = start.elapsed();
+    if let Some(ref mut counters) = perf_counters {
+        let _ = counters.disable();
+    }
 
     let time_secs = elapsed.as_secs_f64() / runs as f64;
-    let perf = perf_counters.map(|_| PerfCounters {
-        cycles: Some(total_cycles / runs as u64),
-        instructions: Some(total_instructions / runs as u64),
-        branches: Some(total_branches / runs as u64),
-        branch_misses: Some(total_branch_misses / runs as u64),
+    let perf = perf_counters.map(|mut c| {
+        let delta = c.read_delta(&snapshot_before);
+        PerfCounters {
+            cycles: delta.cycles.map(|v| v / runs as u64),
+            instructions: delta.instructions.map(|v| v / runs as u64),
+            branches: delta.branches.map(|v| v / runs as u64),
+            branch_misses: delta.branch_misses.map(|v| v / runs as u64),
+        }
     });
 
     Ok(HostBenchResult { time_secs, perf })
