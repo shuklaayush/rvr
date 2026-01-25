@@ -26,9 +26,16 @@ pub fn build_benchmark(
 
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
 
-    // Get the source file path
-    let src_path = match name {
-        "fib" => libriscv_dir.join("measure_mips/fib.c"),
+    // Get the source file path and check arch compatibility
+    let (src_path, is_asm) = match name {
+        "fib" => (libriscv_dir.join("measure_mips/fib.c"), false),
+        "fib-asm" => {
+            // Assembly version is RV64 only (uses lui for 256M constant)
+            if !matches!(arch, Arch::Rv64i | Arch::Rv64e) {
+                return Err(format!("fib-asm only supports rv64i/rv64e"));
+            }
+            (libriscv_dir.join("measure_mips/fib64.S"), true)
+        }
         _ => return Err(format!("unknown libriscv benchmark: {}", name)),
     };
 
@@ -43,15 +50,15 @@ pub fn build_benchmark(
 
     let out_path = out_dir.join(name);
 
-    // Build directly - fib.c has its own _start and uses syscall 93 (Linux exit)
+    // Build - sources have their own _start and use syscall 93 (Linux exit)
     let mut cmd = Command::new(&gcc);
     cmd.arg(format!("-march={}", march))
         .arg(format!("-mabi={}", mabi))
-        .args(["-static", "-nostdlib", "-nostartfiles"])
-        .args(["-O3", "-fno-builtin"])
-        .arg(&src_path)
-        .arg("-o")
-        .arg(&out_path);
+        .args(["-static", "-nostdlib", "-nostartfiles"]);
+    if !is_asm {
+        cmd.args(["-O3", "-fno-builtin"]);
+    }
+    cmd.arg(&src_path).arg("-o").arg(&out_path);
 
     let output = cmd
         .stderr(Stdio::piped())
@@ -85,6 +92,8 @@ pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result
 
     let src_path = match name {
         "fib" => libriscv_dir.join("measure_mips/fib.c"),
+        // fib-asm is RISC-V assembly, can't compile for host
+        "fib-asm" => return Err("fib-asm has no host version (RISC-V assembly)".to_string()),
         _ => return Err(format!("unknown libriscv benchmark: {}", name)),
     };
 

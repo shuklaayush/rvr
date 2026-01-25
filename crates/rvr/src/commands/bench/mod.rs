@@ -155,6 +155,14 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         default_archs: "rv64i",
         source: BenchmarkSource::Libriscv,
     },
+    BenchmarkInfo {
+        name: "fib-asm",
+        description: "Fibonacci (hand-written assembly)",
+        uses_exports: false,
+        host_binary: None,
+        default_archs: "rv64i",
+        source: BenchmarkSource::Libriscv,
+    },
     // polkavm benchmarks
     BenchmarkInfo {
         name: "minimal",
