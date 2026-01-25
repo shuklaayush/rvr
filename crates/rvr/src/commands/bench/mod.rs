@@ -1,13 +1,13 @@
 //! Benchmark commands and registry.
 
 mod libriscv;
+mod polkavm;
 mod riscv_tests;
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use rvr::bench::{self, Arch};
-use rvr::polkavm;
 use rvr::{CompileOptions, Compiler, InstretMode};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
