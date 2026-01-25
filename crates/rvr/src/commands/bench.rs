@@ -11,6 +11,35 @@ use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
 use crate::terminal::{self, Spinner};
 
+/// Host-compatible setStats() for riscv-tests benchmarks.
+/// Uses clock_gettime instead of CSRs, prints timing in parseable format.
+const HOST_SYSCALLS_C: &str = r#"
+#include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+
+static uint64_t start_nanos;
+static uint64_t elapsed_nanos;
+
+static uint64_t get_nanos(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+void setStats(int enable) {
+    if (enable) {
+        start_nanos = get_nanos();
+    } else {
+        elapsed_nanos = get_nanos() - start_nanos;
+        printf("host_nanos = %lu\n", (unsigned long)elapsed_nanos);
+    }
+}
+"#;
+
+/// Fix header for dhrystone - uses TIME code path to avoid multiple definition issues.
+const DHRYSTONE_FIX_H: &str = "#define TIME 1\n";
+
 /// Helper to run a command silently and return success/failure.
 fn run_silent(cmd: &mut Command) -> bool {
     cmd.stdout(Stdio::null())
@@ -139,7 +168,6 @@ fn build_riscv_tests_host_benchmark(
     let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
     let common_dir = bench_dir.join("common");
     let out_dir = project_dir.join("bin/host");
-    let toolchain_dir = project_dir.join("toolchain");
 
     let src_dir = bench_dir.join(name);
     if !src_dir.exists() {
@@ -162,8 +190,12 @@ fn build_riscv_tests_host_benchmark(
         return Err(format!("no C files found in {}", src_dir.display()));
     }
 
+    // Write embedded support files to out_dir
+    let host_syscalls = out_dir.join("_host_syscalls.c");
+    std::fs::write(&host_syscalls, HOST_SYSCALLS_C)
+        .map_err(|e| format!("failed to write host syscalls: {}", e))?;
+
     let out_path = out_dir.join(name);
-    let host_syscalls = toolchain_dir.join("bench_host_syscalls.c");
 
     let mut cmd = Command::new("cc");
     cmd.args(["-O3", "-std=gnu89", "-DPREALLOCATE=1"])
@@ -173,7 +205,9 @@ fn build_riscv_tests_host_benchmark(
 
     // For dhrystone, include fix header to avoid times() code path issues
     if name == "dhrystone" {
-        let fix_header = toolchain_dir.join("dhrystone_fix.h");
+        let fix_header = out_dir.join("_dhrystone_fix.h");
+        std::fs::write(&fix_header, DHRYSTONE_FIX_H)
+            .map_err(|e| format!("failed to write dhrystone fix: {}", e))?;
         cmd.arg(format!("-include{}", fix_header.display()));
     }
 
