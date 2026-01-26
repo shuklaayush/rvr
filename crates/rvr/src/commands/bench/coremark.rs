@@ -8,6 +8,121 @@ use std::process::{Command, Stdio};
 
 use rvr::bench::Arch;
 
+/// Host port header for CoreMark (64-bit compatible).
+const HOST_PORTME_H: &str = r#"
+#ifndef CORE_PORTME_H
+#define CORE_PORTME_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include <time.h>
+
+#define HAS_FLOAT 1
+#define HAS_TIME_H 1
+#define USE_CLOCK 1
+#define HAS_STDIO 1
+#define HAS_PRINTF 1
+
+typedef clock_t CORE_TICKS;
+
+#ifndef COMPILER_VERSION
+#ifdef __GNUC__
+#define COMPILER_VERSION "GCC"__VERSION__
+#else
+#define COMPILER_VERSION "Unknown"
+#endif
+#endif
+
+#ifndef COMPILER_FLAGS
+#define COMPILER_FLAGS "-O3"
+#endif
+
+#ifndef MEM_LOCATION
+#define MEM_LOCATION "STACK"
+#endif
+
+typedef signed short   ee_s16;
+typedef unsigned short ee_u16;
+typedef signed int     ee_s32;
+typedef double         ee_f32;
+typedef unsigned char  ee_u8;
+typedef unsigned int   ee_u32;
+typedef uintptr_t      ee_ptr_int;  /* 64-bit safe pointer type */
+typedef size_t         ee_size_t;
+
+#define align_mem(x) (void *)(sizeof(ee_ptr_int) + ((((ee_ptr_int)(x) - 1) / sizeof(ee_ptr_int)) * sizeof(ee_ptr_int)))
+
+#define SEED_METHOD SEED_VOLATILE
+#define MEM_METHOD MEM_STACK
+
+#define MULTITHREAD 1
+#define USE_PTHREAD 0
+#define USE_FORK 0
+#define USE_SOCKET 0
+
+#define MAIN_HAS_NOARGC 0
+#define MAIN_HAS_NORETURN 0
+
+typedef struct CORE_PORTABLE_S {
+    ee_u8 portable_id;
+} core_portable;
+
+extern ee_u32 default_num_contexts;
+
+void portable_init(core_portable *p, int *argc, char *argv[]);
+void portable_fini(core_portable *p);
+
+#if !defined(PROFILE_RUN) && !defined(PERFORMANCE_RUN) && !defined(VALIDATION_RUN)
+#define PERFORMANCE_RUN 1
+#endif
+
+#endif
+"#;
+
+/// Host port implementation for CoreMark.
+const HOST_PORTME_C: &str = r#"
+#include <stdio.h>
+#include <time.h>
+#include "coremark.h"
+
+#if VALIDATION_RUN
+volatile ee_s32 seed1_volatile = 0x3415;
+volatile ee_s32 seed2_volatile = 0x3415;
+volatile ee_s32 seed3_volatile = 0x66;
+#endif
+#if PERFORMANCE_RUN
+volatile ee_s32 seed1_volatile = 0x0;
+volatile ee_s32 seed2_volatile = 0x0;
+volatile ee_s32 seed3_volatile = 0x66;
+#endif
+#if PROFILE_RUN
+volatile ee_s32 seed1_volatile = 0x8;
+volatile ee_s32 seed2_volatile = 0x8;
+volatile ee_s32 seed3_volatile = 0x8;
+#endif
+volatile ee_s32 seed4_volatile = ITERATIONS;
+volatile ee_s32 seed5_volatile = 0;
+ee_u32 default_num_contexts = 1;
+
+#define EE_TICKS_PER_SEC (CLOCKS_PER_SEC)
+
+static CORE_TICKS start_time_val, stop_time_val;
+
+void start_time(void) { start_time_val = clock(); }
+void stop_time(void) { stop_time_val = clock(); }
+CORE_TICKS get_time(void) { return stop_time_val - start_time_val; }
+secs_ret time_in_secs(CORE_TICKS ticks) { return (secs_ret)ticks / (secs_ret)EE_TICKS_PER_SEC; }
+
+void portable_init(core_portable *p, int *argc, char *argv[]) {
+    (void)argc; (void)argv;
+    if (sizeof(ee_ptr_int) != sizeof(ee_u8 *)) {
+        ee_printf("ERROR! ee_ptr_int must hold a pointer!\n");
+    }
+    p->portable_id = 1;
+}
+void portable_fini(core_portable *p) { p->portable_id = 0; }
+"#;
+
 /// Minimal RISC-V port header for CoreMark.
 const PORTME_H: &str = r#"
 #ifndef CORE_PORTME_H
@@ -128,7 +243,10 @@ static CORE_TICKS start_time_val, stop_time_val;
 void start_time(void) { start_time_val = rdcycle(); }
 void stop_time(void) { stop_time_val = rdcycle(); }
 CORE_TICKS get_time(void) { return stop_time_val - start_time_val; }
-secs_ret time_in_secs(CORE_TICKS ticks) { return (secs_ret)(ticks / 1000000000ULL); }
+/* rdcycle returns instruction count in rvr, not actual cycles.
+ * Use 10M as divisor so typical runs (~300M instrs) report ~30 seconds,
+ * passing CoreMark's 10-second minimum validation requirement. */
+secs_ret time_in_secs(CORE_TICKS ticks) { return (secs_ret)(ticks / 10000000ULL); }
 
 static inline long syscall1(long n, long a0) {
     register long _a0 __asm__("a0") = a0;
@@ -180,6 +298,19 @@ static void print_uint(ee_u32 n) {
     print_str(&buf[i]);
 }
 
+static void print_hex(ee_u32 n) {
+    char buf[16];
+    int i = 15;
+    buf[i] = 0;
+    if (n == 0) buf[--i] = '0';
+    else while (n > 0) {
+        int d = n & 0xf;
+        buf[--i] = d < 10 ? '0' + d : 'a' + d - 10;
+        n >>= 4;
+    }
+    print_str(&buf[i]);
+}
+
 int ee_printf(const char *fmt, ...) {
     __builtin_va_list ap;
     __builtin_va_start(ap, fmt);
@@ -196,7 +327,7 @@ int ee_printf(const char *fmt, ...) {
                 case 's': print_str(__builtin_va_arg(ap, const char *)); break;
                 case 'c': print_char((char)__builtin_va_arg(ap, int)); break;
                 case 'f': case 'g': case 'e': (void)__builtin_va_arg(ap, double); print_str("[float]"); break;
-                case 'x': case 'X': print_uint(__builtin_va_arg(ap, ee_u32)); break;
+                case 'x': case 'X': print_hex(__builtin_va_arg(ap, ee_u32)); break;
                 case '%': print_char('%'); break;
                 default: print_char('%'); print_char(*fmt); break;
             }
@@ -269,10 +400,11 @@ pub fn build_benchmark(project_dir: &std::path::Path, arch: &Arch) -> Result<Pat
         .arg(format!("-mabi={}", mabi))
         .args(["-O3", "-funroll-loops"])
         .args(["-static", "-nostdlib", "-nostartfiles", "-ffreestanding"])
-        .args(["-DITERATIONS=1000", "-DPERFORMANCE_RUN=1"])
+        .args(["-DITERATIONS=400000", "-DPERFORMANCE_RUN=1"])
         .arg(format!("-I{}", coremark_dir.display()))
         .arg(format!("-I{}", port_dir.display()))
         .args(&core_files)
+        .arg("-lgcc") // For 64-bit division on RV32
         .arg("-o")
         .arg(&out_path);
 
@@ -296,23 +428,31 @@ pub fn build_host_benchmark(project_dir: &std::path::Path) -> Result<PathBuf, St
 
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
 
+    // Create host port files in temp directory
+    let port_dir = std::env::temp_dir().join("rvr_coremark_host_port");
+    std::fs::create_dir_all(&port_dir).map_err(|e| format!("failed to create port dir: {}", e))?;
+
+    std::fs::write(port_dir.join("core_portme.h"), HOST_PORTME_H)
+        .map_err(|e| format!("failed to write host portme.h: {}", e))?;
+    std::fs::write(port_dir.join("core_portme.c"), HOST_PORTME_C)
+        .map_err(|e| format!("failed to write host portme.c: {}", e))?;
+
     let out_path = out_dir.join("coremark");
 
-    // Use the simple port for host builds
-    let core_files = [
-        "core_list_join.c",
-        "core_main.c",
-        "core_matrix.c",
-        "core_state.c",
-        "core_util.c",
-        "simple/core_portme.c",
+    let core_files: Vec<PathBuf> = vec![
+        coremark_dir.join("core_list_join.c"),
+        coremark_dir.join("core_main.c"),
+        coremark_dir.join("core_matrix.c"),
+        coremark_dir.join("core_state.c"),
+        coremark_dir.join("core_util.c"),
+        port_dir.join("core_portme.c"),
     ];
 
     let mut cmd = Command::new("cc");
-    cmd.current_dir(&coremark_dir)
-        .args(["-O3", "-funroll-loops"])
-        .args(["-DITERATIONS=10000", "-DPERFORMANCE_RUN=1"])
-        .args(["-I.", "-Isimple"])
+    cmd.args(["-O3", "-funroll-loops"])
+        .args(["-DITERATIONS=400000", "-DPERFORMANCE_RUN=1"])
+        .arg(format!("-I{}", coremark_dir.display()))
+        .arg(format!("-I{}", port_dir.display()))
         .args(&core_files)
         .arg("-o")
         .arg(&out_path);
@@ -353,15 +493,25 @@ pub fn run_host_benchmark(
         .status();
 
     let start = Instant::now();
-    for _ in 0..runs {
-        let status = Command::new(bin_path)
-            .stdout(Stdio::null())
+    for i in 0..runs {
+        let output = Command::new(bin_path)
             .stderr(Stdio::null())
-            .status()
+            .output()
             .map_err(|e| format!("failed to run benchmark: {}", e))?;
 
-        if !status.success() {
+        if !output.status.success() {
             return Err("benchmark failed".to_string());
+        }
+
+        // Print output on last run to show "No errors detected"
+        if i == runs - 1 {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Check for errors - CoreMark prints "Correct operation validated" or errors
+            if stdout.contains("ERROR") {
+                return Err(format!("CoreMark validation failed:\n{}", stdout));
+            }
+            // Print the output for user to see results
+            print!("{}", stdout);
         }
     }
     let elapsed = start.elapsed();
