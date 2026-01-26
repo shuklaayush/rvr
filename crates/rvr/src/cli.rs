@@ -204,6 +204,24 @@ pub enum Commands {
 pub enum BenchCommands {
     /// List available benchmarks
     List,
+    /// Generate benchmark report with system info
+    Report {
+        /// Output file (default: BENCHMARKS.md)
+        #[arg(short, long, default_value = "BENCHMARKS.md")]
+        output: PathBuf,
+
+        /// Number of runs for averaging
+        #[arg(short, long, default_value = "3")]
+        runs: usize,
+
+        /// Skip libriscv comparison
+        #[arg(long)]
+        no_libriscv: bool,
+
+        /// Skip host comparison
+        #[arg(long)]
+        no_host: bool,
+    },
     /// Build benchmark ELF from source
     Build {
         /// Benchmark name (omit to build all)

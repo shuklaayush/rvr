@@ -107,6 +107,12 @@ pub fn run_command(cli: &Cli) -> i32 {
                 bench::bench_list();
                 EXIT_SUCCESS
             }
+            BenchCommands::Report {
+                output,
+                runs,
+                no_libriscv,
+                no_host,
+            } => bench::bench_report(output, *runs, *no_libriscv, *no_host),
             BenchCommands::Build {
                 name,
                 arch,

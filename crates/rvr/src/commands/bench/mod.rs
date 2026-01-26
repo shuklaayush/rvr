@@ -3,7 +3,10 @@
 mod coremark;
 mod libriscv;
 mod polkavm;
+mod report;
 mod riscv_tests;
+
+pub use report::bench_report;
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
