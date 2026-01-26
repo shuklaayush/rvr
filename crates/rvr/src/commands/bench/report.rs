@@ -11,7 +11,6 @@ use super::{
     run_libriscv_benchmark, run_single_arch,
 };
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
-use crate::commands::build::build_rust_project;
 use crate::terminal::{self, Spinner};
 
 // ============================================================================
@@ -344,32 +343,36 @@ fn run_rust_host_benchmark(
     path: &str,
     runs: usize,
 ) -> Option<(bench::TableRow, Option<f64>)> {
-    let host_bin = project_dir
-        .join(path)
-        .join("target/release")
-        .join(benchmark.name);
+    // Use host_binary path if specified, otherwise construct from path
+    let host_bin = if let Some(host_path) = benchmark.host_binary {
+        project_dir.join(host_path)
+    } else {
+        project_dir
+            .join(path)
+            .join("target/release")
+            .join(benchmark.name)
+    };
 
+    // Build with cargo if binary doesn't exist
     if !host_bin.exists() {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
-        let result = build_rust_project(
-            &project_dir.join(path),
-            "host",
-            None,
-            None,
-            "nightly",
-            None,
-            true,
-            false,
-            true,
-        );
-        if result != EXIT_SUCCESS {
-            spinner.finish_with_failure("build failed");
-            return Some((
-                bench::TableRow::error("host", "build failed".to_string()),
-                None,
-            ));
+        let status = Command::new("cargo")
+            .args(["build", "--release"])
+            .current_dir(project_dir.join(path))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => spinner.finish_and_clear(),
+            _ => {
+                spinner.finish_with_failure("build failed");
+                return Some((
+                    bench::TableRow::error("host", "build failed".to_string()),
+                    None,
+                ));
+            }
         }
-        spinner.finish_and_clear();
     }
 
     if !host_bin.exists() {
