@@ -520,11 +520,11 @@ pub fn print_bench_header(name: &str, description: &str, runs: usize) {
     println!("*{} | runs: {}*", description, runs);
     println!();
     println!(
-        "| {:<9} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        "| {:<14} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
         "Backend", "Instret", "Host Ops", "Ops/Guest", "Time", "OH", "Speed", "IPC", "Branch Miss"
     );
     println!(
-        "|{:-<11}|{:-<12}|{:-<12}|{:-<11}|{:-<12}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
+        "|{:-<16}|{:-<12}|{:-<12}|{:-<11}|{:-<12}|{:-<8}|{:-<14}|{:-<7}|{:-<13}|",
         "", "", "", "", "", "", "", "", ""
     );
 }
@@ -539,7 +539,7 @@ pub fn print_table_row(row: &TableRow) {
             err.clone()
         };
         println!(
-            "| {:<9} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
+            "| {:<14} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
             row.label, "-", "-", "-", "-", "-", err_display, "-", "-"
         );
         return;
@@ -567,7 +567,7 @@ pub fn print_table_row(row: &TableRow) {
     let branch_miss = format_branch_miss(row.branch_miss_rate);
 
     println!(
-        "| {:<9} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
+        "| {:<14} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
         row.label, instret, host_instrs, instrs_per_guest, time, overhead, speed, ipc, branch_miss
     );
 }

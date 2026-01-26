@@ -41,6 +41,104 @@ fn find_project_root() -> PathBuf {
     std::env::current_dir().expect("failed to get current directory")
 }
 
+/// Result from running libriscv emulator.
+pub struct LibriscvResult {
+    pub time_secs: f64,
+    pub perf: Option<rvr::PerfCounters>,
+}
+
+/// Run a benchmark using the libriscv emulator.
+/// Returns the runtime parsed from libriscv output plus perf counters.
+fn run_libriscv_benchmark(
+    project_dir: &std::path::Path,
+    elf_path: &std::path::Path,
+    runs: usize,
+) -> Result<LibriscvResult, String> {
+    use rvr::perf::HostPerfCounters;
+    use std::time::Instant;
+
+    let emulator = project_dir.join("programs/libriscv/emulator/.build/rvlinux");
+    if !emulator.exists() {
+        return Err("libriscv emulator not found (build with: cd programs/libriscv/emulator && ./build.sh --bintr)".to_string());
+    }
+
+    let runs = runs.max(1);
+    let mut perf_counters = HostPerfCounters::new();
+    let mut total_time = 0.0;
+    let mut total_cycles = 0u64;
+    let mut total_instructions = 0u64;
+    let mut total_branches = 0u64;
+    let mut total_branch_misses = 0u64;
+
+    // Get initial snapshot for delta tracking
+    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
+
+    for _ in 0..runs {
+        let start = Instant::now();
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.enable();
+        }
+
+        let output = Command::new(&emulator)
+            .args(["-f", "0"]) // No instruction limit
+            .arg(elf_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("failed to run libriscv: {}", e))?;
+
+        if let Some(ref mut counters) = perf_counters {
+            let _ = counters.disable();
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        total_time += elapsed;
+
+        // Read delta since last snapshot
+        if let Some(ref mut counters) = perf_counters {
+            let delta = counters.read_delta(&prev_snapshot);
+            total_cycles += delta.cycles.unwrap_or(0);
+            total_instructions += delta.instructions.unwrap_or(0);
+            total_branches += delta.branches.unwrap_or(0);
+            total_branch_misses += delta.branch_misses.unwrap_or(0);
+            prev_snapshot = counters.read();
+        }
+
+        // On first run, verify we can parse the output
+        if runs == 1 || total_time == elapsed {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{}{}", stdout, stderr);
+
+            let mut found_runtime = false;
+            for line in combined.lines() {
+                if line.starts_with("Runtime:") {
+                    found_runtime = true;
+                    break;
+                }
+            }
+            if !found_runtime {
+                return Err(format!(
+                    "could not find Runtime in libriscv output:\n{}",
+                    combined
+                ));
+            }
+        }
+    }
+
+    let avg_time = total_time / runs as f64;
+    let perf = perf_counters.map(|_| rvr::PerfCounters {
+        cycles: Some(total_cycles / runs as u64),
+        instructions: Some(total_instructions / runs as u64),
+        branches: Some(total_branches / runs as u64),
+        branch_misses: Some(total_branch_misses / runs as u64),
+    });
+
+    Ok(LibriscvResult {
+        time_secs: avg_time,
+        perf,
+    })
+}
+
 // ============================================================================
 // Benchmark registry
 // ============================================================================
@@ -652,6 +750,7 @@ pub fn bench_run(
     runs: usize,
     fast: bool,
     compare_host: bool,
+    compare_libriscv: bool,
     force: bool,
 ) -> i32 {
     let project_dir = find_project_root();
@@ -850,6 +949,50 @@ pub fn bench_run(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Run libriscv comparison for each architecture if requested
+        // Only Libriscv and Coremark benchmarks are compatible (use Linux syscalls)
+        let libriscv_compatible = matches!(
+            benchmark.source,
+            BenchmarkSource::Libriscv | BenchmarkSource::Coremark
+        );
+        if compare_libriscv && libriscv_compatible {
+            for a in &archs {
+                let elf_path = project_dir.join(format!("bin/{}/{}", a.as_str(), benchmark.name));
+                if !elf_path.exists() {
+                    continue;
+                }
+                let label = format!("libriscv-{}", a.as_str());
+                let spinner = Spinner::new(format!("Running {} ({})", benchmark.name, label));
+                match run_libriscv_benchmark(&project_dir, &elf_path, runs) {
+                    Ok(result) => {
+                        spinner.finish_and_clear();
+                        let overhead = host_time.map(|ht| result.time_secs / ht);
+                        let (ipc, branch_miss_rate, host_instrs) = result
+                            .perf
+                            .as_ref()
+                            .map(|p| (p.ipc(), p.branch_miss_rate(), p.instructions))
+                            .unwrap_or((None, None, None));
+                        rows.push(bench::TableRow {
+                            label,
+                            instret: None,
+                            host_instrs,
+                            instrs_per_guest: None,
+                            time_secs: Some(result.time_secs),
+                            overhead,
+                            mips: None,
+                            ipc,
+                            branch_miss_rate,
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        spinner.finish_with_failure(&e);
+                        rows.push(bench::TableRow::error(&label, e));
                     }
                 }
             }

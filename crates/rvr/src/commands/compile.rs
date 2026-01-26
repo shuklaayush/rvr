@@ -1,6 +1,6 @@
 //! Compile and lift commands.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use rvr::{CompileOptions, Compiler};
 use tracing::{error, info};
@@ -11,8 +11,8 @@ use crate::cli::{
 
 /// Handle the `compile` command.
 pub fn cmd_compile(
-    input: &PathBuf,
-    output: &PathBuf,
+    input: &Path,
+    output: &Path,
     addr_check: bool,
     htif: bool,
     instret: InstretModeArg,
@@ -67,8 +67,8 @@ pub fn cmd_compile(
 
 /// Handle the `lift` command.
 pub fn cmd_lift(
-    input: &PathBuf,
-    output: &PathBuf,
+    input: &Path,
+    output: &Path,
     addr_check: bool,
     htif: bool,
     line_info: bool,

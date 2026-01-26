@@ -131,6 +131,7 @@ pub fn run_command(cli: &Cli) -> i32 {
                 runs,
                 fast,
                 compare_host,
+                compare_libriscv,
                 force,
             } => bench::bench_run(
                 name.as_deref(),
@@ -138,6 +139,7 @@ pub fn run_command(cli: &Cli) -> i32 {
                 *runs,
                 *fast,
                 *compare_host,
+                *compare_libriscv,
                 *force,
             ),
         },

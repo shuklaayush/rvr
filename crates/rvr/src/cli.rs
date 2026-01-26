@@ -262,6 +262,10 @@ pub enum BenchCommands {
         #[arg(long)]
         compare_host: bool,
 
+        /// Include libriscv emulator comparison
+        #[arg(long)]
+        compare_libriscv: bool,
+
         /// Force recompilation (delete and rebuild .so files)
         #[arg(long)]
         force: bool,
