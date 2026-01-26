@@ -1,5 +1,6 @@
 //! Benchmark commands and registry.
 
+mod coremark;
 mod libriscv;
 mod polkavm;
 mod riscv_tests;
@@ -33,9 +34,10 @@ fn find_project_root() -> PathBuf {
         .args(["rev-parse", "--show-toplevel"])
         .output()
         && output.status.success()
-            && let Ok(path) = String::from_utf8(output.stdout) {
-                return PathBuf::from(path.trim());
-            }
+        && let Ok(path) = String::from_utf8(output.stdout)
+    {
+        return PathBuf::from(path.trim());
+    }
     std::env::current_dir().expect("failed to get current directory")
 }
 
@@ -57,6 +59,8 @@ pub enum BenchmarkSource {
     RiscvTests,
     /// C benchmark from libriscv - build with riscv-gcc using riscv-tests runtime
     Libriscv,
+    /// CoreMark benchmark from EEMBC
+    Coremark,
 }
 
 /// Benchmark metadata.
@@ -184,6 +188,17 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         has_host: false,                      // Can't compile assembly for host
         source: BenchmarkSource::Libriscv,
     },
+    // coremark benchmark
+    BenchmarkInfo {
+        name: "coremark",
+        description: "CoreMark CPU benchmark (EEMBC)",
+        uses_exports: false,
+        host_binary: None,
+        default_archs: "rv64i",
+        supported_archs: None,
+        has_host: true,
+        source: BenchmarkSource::Coremark,
+    },
     // polkavm benchmarks
     BenchmarkInfo {
         name: "minimal",
@@ -272,6 +287,7 @@ pub fn bench_list() {
             BenchmarkSource::Polkavm => markers.push("polkavm"),
             BenchmarkSource::RiscvTests => markers.push("riscv-tests"),
             BenchmarkSource::Libriscv => markers.push("libriscv"),
+            BenchmarkSource::Coremark => markers.push("coremark"),
         }
         if b.host_binary.is_some() {
             markers.push("has host");
@@ -469,6 +485,45 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                         a.as_str()
                     ));
                     match libriscv::build_benchmark(&project_dir, benchmark.name, &a) {
+                        Ok(path) => {
+                            spinner.finish_with_success(&format!(
+                                "{} ({}) → {}",
+                                benchmark.name,
+                                a.as_str(),
+                                path.display()
+                            ));
+                        }
+                        Err(e) => {
+                            spinner.finish_with_failure(&format!(
+                                "{} ({}): {}",
+                                benchmark.name,
+                                a.as_str(),
+                                e
+                            ));
+                            return EXIT_FAILURE;
+                        }
+                    }
+                }
+            }
+            BenchmarkSource::Coremark => {
+                let archs = match Arch::parse_list(arch_str) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        terminal::error(&e);
+                        return EXIT_FAILURE;
+                    }
+                };
+
+                for a in archs {
+                    if !benchmark.supports_arch(&a) {
+                        continue;
+                    }
+                    let spinner = Spinner::new(format!(
+                        "Building {} ({}, coremark)",
+                        benchmark.name,
+                        a.as_str()
+                    ));
+                    match coremark::build_benchmark(&project_dir, &a) {
                         Ok(path) => {
                             spinner.finish_with_success(&format!(
                                 "{} ({}) → {}",
@@ -758,6 +813,45 @@ pub fn bench_run(
                         }
                     }
                 }
+                BenchmarkSource::Coremark => {
+                    if !benchmark.has_host {
+                        // Skip - no host version available
+                    } else {
+                        let host_bin = project_dir.join("bin/host").join("coremark");
+                        if !host_bin.exists() || force {
+                            let spinner =
+                                Spinner::new(format!("Building {} (host)", benchmark.name));
+                            if let Err(e) = coremark::build_host_benchmark(&project_dir) {
+                                spinner.finish_with_failure(&format!("build failed: {}", e));
+                                rows.push(bench::TableRow::error(
+                                    "host",
+                                    "build failed".to_string(),
+                                ));
+                            } else {
+                                spinner.finish_and_clear();
+                            }
+                        }
+                        if host_bin.exists() {
+                            let spinner =
+                                Spinner::new(format!("Running {} (host)", benchmark.name));
+                            match coremark::run_host_benchmark(&host_bin, runs) {
+                                Ok(result) => {
+                                    spinner.finish_and_clear();
+                                    host_time = Some(result.time_secs);
+                                    let host_result = bench::HostResult {
+                                        time_secs: Some(result.time_secs),
+                                        perf: result.perf,
+                                    };
+                                    rows.push(bench::TableRow::host("host", &host_result));
+                                }
+                                Err(e) => {
+                                    spinner.finish_with_failure(&e);
+                                    rows.push(bench::TableRow::error("host", e));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -913,6 +1007,21 @@ fn run_single_arch(
                 }
                 spinner.finish_and_clear();
             }
+            BenchmarkSource::Coremark => {
+                let spinner = Spinner::new(format!(
+                    "Building {} ({}, coremark)",
+                    benchmark.name,
+                    arch.as_str()
+                ));
+                if let Err(e) = coremark::build_benchmark(project_dir, arch) {
+                    spinner.finish_with_failure(&format!("build failed: {}", e));
+                    return Some(bench::TableRow::error(
+                        &backend_name,
+                        "build failed".to_string(),
+                    ));
+                }
+                spinner.finish_and_clear();
+            }
         }
     }
 
@@ -937,8 +1046,8 @@ fn run_single_arch(
             BenchmarkSource::RiscvTests => {
                 options = options.with_htif(true);
             }
-            BenchmarkSource::Libriscv => {
-                // libriscv benchmarks use Linux syscall conventions
+            BenchmarkSource::Libriscv | BenchmarkSource::Coremark => {
+                // libriscv and coremark benchmarks use Linux syscall conventions
                 options = options.with_syscall_mode(SyscallMode::Linux);
             }
             _ => {}

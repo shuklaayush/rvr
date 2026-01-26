@@ -75,7 +75,7 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     s.push_str("const rv_fn dispatch_table[] = {\n");
 
     let width = if X::VALUE == 64 { 16 } else { 8 };
-    let mut addr = cfg.inputs.entry_point;
+    let mut addr = cfg.inputs.text_start;
     while addr < cfg.inputs.pc_end {
         if cfg.inputs.valid_addresses.contains(&addr) {
             // Block start - point to its own function

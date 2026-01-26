@@ -222,10 +222,11 @@ pub fn run_host_benchmark(
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             if let Some(rest) = line.strip_prefix("host_nanos = ")
-                && let Ok(nanos) = rest.trim().parse::<u64>() {
-                    total_nanos += nanos;
-                    break;
-                }
+                && let Ok(nanos) = rest.trim().parse::<u64>()
+            {
+                total_nanos += nanos;
+                break;
+            }
         }
     }
 

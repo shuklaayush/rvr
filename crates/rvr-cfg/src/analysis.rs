@@ -591,12 +591,13 @@ fn collect_potential_targets<X: Xlen>(
             }
             InstrKind::Jalr => {
                 if let Some(rs1) = decoded.rs1
-                    && let Some(base) = regs[rs1 as usize] {
-                        let target = add_signed(base, decoded.imm) & !1u64;
-                        if instruction_table.is_valid_pc(target) {
-                            function_entries.insert(target);
-                        }
+                    && let Some(base) = regs[rs1 as usize]
+                {
+                    let target = add_signed(base, decoded.imm) & !1u64;
+                    if instruction_table.is_valid_pc(target) {
+                        function_entries.insert(target);
                     }
+                }
                 if decoded.is_call() {
                     return_sites.insert(pc + size);
                 }
@@ -896,9 +897,10 @@ fn get_successors<X: Xlen>(
                         // Fallback: couldn't find targets, mark as unresolved
                         unresolved_dynamic_jumps.insert(pc);
                         if let Some(func_start) = binary_search_le(sorted_function_entries, pc)
-                            && let Some(targets) = func_internal_targets.get(&func_start) {
-                                result.extend(targets.iter().copied());
-                            }
+                            && let Some(targets) = func_internal_targets.get(&func_start)
+                        {
+                            result.extend(targets.iter().copied());
+                        }
                         result.extend(function_entries.iter().copied());
                     } else {
                         result.extend(jump_targets);

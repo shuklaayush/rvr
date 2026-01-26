@@ -43,8 +43,10 @@ pub struct HeaderConfig<X: Xlen> {
     pub htif_enabled: bool,
     /// Enable address checking.
     pub addr_check: bool,
-    /// Entry point address.
+    /// Entry point address (where execution starts).
     pub entry_point: u64,
+    /// Text section start (lowest code address, used for dispatch table base).
+    pub text_start: u64,
     /// Block start addresses.
     pub block_addresses: Vec<u64>,
     /// Function signature.
@@ -72,6 +74,7 @@ impl<X: Xlen> HeaderConfig<X> {
             htif_enabled: config.htif_enabled,
             addr_check: config.addr_check,
             entry_point: inputs.entry_point,
+            text_start: inputs.text_start,
             block_addresses,
             sig: FnSignature::new(config),
             tracer_config: config.tracer_config.clone(),
@@ -838,25 +841,25 @@ fn gen_syscall_declarations<X: Xlen>() -> String {
 }
 
 fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
-    let entry = cfg.entry_point;
+    let text_start = cfg.text_start;
     let rtype = crate::signature::reg_type::<X>();
 
-    // Fast path: power-of-2 entry allows single AND instruction
-    // Slow path: subtraction needed for arbitrary entry points
-    let (dispatch_body, comment) = if entry.is_power_of_two() {
-        let mask = entry - 1;
+    // Fast path: power-of-2 text_start allows single AND instruction
+    // Slow path: subtraction needed for arbitrary text_start
+    let (dispatch_body, comment) = if text_start.is_power_of_two() {
+        let mask = text_start - 1;
         (
             format!("return (pc & {mask:#x}) >> 1;"),
             "/* Dispatch: (pc & mask) >> 1 */",
         )
     } else {
         tracing::debug!(
-            entry = format_args!("{:#x}", entry),
-            "entry_point is not power of 2, using slower dispatch"
+            text_start = format_args!("{:#x}", text_start),
+            "text_start is not power of 2, using slower dispatch"
         );
         (
-            format!("return (pc - {entry:#x}) >> 1;"),
-            "/* Dispatch: (pc - entry) >> 1 (slower, non-power-of-2 entry) */",
+            format!("return (pc - {text_start:#x}) >> 1;"),
+            "/* Dispatch: (pc - text_start) >> 1 (slower, non-power-of-2 start) */",
         )
     };
 

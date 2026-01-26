@@ -225,9 +225,11 @@ impl<X: Xlen> Pipeline<X> {
             instr_table.add_entry_points(self.extra_entry_points.iter().copied());
         }
 
-        // Add read-only segments for constant propagation
+        // Add read-only segments for constant propagation and jump table detection.
+        // Include both non-executable (.rodata) and executable segments (.text + .rodata merged).
+        // Some linkers merge .text and .rodata into a single R+X segment, so we scan both.
         for seg in &self.image.memory_segments {
-            if seg.is_readonly() && !seg.is_executable() {
+            if seg.is_readonly() {
                 let seg_start = X::to_u64(seg.virtual_start);
                 let seg_end = X::to_u64(seg.virtual_end);
                 instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
@@ -462,7 +464,13 @@ impl<X: Xlen> Pipeline<X> {
             })
             .collect();
 
-        // Compute pc_end from blocks
+        // Compute text_start (minimum block address) and pc_end (maximum end address) from blocks
+        let text_start = self
+            .ir_blocks
+            .values()
+            .map(|b| X::to_u64(b.start_pc))
+            .min()
+            .unwrap_or(entry_point);
         let pc_end = self
             .ir_blocks
             .values()
@@ -478,7 +486,9 @@ impl<X: Xlen> Pipeline<X> {
 
         // Build derived emission inputs
         let initial_brk = X::to_u64(self.image.get_initial_program_break());
-        let mut inputs = EmitInputs::new(entry_point, pc_end).with_initial_brk(initial_brk);
+        let mut inputs = EmitInputs::new(entry_point, pc_end)
+            .with_text_start(text_start)
+            .with_initial_brk(initial_brk);
         inputs
             .valid_addresses
             .extend(self.ir_blocks.keys().copied());

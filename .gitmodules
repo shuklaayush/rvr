@@ -7,3 +7,6 @@
 [submodule "programs/libriscv"]
 	path = programs/libriscv
 	url = git@github.com:libriscv/libriscv.git
+[submodule "programs/coremark"]
+	path = programs/coremark
+	url = https://github.com/eembc/coremark.git

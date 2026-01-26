@@ -5,8 +5,10 @@ use std::collections::{HashMap, HashSet};
 /// Inputs derived from the program/CFG, not from user configuration.
 #[derive(Clone, Debug, Default)]
 pub struct EmitInputs {
-    /// Entry point address.
+    /// Entry point address (where execution starts).
     pub entry_point: u64,
+    /// Start of text section (lowest code address, used for dispatch table).
+    pub text_start: u64,
     /// End address (exclusive).
     pub pc_end: u64,
     /// Valid block start addresses.
@@ -19,14 +21,22 @@ pub struct EmitInputs {
 
 impl EmitInputs {
     /// Create inputs with entry point and end address.
+    /// By default, text_start is set to entry_point.
     pub fn new(entry_point: u64, pc_end: u64) -> Self {
         Self {
             entry_point,
+            text_start: entry_point,
             pc_end,
             valid_addresses: HashSet::new(),
             absorbed_to_merged: HashMap::new(),
             initial_brk: 0,
         }
+    }
+
+    /// Set the text start address (lowest code address).
+    pub fn with_text_start(mut self, text_start: u64) -> Self {
+        self.text_start = text_start;
+        self
     }
 
     /// Set the initial brk value.

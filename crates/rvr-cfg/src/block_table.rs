@@ -581,25 +581,22 @@ impl<X: Xlen> BlockTable<X> {
                 && !absorbed.contains(&taken_pc)
                 && !merge_targets.contains(&taken_pc)
                 && let Some(preds) = self.predecessors.get(&taken_pc)
-                    && preds.len() == 1 {
-                        let taken_idx = start_to_idx[&taken_pc];
-                        let taken_block = &self.blocks[taken_idx];
-                        if taken_block.instruction_count <= DEFAULT_TAKEN_INLINE_SIZE {
-                            // Check if taken block ends with branch
-                            if let Some(taken_instr) =
-                                self.instruction_table.get_at_pc(taken_block.last_pc)
-                            {
-                                let taken_ir = registry.lift(taken_instr);
-                                if !matches!(taken_ir.terminator, rvr_ir::Terminator::Branch { .. })
-                                {
-                                    self.taken_inlines.insert(
-                                        block.last_pc,
-                                        (taken_block.start, taken_block.end),
-                                    );
-                                }
-                            }
+                && preds.len() == 1
+            {
+                let taken_idx = start_to_idx[&taken_pc];
+                let taken_block = &self.blocks[taken_idx];
+                if taken_block.instruction_count <= DEFAULT_TAKEN_INLINE_SIZE {
+                    // Check if taken block ends with branch
+                    if let Some(taken_instr) = self.instruction_table.get_at_pc(taken_block.last_pc)
+                    {
+                        let taken_ir = registry.lift(taken_instr);
+                        if !matches!(taken_ir.terminator, rvr_ir::Terminator::Branch { .. }) {
+                            self.taken_inlines
+                                .insert(block.last_pc, (taken_block.start, taken_block.end));
                         }
                     }
+                }
+            }
 
             // Get fall-through target
             let fall_pc = block.end;
@@ -627,9 +624,10 @@ impl<X: Xlen> BlockTable<X> {
 
                 // Check for multiple predecessors
                 if let Some(preds) = self.predecessors.get(&current_pc)
-                    && preds.len() > 1 {
-                        break;
-                    }
+                    && preds.len() > 1
+                {
+                    break;
+                }
 
                 let current_idx = start_to_idx[&current_pc];
                 let current_block = &self.blocks[current_idx];
