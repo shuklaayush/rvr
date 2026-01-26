@@ -239,8 +239,8 @@ pub fn build_benchmark(project_dir: &std::path::Path, arch: &Arch) -> Result<Pat
 
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
 
-    // Create temporary port files
-    let port_dir = coremark_dir.join("_rvr_port");
+    // Create port files in temp directory (not in submodule or target)
+    let port_dir = std::env::temp_dir().join("rvr_coremark_port");
     std::fs::create_dir_all(&port_dir).map_err(|e| format!("failed to create port dir: {}", e))?;
 
     std::fs::write(port_dir.join("core_portme.h"), PORTME_H)
@@ -255,23 +255,23 @@ pub fn build_benchmark(project_dir: &std::path::Path, arch: &Arch) -> Result<Pat
 
     let out_path = out_dir.join("coremark");
 
-    let core_files = [
-        "core_list_join.c",
-        "core_main.c",
-        "core_matrix.c",
-        "core_state.c",
-        "core_util.c",
-        "_rvr_port/core_portme.c",
+    let core_files: Vec<PathBuf> = vec![
+        coremark_dir.join("core_list_join.c"),
+        coremark_dir.join("core_main.c"),
+        coremark_dir.join("core_matrix.c"),
+        coremark_dir.join("core_state.c"),
+        coremark_dir.join("core_util.c"),
+        port_dir.join("core_portme.c"),
     ];
 
     let mut cmd = Command::new(&gcc);
-    cmd.current_dir(&coremark_dir)
-        .arg(format!("-march={}", march))
+    cmd.arg(format!("-march={}", march))
         .arg(format!("-mabi={}", mabi))
         .args(["-O3", "-funroll-loops"])
         .args(["-static", "-nostdlib", "-nostartfiles", "-ffreestanding"])
         .args(["-DITERATIONS=1000", "-DPERFORMANCE_RUN=1"])
-        .args(["-I.", "-I_rvr_port"])
+        .arg(format!("-I{}", coremark_dir.display()))
+        .arg(format!("-I{}", port_dir.display()))
         .args(&core_files)
         .arg("-o")
         .arg(&out_path);
