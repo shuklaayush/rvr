@@ -891,19 +891,28 @@ fn get_successors<X: Xlen>(
                     result.extend(function_entries.iter().copied());
                     result.insert(pc + size);
                 } else if decoded.is_indirect_jump() {
-                    // Scan forward to find jump table targets (Duff's device pattern)
-                    let jump_targets = scan_jump_table_targets(instruction_table, pc + size);
-                    if jump_targets.is_empty() {
-                        // Fallback: couldn't find targets, mark as unresolved
+                    // For indirect jumps (switch tables, tail calls), use pre-computed targets.
+                    // These come from two sources:
+                    // 1. scan_ro_segments_for_code_pointers: finds switch table entries in rodata
+                    // 2. scan_jump_table_targets: finds Duff's device patterns (sequential targets)
+                    //
+                    // First try Duff's device pattern (sequential targets after this jump)
+                    let duff_targets = scan_jump_table_targets(instruction_table, pc + size);
+                    if !duff_targets.is_empty() {
+                        result.extend(duff_targets);
+                    }
+
+                    // Also use internal targets from rodata scanning (switch tables)
+                    if let Some(func_start) = binary_search_le(sorted_function_entries, pc)
+                        && let Some(targets) = func_internal_targets.get(&func_start)
+                    {
+                        result.extend(targets.iter().copied());
+                    }
+
+                    // Fall back to function entries for potential tail calls
+                    if result.is_empty() {
                         unresolved_dynamic_jumps.insert(pc);
-                        if let Some(func_start) = binary_search_le(sorted_function_entries, pc)
-                            && let Some(targets) = func_internal_targets.get(&func_start)
-                        {
-                            result.extend(targets.iter().copied());
-                        }
                         result.extend(function_entries.iter().copied());
-                    } else {
-                        result.extend(jump_targets);
                     }
                 }
             }
