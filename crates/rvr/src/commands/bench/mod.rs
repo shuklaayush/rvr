@@ -889,15 +889,6 @@ pub fn bench_run(
             bench::print_table_row(row);
         }
 
-        // Print benchmark-specific score summary
-        if matches!(benchmark.source, BenchmarkSource::Coremark) {
-            let scores = bench::compute_iteration_scores(&rows, coremark::ITERATIONS);
-            if !scores.is_empty() {
-                println!();
-                bench::print_score_summary("Score", "i/s", &scores);
-            }
-        }
-
         println!();
     }
 

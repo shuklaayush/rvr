@@ -8,9 +8,6 @@ use std::process::{Command, Stdio};
 
 use rvr::bench::Arch;
 
-/// Number of CoreMark iterations (must match -DITERATIONS in build).
-pub const ITERATIONS: u64 = 400_000;
-
 /// Host port header for CoreMark (64-bit compatible).
 const HOST_PORTME_H: &str = r#"
 #ifndef CORE_PORTME_H

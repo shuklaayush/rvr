@@ -572,48 +572,6 @@ pub fn print_table_row(row: &TableRow) {
     );
 }
 
-/// Print a score summary table for benchmarks with custom metrics (e.g., CoreMark).
-///
-/// `scores` is a list of (backend_name, score) pairs. The first entry with "host"
-/// in the name is used as the baseline for percentage calculations.
-pub fn print_score_summary(label: &str, unit: &str, scores: &[(String, f64)]) {
-    if scores.is_empty() {
-        return;
-    }
-
-    // Find host score as baseline
-    let baseline = scores
-        .iter()
-        .find(|(name, _)| name.contains("host"))
-        .map(|(_, score)| *score);
-
-    // Print table header
-    println!("| {:<9} | {:>12} | {:>8} |", "Backend", label, "vs Native");
-    println!("|{:-<11}|{:-<14}|{:-<10}|", "", "", "");
-
-    // Print rows
-    for (name, score) in scores {
-        let pct = baseline
-            .filter(|&b| b > 0.0 && !name.contains("host"))
-            .map(|b| format!("{:.1}%", score / b * 100.0))
-            .unwrap_or_else(|| "-".to_string());
-
-        println!("| {:<9} | {:>10.0} {} | {:>8} |", name, score, unit, pct);
-    }
-}
-
-/// Compute scores from table rows given an iteration count.
-/// Returns (backend_name, iterations_per_second) for each row with valid time.
-pub fn compute_iteration_scores(rows: &[TableRow], iterations: u64) -> Vec<(String, f64)> {
-    rows.iter()
-        .filter(|r| r.error.is_none())
-        .filter_map(|r| {
-            r.time_secs
-                .map(|t| (r.label.clone(), iterations as f64 / t))
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
