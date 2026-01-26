@@ -3,7 +3,7 @@
 	url = https://github.com/riscv/riscv-tests.git
 [submodule "programs/polkavm"]
 	path = programs/polkavm
-	url = https://github.com/nickalolkoff/polkavm.git
+	url = https://github.com/paritytech/polkavm.git
 [submodule "programs/libriscv"]
 	path = programs/libriscv
 	url = git@github.com:libriscv/libriscv.git
