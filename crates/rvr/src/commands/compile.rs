@@ -10,6 +10,7 @@ use crate::cli::{
 };
 
 /// Handle the `compile` command.
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_compile(
     input: &Path,
     output: &Path,
@@ -66,6 +67,7 @@ pub fn cmd_compile(
 }
 
 /// Handle the `lift` command.
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_lift(
     input: &Path,
     output: &Path,

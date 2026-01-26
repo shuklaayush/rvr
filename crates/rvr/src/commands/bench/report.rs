@@ -23,19 +23,19 @@ fn collect_system_info() -> Vec<(String, String)> {
     let mut info = Vec::new();
 
     // OS and kernel
-    if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output() {
-        if output.status.success() {
-            let kernel = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            info.push(("Kernel".to_string(), kernel));
-        }
+    if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output()
+        && output.status.success()
+    {
+        let kernel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        info.push(("Kernel".to_string(), kernel));
     }
 
     // Architecture
-    if let Ok(output) = Command::new("uname").arg("-m").output() {
-        if output.status.success() {
-            let arch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            info.push(("Architecture".to_string(), arch));
-        }
+    if let Ok(output) = Command::new("uname").arg("-m").output()
+        && output.status.success()
+    {
+        let arch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        info.push(("Architecture".to_string(), arch));
     }
 
     // CPU model - try /proc/cpuinfo first (Linux), then sysctl (macOS)
@@ -58,31 +58,31 @@ fn collect_system_info() -> Vec<(String, String)> {
     }
 
     // Rust version
-    if let Ok(output) = Command::new("rustc").arg("--version").output() {
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            info.push(("Rust".to_string(), version));
-        }
+    if let Ok(output) = Command::new("rustc").arg("--version").output()
+        && output.status.success()
+    {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        info.push(("Rust".to_string(), version));
     }
 
     // Clang version (used for compilation)
-    if let Ok(output) = Command::new("clang").arg("--version").output() {
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .to_string();
-            info.push(("Clang".to_string(), version));
-        }
+    if let Ok(output) = Command::new("clang").arg("--version").output()
+        && output.status.success()
+    {
+        let version = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        info.push(("Clang".to_string(), version));
     }
 
     // Date
-    if let Ok(output) = Command::new("date").arg("+%Y-%m-%d %H:%M:%S").output() {
-        if output.status.success() {
-            let date = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            info.push(("Date".to_string(), date));
-        }
+    if let Ok(output) = Command::new("date").arg("+%Y-%m-%d %H:%M:%S").output()
+        && output.status.success()
+    {
+        let date = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        info.push(("Date".to_string(), date));
     }
 
     info
@@ -94,18 +94,18 @@ fn get_cpu_model() -> Option<String> {
     if let Ok(contents) = std::fs::read_to_string("/proc/cpuinfo") {
         for line in contents.lines() {
             // ARM64 uses "CPU part" or "model name", x86 uses "model name"
-            if line.starts_with("model name") || line.starts_with("Model") {
-                if let Some(value) = line.split(':').nth(1) {
-                    return Some(value.trim().to_string());
-                }
+            if (line.starts_with("model name") || line.starts_with("Model"))
+                && let Some(value) = line.split(':').nth(1)
+            {
+                return Some(value.trim().to_string());
             }
         }
         // ARM64 fallback: look for Hardware or CPU implementer
         for line in contents.lines() {
-            if line.starts_with("Hardware") {
-                if let Some(value) = line.split(':').nth(1) {
-                    return Some(value.trim().to_string());
-                }
+            if line.starts_with("Hardware")
+                && let Some(value) = line.split(':').nth(1)
+            {
+                return Some(value.trim().to_string());
             }
         }
     }
@@ -114,22 +114,21 @@ fn get_cpu_model() -> Option<String> {
     if let Ok(output) = Command::new("sysctl")
         .args(["-n", "machdep.cpu.brand_string"])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !model.is_empty() {
-                return Some(model);
-            }
+        let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !model.is_empty() {
+            return Some(model);
         }
     }
 
     // Fallback for Apple Silicon
-    if let Ok(output) = Command::new("sysctl").args(["-n", "hw.model"]).output() {
-        if output.status.success() {
-            let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !model.is_empty() {
-                return Some(model);
-            }
+    if let Ok(output) = Command::new("sysctl").args(["-n", "hw.model"]).output()
+        && output.status.success()
+    {
+        let model = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !model.is_empty() {
+            return Some(model);
         }
     }
 
@@ -246,11 +245,12 @@ pub fn bench_report(output: &Path, runs: usize, no_libriscv: bool, no_host: bool
         let mut host_time: Option<f64> = None;
 
         // Run host if available
-        if compare_host && benchmark.has_host {
-            if let Some((row, time)) = run_host_benchmark(benchmark, &project_dir, runs) {
-                host_time = time;
-                rows.push(row);
-            }
+        if compare_host
+            && benchmark.has_host
+            && let Some((row, time)) = run_host_benchmark(benchmark, &project_dir, runs)
+        {
+            host_time = time;
+            rows.push(row);
         }
 
         // Run rvr for each architecture

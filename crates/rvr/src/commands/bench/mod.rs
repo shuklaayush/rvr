@@ -1055,6 +1055,7 @@ fn needs_recompile(elf_path: &std::path::Path, lib_path: &std::path::Path) -> bo
 }
 
 /// Run benchmark for a single architecture, returning a table row.
+#[allow(clippy::too_many_arguments)]
 fn run_single_arch(
     benchmark: &BenchmarkInfo,
     arch: &Arch,

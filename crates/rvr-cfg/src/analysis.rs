@@ -833,6 +833,7 @@ fn scan_jump_table_targets<X: Xlen>(
     targets
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_successors<X: Xlen>(
     instruction_table: &InstructionTable<X>,
     pc: u64,
