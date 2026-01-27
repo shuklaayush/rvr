@@ -755,6 +755,8 @@ pub fn bench_run(
     compare_host: bool,
     compare_libriscv: bool,
     force: bool,
+    cc: &str,
+    linker: Option<&str>,
 ) -> i32 {
     let project_dir = find_project_root();
 
@@ -770,7 +772,13 @@ pub fn bench_run(
     };
 
     let suffix = if fast { "fast" } else { "base" };
-    let compiler: Compiler = "clang".parse().unwrap();
+    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
+        terminal::error(&format!("invalid compiler: {}", e));
+        std::process::exit(EXIT_FAILURE);
+    });
+    if let Some(ld) = linker {
+        compiler = compiler.with_linker(ld);
+    }
 
     for benchmark in &benchmarks {
         let arch_str = arch.unwrap_or(benchmark.default_archs);

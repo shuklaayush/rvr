@@ -225,6 +225,14 @@ pub enum BenchCommands {
         /// Force rebuild of all ELFs and recompilation
         #[arg(long)]
         force: bool,
+
+        /// C compiler command
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// Linker to use
+        #[arg(long)]
+        linker: Option<String>,
     },
     /// Build benchmark ELF from source
     Build {
@@ -291,6 +299,14 @@ pub enum BenchCommands {
         /// Force recompilation (delete and rebuild .so files)
         #[arg(long)]
         force: bool,
+
+        /// C compiler command (used with --force)
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// Linker to use (used with --force)
+        #[arg(long)]
+        linker: Option<String>,
     },
 }
 
@@ -332,6 +348,14 @@ pub enum RiscvTestCommands {
         /// Timeout per test in seconds
         #[arg(short, long, default_value = "10")]
         timeout: u64,
+
+        /// C compiler command
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// Linker to use
+        #[arg(long)]
+        linker: Option<String>,
     },
 }
 

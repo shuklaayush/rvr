@@ -113,7 +113,9 @@ pub fn run_command(cli: &Cli) -> i32 {
                 no_libriscv,
                 no_host,
                 force,
-            } => bench::bench_report(output, *runs, *no_libriscv, *no_host, *force),
+                cc,
+                linker,
+            } => bench::bench_report(output, *runs, *no_libriscv, *no_host, *force, cc, linker.as_deref()),
             BenchCommands::Build {
                 name,
                 arch,
@@ -140,6 +142,8 @@ pub fn run_command(cli: &Cli) -> i32 {
                 compare_host,
                 compare_libriscv,
                 force,
+                cc,
+                linker,
             } => bench::bench_run(
                 name.as_deref(),
                 arch.as_deref(),
@@ -148,6 +152,8 @@ pub fn run_command(cli: &Cli) -> i32 {
                 *compare_host,
                 *compare_libriscv,
                 *force,
+                cc,
+                linker.as_deref(),
             ),
         },
         Commands::Test { command } => match command {
@@ -161,7 +167,9 @@ pub fn run_command(cli: &Cli) -> i32 {
                     filter,
                     verbose,
                     timeout,
-                } => test::riscv_tests_run(filter.clone(), *verbose, *timeout),
+                    cc,
+                    linker,
+                } => test::riscv_tests_run(filter.clone(), *verbose, *timeout, cc, linker.as_deref()),
             },
         },
     }

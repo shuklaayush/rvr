@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{CompileOptions, Runner, compile_with_options};
+use crate::{CompileOptions, Compiler, Runner, compile_with_options};
 
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[
@@ -119,6 +119,8 @@ pub struct TestConfig {
     pub verbose: bool,
     /// Timeout for each test in seconds.
     pub timeout_secs: u64,
+    /// C compiler to use.
+    pub compiler: Compiler,
 }
 
 impl Default for TestConfig {
@@ -128,6 +130,7 @@ impl Default for TestConfig {
             filter: None,
             verbose: false,
             timeout_secs: 10,
+            compiler: Compiler::default(),
         }
     }
 }
@@ -154,6 +157,12 @@ impl TestConfig {
     /// Set timeout in seconds.
     pub fn with_timeout(mut self, secs: u64) -> Self {
         self.timeout_secs = secs;
+        self
+    }
+
+    /// Set the C compiler.
+    pub fn with_compiler(mut self, compiler: Compiler) -> Self {
+        self.compiler = compiler;
         self
     }
 }
@@ -225,7 +234,7 @@ fn discover_tests_recursive(dir: &Path, filter: Option<&str>, tests: &mut Vec<Pa
 }
 
 /// Run a single test.
-pub fn run_test(elf_path: &Path, timeout: Duration) -> TestResult {
+pub fn run_test(elf_path: &Path, timeout: Duration, compiler: &Compiler) -> TestResult {
     let name = elf_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -246,7 +255,10 @@ pub fn run_test(elf_path: &Path, timeout: Duration) -> TestResult {
     let out_dir = temp_dir.path().join("out");
 
     // Compile with HTIF enabled
-    let options = CompileOptions::new().with_htif(true).with_quiet(true);
+    let options = CompileOptions::new()
+        .with_htif(true)
+        .with_quiet(true)
+        .with_compiler(compiler.clone());
 
     if let Err(e) = compile_with_options(elf_path, &out_dir, options) {
         return TestResult::fail(name, format!("compile failed: {}", e));
@@ -389,7 +401,7 @@ pub fn run_all(config: &TestConfig) -> TestSummary {
     let mut summary = TestSummary::default();
 
     for (i, test_path) in tests.iter().enumerate() {
-        let result = run_test(test_path, timeout);
+        let result = run_test(test_path, timeout, &config.compiler);
         print_result(&result, i + 1, total, config.verbose);
         summary.add(result);
     }

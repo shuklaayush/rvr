@@ -183,6 +183,8 @@ pub fn bench_report(
     no_libriscv: bool,
     no_host: bool,
     force: bool,
+    cc: &str,
+    linker: Option<&str>,
 ) -> i32 {
     use std::io::Write;
 
@@ -229,7 +231,13 @@ pub fn bench_report(
 
     // Run benchmarks
     let archs = Arch::ALL;
-    let compiler = Compiler::default();
+    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
+        eprintln!("error: invalid compiler: {}", e);
+        std::process::exit(EXIT_FAILURE);
+    });
+    if let Some(ld) = linker {
+        compiler = compiler.with_linker(ld);
+    }
 
     for benchmark in BENCHMARKS.iter() {
         println!("Running {}...", benchmark.name);

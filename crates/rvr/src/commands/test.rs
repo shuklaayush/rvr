@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use rvr::tests::{self, BuildConfig, TestCategory, TestConfig};
+use rvr::Compiler;
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 
@@ -75,7 +76,13 @@ pub fn riscv_tests_build(
 }
 
 /// Run riscv-tests suite.
-pub fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i32 {
+pub fn riscv_tests_run(
+    filter: Option<String>,
+    verbose: bool,
+    timeout: u64,
+    cc: &str,
+    linker: Option<&str>,
+) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
     let test_dir = project_dir.join("bin/riscv-tests");
 
@@ -85,10 +92,19 @@ pub fn riscv_tests_run(filter: Option<String>, verbose: bool, timeout: u64) -> i
         return EXIT_FAILURE;
     }
 
+    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
+        eprintln!("error: invalid compiler: {}", e);
+        std::process::exit(EXIT_FAILURE);
+    });
+    if let Some(ld) = linker {
+        compiler = compiler.with_linker(ld);
+    }
+
     let config = TestConfig::default()
         .with_test_dir(test_dir)
         .with_verbose(verbose)
-        .with_timeout(timeout);
+        .with_timeout(timeout)
+        .with_compiler(compiler);
     let config = if let Some(f) = filter {
         config.with_filter(f)
     } else {
