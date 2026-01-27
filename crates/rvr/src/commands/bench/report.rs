@@ -211,10 +211,26 @@ pub fn bench_report(
 
     // System info table
     report.push_str("## System Information\n\n");
-    report.push_str("| Property | Value |\n");
-    report.push_str("|----------|-------|\n");
+    let max_value_len = system_info.iter().map(|(_, v)| v.len()).max().unwrap_or(5);
+    report.push_str(&format!(
+        "| {:<12} | {:<width$} |\n",
+        "Property",
+        "Value",
+        width = max_value_len
+    ));
+    report.push_str(&format!(
+        "|{:-<14}|{:-<width$}|\n",
+        "",
+        "",
+        width = max_value_len + 2
+    ));
     for (key, value) in &system_info {
-        report.push_str(&format!("| {} | {} |\n", key, value));
+        report.push_str(&format!(
+            "| {:<12} | {:<width$} |\n",
+            key,
+            value,
+            width = max_value_len
+        ));
     }
     report.push('\n');
 
