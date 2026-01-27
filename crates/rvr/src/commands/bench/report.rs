@@ -379,21 +379,32 @@ fn run_rust_host_benchmark(
     // Build with cargo if binary doesn't exist or force rebuild
     if !host_bin.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
-        let status = Command::new("cargo")
+        let output = Command::new("cargo")
             .args(["build", "--release"])
             .current_dir(project_dir.join(path))
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .stderr(std::process::Stdio::piped())
+            .output();
 
-        match status {
-            Ok(s) if s.success() => spinner.finish_and_clear(),
-            _ => {
-                spinner.finish_with_failure("build failed");
+        match output {
+            Ok(o) if o.status.success() => spinner.finish_and_clear(),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let error_detail = stderr
+                    .lines()
+                    .filter(|l| l.starts_with("error"))
+                    .last()
+                    .unwrap_or("build failed");
+                spinner.finish_with_failure(error_detail);
                 return Some((
-                    bench::TableRow::error("host", "build failed".to_string()),
+                    bench::TableRow::error("host", error_detail.to_string()),
                     None,
                 ));
+            }
+            Err(e) => {
+                let msg = format!("failed to run cargo: {}", e);
+                spinner.finish_with_failure(&msg);
+                return Some((bench::TableRow::error("host", msg), None));
             }
         }
     }
@@ -430,11 +441,8 @@ fn run_polkavm_host_benchmark(
     if !host_lib.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
         if let Err(e) = polkavm::build_host_benchmark(project_dir, benchmark.name) {
-            spinner.finish_with_failure(&format!("build failed: {}", e));
-            return Some((
-                bench::TableRow::error("host", "build failed".to_string()),
-                None,
-            ));
+            spinner.finish_with_failure(&e);
+            return Some((bench::TableRow::error("host", e), None));
         }
         spinner.finish_and_clear();
     }

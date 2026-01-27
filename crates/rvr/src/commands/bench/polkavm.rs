@@ -66,7 +66,7 @@ pub fn build_benchmark(
 
     cmd.env("RUSTFLAGS", &rustflags);
 
-    let status = cmd
+    let output = cmd
         .arg("+nightly-2025-05-10")
         .arg("build")
         .arg("--manifest-path")
@@ -83,11 +83,20 @@ pub fn build_benchmark(
         .arg("-p")
         .arg(&bench_name)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .output()
         .map_err(|e| format!("failed to run cargo: {}", e))?;
-    if !status.success() {
-        return Err(format!("cargo build failed for {}/{}", benchmark, arch));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let error_detail = stderr
+            .lines()
+            .filter(|l| l.starts_with("error"))
+            .last()
+            .unwrap_or("unknown error");
+        return Err(format!(
+            "cargo build failed for {}/{}: {}",
+            benchmark, arch, error_detail
+        ));
     }
 
     // Copy to output directory
@@ -157,20 +166,39 @@ fn compile_entry(toolchain_dir: &Path, arch: &str) -> Result<PathBuf, String> {
     Ok(entry_obj)
 }
 
-/// Get the host target triple.
-fn get_host_target() -> Result<String, String> {
-    let output = Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .map_err(|e| format!("failed to run rustc: {}", e))?;
+/// Patch polkavm target spec files to use integer target-pointer-width.
+/// Required for nightly >= 2025-09-01 (rust-lang/rust#144443).
+fn patch_polkavm_target_specs(project_root: &Path) -> Result<(), String> {
+    let targets_dir = project_root.join("programs/polkavm/crates/polkavm-linker/targets");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(target) = line.strip_prefix("host: ") {
-            return Ok(target.to_string());
+    // Known target spec locations
+    let spec_files = [
+        "legacy/riscv32emac-unknown-none-polkavm.json",
+        "legacy/riscv64emac-unknown-none-polkavm.json",
+        "1_91/riscv32emac-unknown-none-polkavm.json",
+        "1_91/riscv64emac-unknown-none-polkavm.json",
+    ];
+
+    for spec in spec_files {
+        let path = targets_dir.join(spec);
+        if !path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+
+        // Replace string "32" or "64" with integer for target-pointer-width
+        let patched = content
+            .replace("\"target-pointer-width\": \"32\"", "\"target-pointer-width\": 32")
+            .replace("\"target-pointer-width\": \"64\"", "\"target-pointer-width\": 64");
+
+        if patched != content {
+            std::fs::write(&path, patched)
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
         }
     }
-    Err("could not determine host target".to_string())
+    Ok(())
 }
 
 /// Patch bench-common.rs to add missing architecture support for host builds.
@@ -218,46 +246,51 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
     let guest_programs = project_root.join(POLKAVM_GUEST_PROGRAMS);
     let bench_name = format!("bench-{}", benchmark);
 
-    // Patch bench-common.rs to add missing arch support
+    // Patch polkavm files for compatibility with newer Rust toolchains
+    patch_polkavm_target_specs(project_root)?;
     patch_bench_common(project_root)?;
 
-    // Get host target to explicitly build for native platform
-    let host_target = get_host_target()?;
-
-    // Build as cdylib for the host
+    // Build as cdylib for the host (don't pass --target to avoid rebuilding std)
     let mut cmd = Command::new("cargo");
     cmd.current_dir(&guest_programs);
 
-    // Remove all CARGO env vars to avoid workspace confusion
-    for (key, _) in std::env::vars() {
-        if key.starts_with("CARGO") {
-            cmd.env_remove(&key);
-        }
-    }
+    // Remove workspace-related CARGO env vars to avoid confusion
+    cmd.env_remove("CARGO_TARGET_DIR");
+    cmd.env_remove("CARGO_MANIFEST_DIR");
+    cmd.env_remove("CARGO_PKG_NAME");
 
-    let status = cmd
+    let output = cmd
         .arg("build")
         .arg("--manifest-path")
         .arg(guest_programs.join("Cargo.toml"))
-        .arg("--target")
-        .arg(&host_target)
         .arg("--release")
         .arg("--lib")
         .arg("-p")
         .arg(&bench_name)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .output()
         .map_err(|e| format!("failed to run cargo: {}", e))?;
-    if !status.success() {
-        return Err(format!("cargo build failed for {} (host)", benchmark));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Extract last meaningful error line for the error message
+        let error_detail = stderr
+            .lines()
+            .filter(|l| l.starts_with("error"))
+            .last()
+            .unwrap_or("unknown error");
+        // Include more context in verbose mode via RUST_LOG
+        tracing::debug!("cargo build stderr:\n{}", stderr);
+        return Err(format!(
+            "cargo build failed for {} (host): {}",
+            benchmark, error_detail
+        ));
     }
 
-    // Find the built library
+    // Find the built library (without --target, it's in target/release/)
     let lib_name = format!("lib{}.so", bench_name.replace('-', "_"));
     let lib_path = guest_programs
         .join("target")
-        .join(&host_target)
         .join("release")
         .join(&lib_name);
 
