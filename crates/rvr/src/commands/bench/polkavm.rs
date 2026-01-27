@@ -173,10 +173,53 @@ fn get_host_target() -> Result<String, String> {
     Err("could not determine host target".to_string())
 }
 
+/// Patch bench-common.rs to add missing architecture support for host builds.
+/// This is needed because upstream polkavm doesn't support all host architectures.
+fn patch_bench_common(project_root: &Path) -> Result<(), String> {
+    let bench_common = project_root
+        .join(POLKAVM_GUEST_PROGRAMS)
+        .join("bench-common.rs");
+
+    let content =
+        std::fs::read_to_string(&bench_common).map_err(|e| format!("failed to read: {}", e))?;
+
+    // Check if aarch64 support is already present
+    if content.contains("target_arch = \"aarch64\"") {
+        return Ok(());
+    }
+
+    // Add aarch64 panic handler after x86_64
+    let patched = content.replace(
+        r#"#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    unsafe {
+        core::arch::asm!("ud2", options(noreturn));
+    }
+
+    #[cfg(target_os = "solana")]"#,
+        r#"#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    unsafe {
+        core::arch::asm!("ud2", options(noreturn));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("brk #0x1", options(noreturn));
+    }
+
+    #[cfg(target_os = "solana")]"#,
+    );
+
+    std::fs::write(&bench_common, patched).map_err(|e| format!("failed to write: {}", e))?;
+    Ok(())
+}
+
 /// Build a polkavm benchmark for the host (native) target.
 pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<PathBuf, String> {
     let guest_programs = project_root.join(POLKAVM_GUEST_PROGRAMS);
     let bench_name = format!("bench-{}", benchmark);
+
+    // Patch bench-common.rs to add missing arch support
+    patch_bench_common(project_root)?;
 
     // Get host target to explicitly build for native platform
     let host_target = get_host_target()?;
