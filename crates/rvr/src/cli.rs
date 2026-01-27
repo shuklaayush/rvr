@@ -221,6 +221,10 @@ pub enum BenchCommands {
         /// Skip host comparison
         #[arg(long)]
         no_host: bool,
+
+        /// Force rebuild of all ELFs and recompilation
+        #[arg(long)]
+        force: bool,
     },
     /// Build benchmark ELF from source
     Build {

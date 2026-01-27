@@ -184,7 +184,13 @@ fn format_table_row(row: &bench::TableRow) -> String {
 // ============================================================================
 
 /// Generate a benchmark report and write to file.
-pub fn bench_report(output: &Path, runs: usize, no_libriscv: bool, no_host: bool) -> i32 {
+pub fn bench_report(
+    output: &Path,
+    runs: usize,
+    no_libriscv: bool,
+    no_host: bool,
+    force: bool,
+) -> i32 {
     use std::io::Write;
 
     let project_dir = find_project_root();
@@ -246,7 +252,7 @@ pub fn bench_report(output: &Path, runs: usize, no_libriscv: bool, no_host: bool
         // Run host if available
         if compare_host
             && benchmark.has_host
-            && let Some((row, time)) = run_host_benchmark(benchmark, &project_dir, runs)
+            && let Some((row, time)) = run_host_benchmark(benchmark, &project_dir, runs, force)
         {
             host_time = time;
             rows.push(row);
@@ -264,7 +270,7 @@ pub fn bench_report(output: &Path, runs: usize, no_libriscv: bool, no_host: bool
                 runs,
                 &compiler,
                 host_time,
-                false, // don't force recompile
+                force,
             ) {
                 rows.push(row);
             }
@@ -324,15 +330,22 @@ fn run_host_benchmark(
     benchmark: &super::BenchmarkInfo,
     project_dir: &Path,
     runs: usize,
+    force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
     match &benchmark.source {
         BenchmarkSource::Rust { path, .. } => {
-            run_rust_host_benchmark(benchmark, project_dir, path, runs)
+            run_rust_host_benchmark(benchmark, project_dir, path, runs, force)
         }
-        BenchmarkSource::Polkavm => run_polkavm_host_benchmark(benchmark, project_dir, runs),
-        BenchmarkSource::RiscvTests => run_riscv_tests_host_benchmark(benchmark, project_dir, runs),
-        BenchmarkSource::Libriscv => run_libriscv_host_benchmark(benchmark, project_dir, runs),
-        BenchmarkSource::Coremark => run_coremark_host_benchmark(benchmark, project_dir, runs),
+        BenchmarkSource::Polkavm => run_polkavm_host_benchmark(benchmark, project_dir, runs, force),
+        BenchmarkSource::RiscvTests => {
+            run_riscv_tests_host_benchmark(benchmark, project_dir, runs, force)
+        }
+        BenchmarkSource::Libriscv => {
+            run_libriscv_host_benchmark(benchmark, project_dir, runs, force)
+        }
+        BenchmarkSource::Coremark => {
+            run_coremark_host_benchmark(benchmark, project_dir, runs, force)
+        }
     }
 }
 
@@ -342,6 +355,7 @@ fn run_rust_host_benchmark(
     project_dir: &Path,
     path: &str,
     runs: usize,
+    force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
     // Use host_binary path if specified, otherwise construct from path
     let host_bin = if let Some(host_path) = benchmark.host_binary {
@@ -353,8 +367,8 @@ fn run_rust_host_benchmark(
             .join(benchmark.name)
     };
 
-    // Build with cargo if binary doesn't exist
-    if !host_bin.exists() {
+    // Build with cargo if binary doesn't exist or force rebuild
+    if !host_bin.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
         let status = Command::new("cargo")
             .args(["build", "--release"])
@@ -398,12 +412,13 @@ fn run_polkavm_host_benchmark(
     benchmark: &super::BenchmarkInfo,
     project_dir: &Path,
     runs: usize,
+    force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
     let host_lib = project_dir
         .join("bin/host")
         .join(format!("{}.so", benchmark.name));
 
-    if !host_lib.exists() {
+    if !host_lib.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
         if let Err(e) = polkavm::build_host_benchmark(project_dir, benchmark.name) {
             spinner.finish_with_failure(&format!("build failed: {}", e));
@@ -442,10 +457,11 @@ fn run_riscv_tests_host_benchmark(
     benchmark: &super::BenchmarkInfo,
     project_dir: &Path,
     runs: usize,
+    force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
     let host_bin = project_dir.join("bin/host").join(benchmark.name);
 
-    if !host_bin.exists() {
+    if !host_bin.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
         if let Err(e) = riscv_tests::build_host_benchmark(project_dir, benchmark.name) {
             spinner.finish_with_failure(&format!("build failed: {}", e));
@@ -484,12 +500,13 @@ fn run_libriscv_host_benchmark(
     benchmark: &super::BenchmarkInfo,
     project_dir: &Path,
     runs: usize,
+    force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
     let host_lib = project_dir
         .join("bin/host")
         .join(format!("{}.so", benchmark.name));
 
-    if !host_lib.exists() {
+    if !host_lib.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
         if let Err(e) = libriscv::build_host_benchmark(project_dir, benchmark.name) {
             spinner.finish_with_failure(&format!("build failed: {}", e));
@@ -528,10 +545,11 @@ fn run_coremark_host_benchmark(
     benchmark: &super::BenchmarkInfo,
     project_dir: &Path,
     runs: usize,
+    force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
     let host_bin = project_dir.join("bin/host/coremark");
 
-    if !host_bin.exists() {
+    if !host_bin.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
         if let Err(e) = coremark::build_host_benchmark(project_dir) {
             spinner.finish_with_failure(&format!("build failed: {}", e));
