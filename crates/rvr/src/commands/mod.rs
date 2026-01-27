@@ -115,7 +115,15 @@ pub fn run_command(cli: &Cli) -> i32 {
                 force,
                 cc,
                 linker,
-            } => bench::bench_report(output, *runs, *no_libriscv, *no_host, *force, cc, linker.as_deref()),
+            } => bench::bench_report(
+                output,
+                *runs,
+                *no_libriscv,
+                *no_host,
+                *force,
+                cc,
+                linker.as_deref(),
+            ),
             BenchCommands::Build {
                 name,
                 arch,
@@ -169,7 +177,9 @@ pub fn run_command(cli: &Cli) -> i32 {
                     timeout,
                     cc,
                     linker,
-                } => test::riscv_tests_run(filter.clone(), *verbose, *timeout, cc, linker.as_deref()),
+                } => {
+                    test::riscv_tests_run(filter.clone(), *verbose, *timeout, cc, linker.as_deref())
+                }
             },
         },
     }

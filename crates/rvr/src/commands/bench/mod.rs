@@ -50,6 +50,56 @@ pub struct LibriscvResult {
     pub perf: Option<rvr::PerfCounters>,
 }
 
+/// Build the libriscv emulator if it doesn't exist.
+fn build_libriscv_emulator(project_dir: &std::path::Path) -> Result<PathBuf, String> {
+    let emulator_dir = project_dir.join("programs/libriscv/emulator");
+    let emulator = emulator_dir.join(".build/rvlinux");
+
+    if emulator.exists() {
+        return Ok(emulator);
+    }
+
+    if !emulator_dir.exists() {
+        return Err(format!(
+            "libriscv emulator directory not found: {}",
+            emulator_dir.display()
+        ));
+    }
+
+    let build_script = emulator_dir.join("build.sh");
+    if !build_script.exists() {
+        return Err(format!(
+            "libriscv build script not found: {}",
+            build_script.display()
+        ));
+    }
+
+    let spinner = Spinner::new("Building libriscv emulator".to_string());
+
+    let output = Command::new("bash")
+        .arg("build.sh")
+        .arg("--bintr")
+        .current_dir(&emulator_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run build.sh: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        spinner.finish_with_failure("build failed");
+        return Err(format!("libriscv build failed: {}", stderr));
+    }
+
+    if !emulator.exists() {
+        spinner.finish_with_failure("emulator not found after build");
+        return Err("libriscv emulator not found after build".to_string());
+    }
+
+    spinner.finish_with_success("libriscv emulator built");
+    Ok(emulator)
+}
+
 /// Run a benchmark using the libriscv emulator.
 /// Returns the runtime parsed from libriscv output plus perf counters.
 fn run_libriscv_benchmark(
@@ -60,10 +110,7 @@ fn run_libriscv_benchmark(
     use rvr::perf::HostPerfCounters;
     use std::time::Instant;
 
-    let emulator = project_dir.join("programs/libriscv/emulator/.build/rvlinux");
-    if !emulator.exists() {
-        return Err("libriscv emulator not found (build with: cd programs/libriscv/emulator && ./build.sh --bintr)".to_string());
-    }
+    let emulator = build_libriscv_emulator(project_dir)?;
 
     let runs = runs.max(1);
     let mut perf_counters = HostPerfCounters::new();
@@ -346,7 +393,7 @@ const BENCHMARKS: &[BenchmarkInfo] = &[
         name: "reth",
         description: "Reth block validator",
         uses_exports: false,
-        host_binary: Some("programs/reth/target/release/reth-validator"),
+        host_binary: Some("programs/reth/target/release/reth"),
         default_archs: "rv64i",
         supported_archs: None,
         has_host: true,
@@ -578,6 +625,11 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
                 for a in archs {
                     // Skip unsupported architectures
                     if !benchmark.supports_arch(&a) {
+                        terminal::warning(&format!(
+                            "{} does not support {}, skipping",
+                            benchmark.name,
+                            a.as_str()
+                        ));
                         continue;
                     }
                     let spinner = Spinner::new(format!(
@@ -617,6 +669,11 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
 
                 for a in archs {
                     if !benchmark.supports_arch(&a) {
+                        terminal::warning(&format!(
+                            "{} does not support {}, skipping",
+                            benchmark.name,
+                            a.as_str()
+                        ));
                         continue;
                     }
                     let spinner = Spinner::new(format!(
@@ -747,6 +804,7 @@ pub fn bench_compile(
 }
 
 /// Run compiled benchmark.
+#[allow(clippy::too_many_arguments)]
 pub fn bench_run(
     name: Option<&str>,
     arch: Option<&str>,
@@ -795,9 +853,32 @@ pub fn bench_run(
 
         if compare_host {
             match &benchmark.source {
-                BenchmarkSource::Rust { .. } => {
+                BenchmarkSource::Rust { path } => {
                     if let Some(host_path) = benchmark.host_binary {
                         let host_bin = project_dir.join(host_path);
+                        // Auto-build host binary if it doesn't exist
+                        if !host_bin.exists() || force {
+                            let spinner =
+                                Spinner::new(format!("Building {} (host)", benchmark.name));
+                            let mut cmd = Command::new("cargo");
+                            cmd.arg("build")
+                                .arg("--release")
+                                .arg("--manifest-path")
+                                .arg(project_dir.join(path).join("Cargo.toml"));
+
+                            if run_silent(&mut cmd) {
+                                spinner.finish_and_clear();
+                            } else {
+                                spinner.finish_with_failure(&format!(
+                                    "{} (host) build failed",
+                                    benchmark.name
+                                ));
+                                rows.push(bench::TableRow::error(
+                                    "host",
+                                    "build failed".to_string(),
+                                ));
+                            }
+                        }
                         if host_bin.exists() {
                             let spinner =
                                 Spinner::new(format!("Running {} (host)", benchmark.name));
@@ -882,7 +963,10 @@ pub fn bench_run(
                 }
                 BenchmarkSource::Libriscv => {
                     if !benchmark.has_host {
-                        // Skip - no host version available
+                        terminal::info(&format!(
+                            "{} has no host version (e.g., RISC-V assembly only)",
+                            benchmark.name
+                        ));
                     } else {
                         let host_lib = project_dir
                             .join("bin/host")
@@ -925,7 +1009,10 @@ pub fn bench_run(
                 }
                 BenchmarkSource::Coremark => {
                     if !benchmark.has_host {
-                        // Skip - no host version available
+                        terminal::info(&format!(
+                            "{} has no host version available",
+                            benchmark.name
+                        ));
                     } else {
                         let host_bin = project_dir.join("bin/host").join("coremark");
                         if !host_bin.exists() || force {
@@ -975,6 +1062,10 @@ pub fn bench_run(
             for a in &archs {
                 let elf_path = project_dir.join(format!("bin/{}/{}", a.as_str(), benchmark.name));
                 if !elf_path.exists() {
+                    terminal::warning(&format!(
+                        "ELF not found for libriscv comparison: {}",
+                        elf_path.display()
+                    ));
                     continue;
                 }
                 let label = format!("libriscv-{}", a.as_str());
@@ -1185,8 +1276,15 @@ fn run_single_arch(
     let should_compile = force || needs_recompile(&elf_path, &lib_path);
 
     if should_compile {
-        if force && out_dir.exists() {
-            let _ = std::fs::remove_dir_all(&out_dir);
+        if force
+            && out_dir.exists()
+            && let Err(e) = std::fs::remove_dir_all(&out_dir)
+        {
+            terminal::warning(&format!(
+                "Failed to clean output directory {}: {}",
+                out_dir.display(),
+                e
+            ));
         }
 
         let spinner = Spinner::new(format!("Compiling {} ({})", benchmark.name, arch.as_str()));

@@ -90,8 +90,7 @@ pub fn build_benchmark(
         let stderr = String::from_utf8_lossy(&output.stderr);
         let error_detail = stderr
             .lines()
-            .filter(|l| l.starts_with("error"))
-            .last()
+            .rfind(|l| l.starts_with("error"))
             .unwrap_or("unknown error");
         return Err(format!(
             "cargo build failed for {}/{}: {}",
@@ -218,8 +217,7 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
         let stderr = String::from_utf8_lossy(&output.stderr);
         let error_detail = stderr
             .lines()
-            .filter(|l| l.starts_with("error"))
-            .last()
+            .rfind(|l| l.starts_with("error"))
             .unwrap_or("unknown error");
         tracing::debug!("cargo build stderr:\n{}", stderr);
         return Err(format!(

@@ -1,49 +1,51 @@
-# reth-validator
+# reth
 
 RISC-V guest program for benchmarking Ethereum block validation using reth.
 
 ## Prerequisites
 
-- Rust nightly-2025-12-05 (specified in `rust-toolchain.toml`)
+- Rust nightly (see `rust-toolchain.toml`)
 - RISC-V cross-compilation toolchain (for linking)
 
 ## Building
 
-Build all targets:
+Use the `rvr bench build` command:
 
 ```bash
-make all
-```
+# Build for default architecture (rv64i)
+rvr bench build reth
 
-Build specific targets:
-
-```bash
-make rv32i  # RV32I (32 registers)
-make rv32e  # RV32E (16 registers)
-make rv64i  # RV64I (32 registers)
-make rv64e  # RV64E (16 registers)
-make host   # Native baseline
+# Build for specific architectures
+rvr bench build reth --arch rv32i
+rvr bench build reth --arch rv64i,rv64e
 ```
 
 Output binaries are placed in:
-- `bin/reth/rv32i/reth-validator`
-- `bin/reth/rv32e/reth-validator`
-- `bin/reth/rv64i/reth-validator`
-- `bin/reth/rv64e/reth-validator`
+- `bin/rv32i/reth`
+- `bin/rv32e/reth`
+- `bin/rv64i/reth`
+- `bin/rv64e/reth`
 
 ## Running with RVR
 
-1. Build the guest program:
+Use the `rvr bench run` command:
+
+```bash
+# Run benchmark
+rvr bench run reth
+
+# Compare with native host
+rvr bench run reth --compare-host
+```
+
+Or manually:
+
+1. Compile to native with RVR:
    ```bash
-   make rv64i  # or any other target
+   rvr compile bin/rv64i/reth -o target/rv64i/reth
    ```
 
-2. Compile to native with RVR:
-   ```bash
-   rvr compile bin/reth/rv64i/reth-validator -o target/rv64i/reth
-   ```
-
-3. Run the compiled program:
+2. Run the compiled program:
    ```bash
    rvr run target/rv64i/reth
    ```

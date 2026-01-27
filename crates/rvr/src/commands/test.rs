@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use rvr::tests::{self, BuildConfig, TestCategory, TestConfig};
 use rvr::Compiler;
+use rvr::tests::{self, BuildConfig, TestCategory, TestConfig};
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 

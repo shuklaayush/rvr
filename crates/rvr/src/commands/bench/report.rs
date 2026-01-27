@@ -400,8 +400,7 @@ fn run_rust_host_benchmark(
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 let error_detail = stderr
                     .lines()
-                    .filter(|l| l.starts_with("error"))
-                    .last()
+                    .rfind(|l| l.starts_with("error"))
                     .unwrap_or("build failed");
                 spinner.finish_with_failure(error_detail);
                 return Some((
@@ -418,6 +417,10 @@ fn run_rust_host_benchmark(
     }
 
     if !host_bin.exists() {
+        terminal::warning(&format!(
+            "Host binary not found after build: {}",
+            host_bin.display()
+        ));
         return None;
     }
 
@@ -456,6 +459,10 @@ fn run_polkavm_host_benchmark(
     }
 
     if !host_lib.exists() {
+        terminal::warning(&format!(
+            "Host library not found after build: {}",
+            host_lib.display()
+        ));
         return None;
     }
 
@@ -499,6 +506,10 @@ fn run_riscv_tests_host_benchmark(
     }
 
     if !host_bin.exists() {
+        terminal::warning(&format!(
+            "Host binary not found after build: {}",
+            host_bin.display()
+        ));
         return None;
     }
 
@@ -544,6 +555,10 @@ fn run_libriscv_host_benchmark(
     }
 
     if !host_lib.exists() {
+        terminal::warning(&format!(
+            "Host library not found after build: {}",
+            host_lib.display()
+        ));
         return None;
     }
 
@@ -587,6 +602,10 @@ fn run_coremark_host_benchmark(
     }
 
     if !host_bin.exists() {
+        terminal::warning(&format!(
+            "Host binary not found after build: {}",
+            host_bin.display()
+        ));
         return None;
     }
 
@@ -617,6 +636,11 @@ fn run_libriscv_arch(
         .join(arch.as_str())
         .join(benchmark.name);
     if !elf_path.exists() {
+        terminal::warning(&format!(
+            "ELF not found for libriscv-{}: {}",
+            arch.as_str(),
+            elf_path.display()
+        ));
         return None;
     }
 
