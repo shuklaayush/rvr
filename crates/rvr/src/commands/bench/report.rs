@@ -18,18 +18,11 @@ use crate::terminal::{self, Spinner};
 // ============================================================================
 
 /// Collect system information for the report header.
+/// Ordered by relevance: arch/CPU first, then compilers, then OS context.
 fn collect_system_info() -> Vec<(String, String)> {
     let mut info = Vec::new();
 
-    // OS and kernel
-    if let Ok(output) = Command::new("uname").args(["-s", "-r"]).output()
-        && output.status.success()
-    {
-        let kernel = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        info.push(("Kernel".to_string(), kernel));
-    }
-
-    // Architecture
+    // Architecture (most relevant for performance comparison)
     if let Ok(output) = Command::new("uname").arg("-m").output()
         && output.status.success()
     {
@@ -37,12 +30,32 @@ fn collect_system_info() -> Vec<(String, String)> {
         info.push(("Architecture".to_string(), arch));
     }
 
-    // CPU model - try /proc/cpuinfo first (Linux), then sysctl (macOS)
+    // CPU model
     if let Some(model) = get_cpu_model() {
         info.push(("CPU".to_string(), model));
     }
 
-    // OS distribution (Linux)
+    // Clang version (used for compiling generated C code)
+    if let Ok(output) = Command::new("clang").arg("--version").output()
+        && output.status.success()
+    {
+        let version = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        info.push(("Clang".to_string(), version));
+    }
+
+    // Rust version (recompiler toolchain)
+    if let Ok(output) = Command::new("rustc").arg("--version").output()
+        && output.status.success()
+    {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        info.push(("Rust".to_string(), version));
+    }
+
+    // OS distribution
     if let Ok(contents) = std::fs::read_to_string("/etc/os-release") {
         for line in contents.lines() {
             if line.starts_with("PRETTY_NAME=") {
@@ -54,26 +67,6 @@ fn collect_system_info() -> Vec<(String, String)> {
                 break;
             }
         }
-    }
-
-    // Rust version
-    if let Ok(output) = Command::new("rustc").arg("--version").output()
-        && output.status.success()
-    {
-        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        info.push(("Rust".to_string(), version));
-    }
-
-    // Clang version (used for compilation)
-    if let Ok(output) = Command::new("clang").arg("--version").output()
-        && output.status.success()
-    {
-        let version = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .to_string();
-        info.push(("Clang".to_string(), version));
     }
 
     // Date
