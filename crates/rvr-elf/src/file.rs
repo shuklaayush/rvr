@@ -113,6 +113,11 @@ impl<X: Xlen> ElfFile<X> {
             return Err(ElfError::TooSmall);
         }
 
+        // Check for Git LFS pointer (happens when `git lfs pull` wasn't run)
+        if is_git_lfs_pointer(data) {
+            return Err(ElfError::GitLfsPointer);
+        }
+
         let magic = read_le32(data, 0);
         if magic != ELF_MAGIC {
             return Err(ElfError::InvalidMagic);
@@ -473,10 +478,23 @@ impl<X: Xlen> ElfFile<X> {
     }
 }
 
+/// Git LFS pointer file prefix.
+const GIT_LFS_PREFIX: &[u8] = b"version https://git-lfs.github.com/spec/v1";
+
+/// Check if data looks like a Git LFS pointer file.
+fn is_git_lfs_pointer(data: &[u8]) -> bool {
+    data.len() >= GIT_LFS_PREFIX.len() && data.starts_with(GIT_LFS_PREFIX)
+}
+
 /// Peek at ELF header to determine XLEN (32 or 64) without full parsing.
 pub fn get_elf_xlen(data: &[u8]) -> Result<u8> {
     if data.len() < 5 {
         return Err(ElfError::TooSmall);
+    }
+
+    // Check for Git LFS pointer (happens when `git lfs pull` wasn't run)
+    if is_git_lfs_pointer(data) {
+        return Err(ElfError::GitLfsPointer);
     }
 
     // Validate magic
@@ -512,5 +530,11 @@ mod tests {
     fn test_invalid_magic() {
         let data = [0x00, 0x00, 0x00, 0x00, 0x02];
         assert!(matches!(get_elf_xlen(&data), Err(ElfError::InvalidMagic)));
+    }
+
+    #[test]
+    fn test_git_lfs_pointer() {
+        let data = b"version https://git-lfs.github.com/spec/v1\noid sha256:abc123\nsize 12345\n";
+        assert!(matches!(get_elf_xlen(data), Err(ElfError::GitLfsPointer)));
     }
 }

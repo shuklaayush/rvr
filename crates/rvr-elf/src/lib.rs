@@ -21,6 +21,8 @@ pub enum ElfError {
     TooSmall,
     #[error("Invalid ELF magic number")]
     InvalidMagic,
+    #[error("File is a Git LFS pointer, not a binary. Run `git lfs pull` to download the actual files.")]
+    GitLfsPointer,
     #[error("Only little-endian ELF supported")]
     NotLittleEndian,
     #[error("ELF XLEN mismatch: expected {expected}, got {actual}")]
