@@ -532,28 +532,18 @@ impl<X: Xlen> CEmitter<X> {
                             }
                         }
                     }
-                    WriteTarget::Mem { addr, width } => {
-                        // Extract base and offset from address expression.
-                        // Store addresses come from ISA as Expr::add(rs1, imm).
-                        let (base, offset) = match addr {
-                            Expr::Binary {
-                                op: BinaryOp::Add,
-                                left,
-                                right,
-                            } => {
-                                let base_str = self.render_expr(left);
-                                if let Expr::Imm(imm) = right.as_ref() {
-                                    (base_str, X::to_u64(*imm) as i64 as i16)
-                                } else {
-                                    (self.render_expr(addr), 0i16)
-                                }
-                            }
-                            _ => (self.render_expr(addr), 0i16),
-                        };
+                    WriteTarget::Mem {
+                        base,
+                        offset,
+                        width,
+                    } => {
+                        let base_str = self.render_expr(base);
 
                         // Check for tohost handling on 32/64-bit stores
                         if self.config.htif_enabled && (*width == 4 || *width == 8) {
-                            self.render_mem_write_tohost(&base, offset, &value_str, *width, indent);
+                            self.render_mem_write_tohost(
+                                &base_str, *offset, &value_str, *width, indent,
+                            );
                         } else if self.config.has_tracing() {
                             let store_fn = match width {
                                 1 => "twr_mem_u8",
@@ -568,7 +558,7 @@ impl<X: Xlen> CEmitter<X> {
                                 indent,
                                 &format!(
                                     "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
-                                    store_fn, pc_lit, op_lit, base, offset, value_str
+                                    store_fn, pc_lit, op_lit, base_str, offset, value_str
                                 ),
                             );
                         } else {
@@ -584,7 +574,7 @@ impl<X: Xlen> CEmitter<X> {
                                 indent,
                                 &format!(
                                     "{}(memory, {}, {}, {});",
-                                    store_fn, base, offset, value_str
+                                    store_fn, base_str, offset, value_str
                                 ),
                             );
                         }

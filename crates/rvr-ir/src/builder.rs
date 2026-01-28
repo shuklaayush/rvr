@@ -39,9 +39,17 @@ impl<X: Xlen> IRBuilder<X> {
         self
     }
 
-    /// Write to memory.
-    pub fn write_mem(mut self, addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
-        self.statements.push(Stmt::write_mem(addr, value, width));
+    /// Write to memory with base register and constant offset.
+    pub fn write_mem(mut self, base: Expr<X>, offset: i16, value: Expr<X>, width: u8) -> Self {
+        self.statements
+            .push(Stmt::write_mem(base, offset, value, width));
+        self
+    }
+
+    /// Write to memory with computed address (offset = 0).
+    pub fn write_mem_addr(mut self, addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
+        self.statements
+            .push(Stmt::write_mem_addr(addr, value, width));
         self
     }
 

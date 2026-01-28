@@ -11,8 +11,12 @@ pub enum WriteTarget<X: Xlen> {
     Reg(u8),
     /// CSR write.
     Csr(u16),
-    /// Memory write with address and width.
-    Mem { addr: Expr<X>, width: u8 },
+    /// Memory write with base register, constant offset, and width.
+    Mem {
+        base: Expr<X>,
+        offset: i16,
+        width: u8,
+    },
     /// PC update.
     Pc,
     /// Temporary variable.
@@ -54,10 +58,26 @@ impl<X: Xlen> Stmt<X> {
         }
     }
 
-    /// Create a memory write statement.
-    pub fn write_mem(addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
+    /// Create a memory write statement with base register and constant offset.
+    pub fn write_mem(base: Expr<X>, offset: i16, value: Expr<X>, width: u8) -> Self {
         Self::Write {
-            target: WriteTarget::Mem { addr, width },
+            target: WriteTarget::Mem {
+                base,
+                offset,
+                width,
+            },
+            value,
+        }
+    }
+
+    /// Create a memory write statement with computed address (offset = 0).
+    pub fn write_mem_addr(addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
+        Self::Write {
+            target: WriteTarget::Mem {
+                base: addr,
+                offset: 0,
+                width,
+            },
             value,
         }
     }

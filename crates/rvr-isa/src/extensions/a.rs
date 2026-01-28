@@ -415,7 +415,7 @@ fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
                 );
                 // If valid: store, write 0 to rd, clear reservation
                 let then_stmts = vec![
-                    Stmt::write_mem(Expr::read(rs1), Expr::read(rs2), width),
+                    Stmt::write_mem(Expr::read(rs1), 0, Expr::read(rs2), width),
                     Stmt::write_reg(rd, Expr::imm(X::from_u64(0))),
                     Stmt::write_res_valid(Expr::imm(X::from_u64(0))),
                 ];
@@ -492,7 +492,7 @@ where
     // Compute new value using the saved old value and preserved rs2.
     let new = op(old.clone(), src);
     stmts.push(Stmt::write_reg(rd, old));
-    stmts.push(Stmt::write_mem(addr, new, width));
+    stmts.push(Stmt::write_mem(addr, 0, new, width));
 
     // Clear reservation on any AMO (per RISC-V spec).
     stmts.push(Stmt::write_res_valid(Expr::imm(X::from_u64(0))));

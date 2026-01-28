@@ -1003,12 +1003,10 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
 fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
-            let addr = Expr::add(
-                Expr::read(*rs1),
-                Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
-            );
+            let base = Expr::read(*rs1);
+            let offset = *imm as i16;
             (
-                vec![Stmt::write_mem(addr, Expr::read(*rs2), width)],
+                vec![Stmt::write_mem(base, offset, Expr::read(*rs2), width)],
                 Terminator::Fall { target: None },
             )
         }
