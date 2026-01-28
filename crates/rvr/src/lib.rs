@@ -617,19 +617,37 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()
         .arg(job_count.to_string())
         .arg("shared");
 
-    if quiet {
-        cmd.stdout(Stdio::null()).stderr(Stdio::null());
-    }
+    // Always capture output so we can show errors on failure
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let status = cmd.status().map_err(|e| {
+    let output = cmd.output().map_err(|e| {
         error!(error = %e, "failed to run make");
         Error::CompilationFailed(format!("Failed to run make: {}", e))
     })?;
 
-    if !status.success() {
-        let code = status.code().unwrap_or(-1);
-        error!(exit_code = code, dir = %output_dir.display(), "make failed");
-        return Err(Error::CompilationFailed("make failed".to_string()));
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Log full output for debugging
+        if !stderr.is_empty() {
+            error!(exit_code = code, dir = %output_dir.display(), stderr = %stderr, "make failed");
+        } else if !stdout.is_empty() {
+            error!(exit_code = code, dir = %output_dir.display(), stdout = %stdout, "make failed");
+        } else {
+            error!(exit_code = code, dir = %output_dir.display(), "make failed");
+        }
+        // Include first line of error in the error message for quick visibility
+        let first_error = stderr.lines().next().or_else(|| stdout.lines().next()).unwrap_or("unknown error");
+        return Err(Error::CompilationFailed(format!("make failed: {}", first_error)));
+    } else if !quiet {
+        // In non-quiet mode, show stdout (compilation progress)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.is_empty() {
+            for line in stdout.lines() {
+                debug!("{}", line);
+            }
+        }
     }
 
     Ok(())
