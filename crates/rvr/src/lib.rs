@@ -198,7 +198,9 @@
 
 // Core types - always available
 pub use rvr_elf::{ElfImage, get_elf_xlen};
-pub use rvr_emit::{Compiler, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode, TracerConfig};
+pub use rvr_emit::{
+    Compiler, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode, TracerConfig,
+};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
 // CSR constants for use with Runner::get_csr/set_csr
@@ -383,7 +385,7 @@ impl<X: Xlen> Recompiler<X> {
 }
 
 /// Options for compile/lift operations.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CompileOptions {
     /// Enable address bounds checking.
     pub addr_check: bool,
@@ -392,6 +394,7 @@ pub struct CompileOptions {
     /// Print HTIF stdout (guest console output).
     pub htif_verbose: bool,
     /// Emit #line directives with source locations (requires debug info in ELF).
+    /// Defaults to true (matching EmitConfig).
     pub line_info: bool,
     /// Export functions mode: compile for calling exported functions rather than running from entry point.
     /// Adds all function symbols as entry points for CFG analysis.
@@ -411,6 +414,25 @@ pub struct CompileOptions {
     /// Fixed addresses for state and memory (optional).
     /// When set, state/memory are accessed via compile-time constant addresses.
     pub fixed_addresses: Option<FixedAddressConfig>,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            addr_check: false,
+            htif: false,
+            htif_verbose: false,
+            line_info: true, // Match EmitConfig default
+            export_functions: false,
+            instret_mode: InstretMode::default(),
+            jobs: 0,
+            tracer_config: TracerConfig::default(),
+            syscall_mode: SyscallMode::default(),
+            compiler: Compiler::default(),
+            quiet: false,
+            fixed_addresses: None,
+        }
+    }
 }
 
 impl CompileOptions {
@@ -508,6 +530,8 @@ impl CompileOptions {
         config.compiler = self.compiler.clone();
         config.syscall_mode = self.syscall_mode;
         config.fixed_addresses = self.fixed_addresses;
+        // Re-compute hot registers since instret_mode/tracer/fixed_addresses may have changed
+        config.init_hot_regs(rvr_emit::default_total_slots());
     }
 
     /// Check if line info is enabled.
@@ -651,8 +675,15 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()
             error!(exit_code = code, dir = %output_dir.display(), "make failed");
         }
         // Include first line of error in the error message for quick visibility
-        let first_error = stderr.lines().next().or_else(|| stdout.lines().next()).unwrap_or("unknown error");
-        return Err(Error::CompilationFailed(format!("make failed: {}", first_error)));
+        let first_error = stderr
+            .lines()
+            .next()
+            .or_else(|| stdout.lines().next())
+            .unwrap_or("unknown error");
+        return Err(Error::CompilationFailed(format!(
+            "make failed: {}",
+            first_error
+        )));
     } else if !quiet {
         // In non-quiet mode, show stdout (compilation progress)
         let stdout = String::from_utf8_lossy(&output.stdout);
