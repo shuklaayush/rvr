@@ -141,11 +141,22 @@ pub const REG_PRIORITY: [u8; 31] = [
     4, // tp
 ];
 
-/// x86_64 preserve_none: 12 argument registers.
+/// x86_64 preserve_none: 12 argument registers available.
 /// R12, R13, R14, R15, RDI, RSI, RDX, RCX, R8, R9, R11, RAX.
 /// Only RSP and RBP are callee-saved.
 /// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
-pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 12;
+///
+/// TODO: File LLVM bug - using all 12 causes register allocation failure during LTO.
+///
+/// Error: `ld.lld-21: error: <unknown>:0:0: ran out of registers during register
+/// allocation in function 'B_...'`
+///
+/// preserve_none + 12 register args + musttail creates extreme register pressure.
+/// At tail call sites, we need 12 args + scratch for dispatch table + computed index.
+/// LTO transforms may create points where all values must be live simultaneously.
+/// This shouldn't be a hard error - LLVM should always be able to spill pure C code.
+/// Workaround: use 11 slots instead of 12.
+pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 11;
 
 /// AArch64 preserve_none: 24 argument registers.
 /// X20-X28 (9), X0-X7 (8), X9-X15 (7). Only LR and FP are callee-saved.
@@ -435,8 +446,8 @@ mod tests {
         let mut config = EmitConfig::<Rv64>::new(32);
         config.instret_mode = InstretMode::Count;
         config.init_hot_regs(10);
-        // 10 slots - 2 (state + instret) = 8 hot regs
-        assert_eq!(config.hot_regs.len(), 8);
+        // 10 slots - 3 (state + memory + instret) = 7 hot regs
+        assert_eq!(config.hot_regs.len(), 7);
         // First should be ra (1)
         assert_eq!(config.hot_regs[0], 1);
         // Second should be sp (2)
@@ -448,8 +459,8 @@ mod tests {
         let mut config = EmitConfig::<Rv64>::new(32);
         config.instret_mode = InstretMode::Off;
         config.init_hot_regs(10);
-        // 10 slots - 1 (state only) = 9 hot regs
-        assert_eq!(config.hot_regs.len(), 9);
+        // 10 slots - 2 (state + memory) = 8 hot regs
+        assert_eq!(config.hot_regs.len(), 8);
     }
 
     #[test]
@@ -466,9 +477,12 @@ mod tests {
     #[test]
     fn test_compute_num_hot_regs() {
         let tracer = TracerConfig::none();
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer), 8);
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer), 9);
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Suspend, &tracer), 8);
+        // 10 - 3 (state + memory + instret) = 7
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer), 7);
+        // 10 - 2 (state + memory) = 8
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer), 8);
+        // 10 - 3 (state + memory + instret) = 7
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Suspend, &tracer), 7);
     }
 
     #[test]
