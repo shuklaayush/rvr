@@ -12,7 +12,7 @@ use rvr_ir::Xlen;
 
 use crate::config::{EmitConfig, FixedAddressConfig, InstretMode, SyscallMode};
 use crate::inputs::EmitInputs;
-use crate::signature::{FnSignature, reg_type};
+use crate::signature::{FnSignature, MEMORY_FIXED_REF, STATE_FIXED_REF, reg_type};
 use crate::tracer::TracerConfig;
 
 /// Number of CSRs.
@@ -233,38 +233,50 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let rtype = reg_type::<X>();
     let reg_bytes = HeaderConfig::<X>::reg_bytes();
     let has_suspend = cfg.instret_mode.suspends();
+    let has_tracer = !cfg.tracer_config.is_none();
 
-    // Compute offsets
-    let offset_memory = 0;
-    let offset_regs = 8;
+    // Compute offsets - hot fields first for better cache locality and smaller offsets
+    // Layout: regs, pc, instret, [target_instret], reservation, exit control, brk, memory, [tracer], csrs
+
+    // Hot fields first
+    let offset_regs = 0;
     let size_regs = cfg.num_registers * reg_bytes;
-    let offset_csrs = offset_regs + size_regs;
-    let size_csrs = NUM_CSRS * reg_bytes;
-    let offset_pc = offset_csrs + size_csrs;
-    let offset_pad0 = offset_pc + reg_bytes;
-    // Align instret to 8 bytes
-    let instret_align_offset = offset_pad0 + 4;
-    let instret_padding = (8 - (instret_align_offset % 8)) % 8;
-    let offset_instret = instret_align_offset + instret_padding;
+    let offset_pc = offset_regs + size_regs;
+    let offset_instret = offset_pc + reg_bytes;
 
-    // When suspend mode is enabled, target_instret comes after instret
+    // Optional target_instret for suspend mode
     let offset_target_instret = offset_instret + 8;
     let suspender_size = if has_suspend { 8 } else { 0 };
-    let offset_reservation_addr = offset_instret + 8 + suspender_size;
 
+    // Reservation for LR/SC
+    let offset_reservation_addr = offset_instret + 8 + suspender_size;
     let offset_reservation_valid = offset_reservation_addr + reg_bytes;
+
+    // Execution control (pack booleans together)
     let offset_has_exited = offset_reservation_valid + 1;
     let offset_exit_code = offset_has_exited + 1;
-    let offset_pad1 = offset_exit_code + 1;
-    // Align to 8 bytes
-    let pad2_align_offset = offset_pad1 + 1;
-    let pad2_padding = (8 - (pad2_align_offset % 8)) % 8;
-    let offset_pad2 = pad2_align_offset + pad2_padding;
-    let offset_brk = offset_pad2 + 8;
-    let offset_start_brk = offset_brk + reg_bytes;
-    let base_machine_size = offset_start_brk + reg_bytes;
+    let offset_pad0 = offset_exit_code + 1;
 
-    // Optional suspender field (after instret)
+    // Align to 8 bytes for brk
+    let brk_align_offset = offset_pad0 + 1;
+    let brk_padding = (8 - (brk_align_offset % 8)) % 8;
+    let offset_brk = brk_align_offset + brk_padding;
+    let offset_start_brk = offset_brk + reg_bytes;
+
+    // Memory pointer (cold - only used for init, not in hot paths with fixed addresses)
+    let offset_memory = offset_start_brk + reg_bytes;
+
+    // Tracer if enabled (before CSRs)
+    let offset_tracer = offset_memory + 8;
+
+    // CSRs at end (huge array, rarely accessed in hot paths)
+    let offset_csrs = if has_tracer {
+        offset_tracer // tracer size added by C compiler
+    } else {
+        offset_memory + 8
+    };
+
+    // Optional suspender field
     let suspender_field = if has_suspend {
         format!(
             "    uint64_t target_instret;            /* offset {} */\n",
@@ -274,25 +286,29 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         String::new()
     };
 
-    // Optional tracer field (at end)
-    let mut extra_fields = String::new();
-    let has_tracer = !cfg.tracer_config.is_none();
-    if has_tracer {
-        writeln!(
-            extra_fields,
-            "    /* Tracer - embedded struct */\n    Tracer tracer;                     /* offset {} */",
-            base_machine_size
-        ).unwrap();
-    }
+    // Optional tracer field (before CSRs)
+    let tracer_field = if has_tracer {
+        format!(
+            "\n    /* Tracer - embedded struct */\n    Tracer tracer;                      /* offset {} */\n",
+            offset_tracer
+        )
+    } else {
+        String::new()
+    };
+
+    // CSR offset comment - if tracer is present, offset depends on Tracer size
+    let csr_offset_comment = if has_tracer {
+        "after Tracer".to_string()
+    } else {
+        offset_csrs.to_string()
+    };
 
     let mut s = format!(
-        r#"/* VM State */
+        r#"/* VM State - hot fields first for cache locality */
 typedef struct RvState {{
-    uint8_t* memory;                    /* offset {offset_memory} */
+    /* Hot path fields (small offsets for efficient addressing) */
     {rtype} regs[{num_regs}];           /* offset {offset_regs} */
-    {rtype} csrs[{num_csrs}];           /* offset {offset_csrs} */
     {rtype} pc;                         /* offset {offset_pc} */
-    uint32_t _pad0;                     /* offset {offset_pad0} */
     uint64_t instret;                   /* offset {offset_instret} */
 {suspender_field}
     /* Reservation for LR/SC */
@@ -302,59 +318,73 @@ typedef struct RvState {{
     /* Execution control */
     uint8_t has_exited;                 /* offset {offset_has_exited} */
     uint8_t exit_code;                  /* offset {offset_exit_code} */
-    uint8_t _pad1;                      /* offset {offset_pad1} */
-    int64_t _pad2;                      /* offset {offset_pad2} */
+    uint8_t _pad0;                      /* offset {offset_pad0} */
 
     /* Heap management */
     {rtype} brk;                        /* offset {offset_brk} */
     {rtype} start_brk;                  /* offset {offset_start_brk} */
-{extra_fields}}} RvState;
+
+    /* Cold fields (rarely accessed in hot paths) */
+    uint8_t* memory;                    /* offset {offset_memory} */
+{tracer_field}
+    /* CSRs at end (large array, rarely used) */
+    {rtype} csrs[{num_csrs}];           /* offset {csr_offset_comment} */
+}} RvState;
 
 "#,
         rtype = rtype,
         num_regs = cfg.num_registers,
         num_csrs = NUM_CSRS,
-        offset_memory = offset_memory,
         offset_regs = offset_regs,
-        offset_csrs = offset_csrs,
         offset_pc = offset_pc,
-        offset_pad0 = offset_pad0,
         offset_instret = offset_instret,
         suspender_field = suspender_field,
         offset_reservation_addr = offset_reservation_addr,
         offset_reservation_valid = offset_reservation_valid,
         offset_has_exited = offset_has_exited,
         offset_exit_code = offset_exit_code,
-        offset_pad1 = offset_pad1,
-        offset_pad2 = offset_pad2,
+        offset_pad0 = offset_pad0,
         offset_brk = offset_brk,
         offset_start_brk = offset_start_brk,
-        extra_fields = extra_fields,
+        offset_memory = offset_memory,
+        tracer_field = tracer_field,
+        csr_offset_comment = csr_offset_comment,
     );
 
     // Layout verification (C23 static_assert without message)
-    s.push_str(&format!(
+    // Only verify offsets that are statically known (not tracer-dependent)
+    let mut asserts = format!(
         r#"/* Layout verification (C23 static_assert) */
-static_assert(offsetof(RvState, memory) == {offset_memory});
 static_assert(offsetof(RvState, regs) == {offset_regs});
-static_assert(offsetof(RvState, csrs) == {offset_csrs});
 static_assert(offsetof(RvState, pc) == {offset_pc});
 static_assert(offsetof(RvState, instret) == {offset_instret});
 static_assert(offsetof(RvState, reservation_addr) == {offset_reservation_addr});
 static_assert(offsetof(RvState, has_exited) == {offset_has_exited});
 static_assert(offsetof(RvState, brk) == {offset_brk});
+static_assert(offsetof(RvState, memory) == {offset_memory});
 
 "#,
-        offset_memory = offset_memory,
         offset_regs = offset_regs,
-        offset_csrs = offset_csrs,
         offset_pc = offset_pc,
         offset_instret = offset_instret,
         offset_reservation_addr = offset_reservation_addr,
         offset_has_exited = offset_has_exited,
         offset_brk = offset_brk,
-    ));
+        offset_memory = offset_memory,
+    );
 
+    // Add CSR offset verification only if no tracer (otherwise it's dynamic)
+    if !has_tracer {
+        writeln!(
+            asserts,
+            "static_assert(offsetof(RvState, csrs) == {});",
+            offset_csrs
+        )
+        .unwrap();
+        asserts.push('\n');
+    }
+
+    s.push_str(&asserts);
     s
 }
 
@@ -370,94 +400,99 @@ fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         String::new()
     };
 
+    // Conditional parts based on fixed address mode
+    let (mem_param, mem_ref, nonnull) = if cfg.fixed_addresses.is_some() {
+        ("", MEMORY_FIXED_REF, "")
+    } else {
+        ("uint8_t* restrict memory, ", "memory", "nonnull, ")
+    };
+
     format!(
         r#"static inline {addr_type} phys_addr({addr_type} addr) {{
 {addr_check}    return addr & RV_MEMORY_MASK;
 }}
 
-/* Memory access: compute phys base first, then add offset.
-   TODO: Should be phys_addr(base + off) instead of phys_addr(base) + off
-   to handle address wrapping correctly. */
-__attribute__((hot, pure, nonnull, always_inline))
-static inline uint32_t rd_mem_u8(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+/* Memory access: compute phys base first, then add offset. */
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline uint32_t rd_mem_u8({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     return phys[off];
 }}
 
-__attribute__((hot, pure, nonnull, always_inline))
-static inline int32_t rd_mem_i8(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline int32_t rd_mem_i8({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     return (int8_t)phys[off];
 }}
 
-__attribute__((hot, pure, nonnull, always_inline))
-static inline uint32_t rd_mem_u16(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline uint32_t rd_mem_u16({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     const void* ptr = __builtin_assume_aligned(phys + off, 2);
     uint16_t val;
     memcpy(&val, ptr, sizeof(val));
     return val;
 }}
 
-__attribute__((hot, pure, nonnull, always_inline))
-static inline int32_t rd_mem_i16(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline int32_t rd_mem_i16({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     const void* ptr = __builtin_assume_aligned(phys + off, 2);
     uint16_t val;
     memcpy(&val, ptr, sizeof(val));
     return (int16_t)val;
 }}
 
-__attribute__((hot, pure, nonnull, always_inline))
-static inline uint32_t rd_mem_u32(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline uint32_t rd_mem_u32({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     const void* ptr = __builtin_assume_aligned(phys + off, 4);
     uint32_t val;
     memcpy(&val, ptr, sizeof(val));
     return val;
 }}
 
-__attribute__((hot, pure, nonnull, always_inline))
-static inline int64_t rd_mem_i32(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline int64_t rd_mem_i32({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     const void* ptr = __builtin_assume_aligned(phys + off, 4);
     uint32_t val;
     memcpy(&val, ptr, sizeof(val));
     return (int32_t)val;
 }}
 
-__attribute__((hot, pure, nonnull, always_inline))
-static inline uint64_t rd_mem_u64(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline uint64_t rd_mem_u64({mem_param}{addr_type} base, int16_t off) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     const void* ptr = __builtin_assume_aligned(phys + off, 8);
     uint64_t val;
     memcpy(&val, ptr, sizeof(val));
     return val;
 }}
 
-__attribute__((hot, nonnull, always_inline))
-static inline void wr_mem_u8(uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, {nonnull}always_inline))
+static inline void wr_mem_u8({mem_param}{addr_type} base, int16_t off, uint32_t val) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     phys[off] = (uint8_t)val;
 }}
 
-__attribute__((hot, nonnull, always_inline))
-static inline void wr_mem_u16(uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, {nonnull}always_inline))
+static inline void wr_mem_u16({mem_param}{addr_type} base, int16_t off, uint32_t val) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     void* ptr = __builtin_assume_aligned(phys + off, 2);
     memcpy(ptr, &val, 2);
 }}
 
-__attribute__((hot, nonnull, always_inline))
-static inline void wr_mem_u32(uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, {nonnull}always_inline))
+static inline void wr_mem_u32({mem_param}{addr_type} base, int16_t off, uint32_t val) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     void* ptr = __builtin_assume_aligned(phys + off, 4);
     memcpy(ptr, &val, sizeof(val));
 }}
 
-__attribute__((hot, nonnull, always_inline))
-static inline void wr_mem_u64(uint8_t* restrict memory, {addr_type} base, int16_t off, uint64_t val) {{
-    uint8_t* phys = &memory[phys_addr(base)];
+__attribute__((hot, {nonnull}always_inline))
+static inline void wr_mem_u64({mem_param}{addr_type} base, int16_t off, uint64_t val) {{
+    uint8_t* phys = &{mem_ref}[phys_addr(base)];
     void* ptr = __builtin_assume_aligned(phys + off, 8);
     memcpy(ptr, &val, sizeof(val));
 }}
@@ -465,6 +500,9 @@ static inline void wr_mem_u64(uint8_t* restrict memory, {addr_type} base, int16_
 "#,
         addr_type = addr_type,
         addr_check = addr_check,
+        mem_param = mem_param,
+        mem_ref = mem_ref,
+        nonnull = nonnull,
     )
 }
 
@@ -474,16 +512,35 @@ fn gen_csr_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     } else {
         ""
     };
-    let instret_val = if cfg.instret_mode.counts() {
-        "instret"
-    } else {
-        "s->instret"
-    };
+
+    // Conditional parts based on fixed address mode
+    let (state_param_rd, state_param_wr, state_ref, nonnull, instret_val) =
+        if cfg.fixed_addresses.is_some() {
+            let instret = if cfg.instret_mode.counts() {
+                "instret".to_string()
+            } else {
+                format!("{}->instret", STATE_FIXED_REF)
+            };
+            ("", "", STATE_FIXED_REF, "", instret)
+        } else {
+            let instret = if cfg.instret_mode.counts() {
+                "instret"
+            } else {
+                "s->instret"
+            };
+            (
+                "const RvState* restrict s, ",
+                "RvState* restrict s, ",
+                "s",
+                "nonnull, ",
+                instret.to_string(),
+            )
+        };
 
     format!(
         r#"/* CSR access */
-__attribute__((hot, pure, nonnull))
-static inline uint32_t rd_csr(const RvState* restrict s{instret_param}, uint32_t csr) {{
+__attribute__((hot, pure, {nonnull}always_inline))
+static inline uint32_t rd_csr({state_param_rd}uint32_t csr{instret_param}) {{
     switch (csr) {{
         case CSR_MCYCLE:
         case CSR_CYCLE:
@@ -496,12 +553,12 @@ static inline uint32_t rd_csr(const RvState* restrict s{instret_param}, uint32_t
         case CSR_INSTRETH:
             return (uint32_t)({instret_val} >> 32);
         default:
-            return s->csrs[csr];
+            return {state_ref}->csrs[csr];
     }}
 }}
 
-__attribute__((hot, nonnull))
-static inline void wr_csr(RvState* restrict s, uint32_t csr, uint32_t val) {{
+__attribute__((hot, {nonnull}always_inline))
+static inline void wr_csr({state_param_wr}uint32_t csr, uint32_t val) {{
     switch (csr) {{
         case CSR_MCYCLE:
         case CSR_MCYCLEH:
@@ -513,7 +570,7 @@ static inline void wr_csr(RvState* restrict s, uint32_t csr, uint32_t val) {{
         case CSR_INSTRETH:
             return;
         default:
-            s->csrs[csr] = val;
+            {state_ref}->csrs[csr] = val;
     }}
 }}
 
@@ -692,96 +749,107 @@ fn gen_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         ""
     };
 
+    // Conditional parts based on fixed address mode
+    let (mem_param, mem_arg, state_param, state_arg, state_ref) = if cfg.fixed_addresses.is_some() {
+        ("", "", "", "", STATE_FIXED_REF)
+    } else {
+        (
+            "uint8_t* restrict memory, ",
+            "memory, ",
+            "RvState* restrict s, ",
+            "s, ",
+            "s",
+        )
+    };
+
     format!(
-        r#"/* Traced memory read helpers - call optimized base functions.
-   TODO: phys_addr(base) + off should be phys_addr(base + off) for correct wrapping. */
+        r#"/* Traced memory read helpers - call optimized base functions. */
 __attribute__((hot, nonnull, always_inline))
-static inline uint32_t trd_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint32_t val = rd_mem_u8(memory, base, off);
+static inline uint32_t trd_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    uint32_t val = rd_mem_u8({mem_arg}base, off);
     trace_mem_read_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline int32_t trd_mem_i8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    int32_t val = rd_mem_i8(memory, base, off);
+static inline int32_t trd_mem_i8(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    int32_t val = rd_mem_i8({mem_arg}base, off);
     trace_mem_read_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline uint32_t trd_mem_u16(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint32_t val = rd_mem_u16(memory, base, off);
+static inline uint32_t trd_mem_u16(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    uint32_t val = rd_mem_u16({mem_arg}base, off);
     trace_mem_read_halfword(t, pc, op, phys_addr(base) + off, (uint16_t)val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline int32_t trd_mem_i16(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    int32_t val = rd_mem_i16(memory, base, off);
+static inline int32_t trd_mem_i16(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    int32_t val = rd_mem_i16({mem_arg}base, off);
     trace_mem_read_halfword(t, pc, op, phys_addr(base) + off, (uint16_t)val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline uint32_t trd_mem_u32(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint32_t val = rd_mem_u32(memory, base, off);
+static inline uint32_t trd_mem_u32(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    uint32_t val = rd_mem_u32({mem_arg}base, off);
     trace_mem_read_word(t, pc, op, phys_addr(base) + off, val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline int64_t trd_mem_i32(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    int64_t val = rd_mem_i32(memory, base, off);
+static inline int64_t trd_mem_i32(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    int64_t val = rd_mem_i32({mem_arg}base, off);
     trace_mem_read_word(t, pc, op, phys_addr(base) + off, (uint32_t)val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline uint64_t trd_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
-    uint64_t val = rd_mem_u64(memory, base, off);
+static inline uint64_t trd_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off) {{
+    uint64_t val = rd_mem_u64({mem_arg}base, off);
     trace_mem_read_dword(t, pc, op, phys_addr(base) + off, val);
     return val;
 }}
 
-/* Traced memory write helpers - call optimized base functions.
-   TODO: phys_addr(base) + off should be phys_addr(base + off) for correct wrapping. */
+/* Traced memory write helpers - call optimized base functions. */
 __attribute__((hot, nonnull, always_inline))
-static inline void twr_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
+static inline void twr_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off, uint32_t val) {{
     trace_mem_write_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
-    wr_mem_u8(memory, base, off, val);
+    wr_mem_u8({mem_arg}base, off, val);
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline void twr_mem_u16(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
+static inline void twr_mem_u16(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off, uint32_t val) {{
     trace_mem_write_halfword(t, pc, op, phys_addr(base) + off, (uint16_t)val);
-    wr_mem_u16(memory, base, off, val);
+    wr_mem_u16({mem_arg}base, off, val);
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline void twr_mem_u32(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
+static inline void twr_mem_u32(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off, uint32_t val) {{
     trace_mem_write_word(t, pc, op, phys_addr(base) + off, val);
-    wr_mem_u32(memory, base, off, val);
+    wr_mem_u32({mem_arg}base, off, val);
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline void twr_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint64_t val) {{
+static inline void twr_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, {mem_param}{addr_type} base, int16_t off, uint64_t val) {{
     trace_mem_write_dword(t, pc, op, phys_addr(base) + off, val);
-    wr_mem_u64(memory, base, off, val);
+    wr_mem_u64({mem_arg}base, off, val);
 }}
 
 /* Traced register helpers - call trace functions */
 __attribute__((hot, nonnull, always_inline))
-static inline {rtype} trd_reg(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s, uint8_t reg) {{
-    {rtype} val = s->regs[reg];
+static inline {rtype} trd_reg(Tracer* t, {addr_type} pc, uint16_t op, {state_param}uint8_t reg) {{
+    {rtype} val = {state_ref}->regs[reg];
     trace_reg_read(t, pc, op, reg, val);
     return val;
 }}
 
 __attribute__((hot, nonnull, always_inline))
-static inline void twr_reg(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s, uint8_t reg, {rtype} val) {{
+static inline void twr_reg(Tracer* t, {addr_type} pc, uint16_t op, {state_param}uint8_t reg, {rtype} val) {{
     trace_reg_write(t, pc, op, reg, val);
-    s->regs[reg] = val;
+    {state_ref}->regs[reg] = val;
 }}
 
 /* Traced hot register helpers - for registers in local vars/args */
@@ -799,21 +867,26 @@ static inline {rtype} twr_regval(Tracer* t, {addr_type} pc, uint16_t op, uint8_t
 
 /* Traced CSR access - call trace functions */
 __attribute__((hot, nonnull))
-static inline {rtype} trd_csr(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s{instret_param}, uint16_t csr) {{
-    {rtype} val = rd_csr(s{instret_arg}, csr);
+static inline {rtype} trd_csr(Tracer* t, {addr_type} pc, uint16_t op, {state_param}uint16_t csr{instret_param}) {{
+    {rtype} val = rd_csr({state_arg}csr{instret_arg});
     trace_csr_read(t, pc, op, csr, val);
     return val;
 }}
 
 __attribute__((hot, nonnull))
-static inline void twr_csr(Tracer* t, {addr_type} pc, uint16_t op, RvState* restrict s, uint16_t csr, {rtype} val) {{
+static inline void twr_csr(Tracer* t, {addr_type} pc, uint16_t op, {state_param}uint16_t csr, {rtype} val) {{
     trace_csr_write(t, pc, op, csr, val);
-    wr_csr(s, csr, val);
+    wr_csr({state_arg}csr, val);
 }}
 
 "#,
         addr_type = addr_type,
         rtype = rtype,
+        mem_param = mem_param,
+        mem_arg = mem_arg,
+        state_param = state_param,
+        state_arg = state_arg,
+        state_ref = state_ref,
         instret_param = instret_param,
         instret_arg = instret_arg,
     )
@@ -850,13 +923,13 @@ fn gen_syscall_declarations<X: Xlen>() -> String {
     let rtype = reg_type::<X>();
     format!(
         r#"/* Syscall runtime helpers (provided by runtime) */
-{rtype} rv_sys_write(RvState* state, {rtype} fd, {rtype} buf, {rtype} count);
-{rtype} rv_sys_read(RvState* state, {rtype} fd, {rtype} buf, {rtype} count);
-{rtype} rv_sys_brk(RvState* state, {rtype} addr);
-{rtype} rv_sys_mmap(RvState* state, {rtype} addr, {rtype} len, {rtype} prot, {rtype} flags, {rtype} fd, {rtype} off);
-{rtype} rv_sys_fstat(RvState* state, {rtype} fd, {rtype} statbuf);
-{rtype} rv_sys_getrandom(RvState* state, {rtype} buf, {rtype} len, {rtype} flags);
-{rtype} rv_sys_clock_gettime(RvState* state, {rtype} clk_id, {rtype} tp);
+{rtype} rv_sys_write(RvState* restrict state, {rtype} fd, {rtype} buf, {rtype} count);
+{rtype} rv_sys_read(RvState* restrict state, {rtype} fd, {rtype} buf, {rtype} count);
+{rtype} rv_sys_brk(RvState* restrict state, {rtype} addr);
+{rtype} rv_sys_mmap(RvState* restrict state, {rtype} addr, {rtype} len, {rtype} prot, {rtype} flags, {rtype} fd, {rtype} off);
+{rtype} rv_sys_fstat(RvState* restrict state, {rtype} fd, {rtype} statbuf);
+{rtype} rv_sys_getrandom(RvState* restrict state, {rtype} buf, {rtype} len, {rtype} flags);
+{rtype} rv_sys_clock_gettime(RvState* restrict state, {rtype} clk_id, {rtype} tp);
 
 "#,
         rtype = rtype,
@@ -895,7 +968,7 @@ static inline uint64_t dispatch_index({rtype} pc) {{
 extern const rv_fn dispatch_table[];
 
 /* Runtime function - only this is needed from C */
-int rv_execute_from(RvState* state, {rtype} start_pc);
+int rv_execute_from(RvState* restrict state, {rtype} start_pc);
 
 /* Metadata constant (read via dlsym) */
 extern const uint32_t RV_TRACER_KIND;
