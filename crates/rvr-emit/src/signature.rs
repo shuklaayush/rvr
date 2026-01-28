@@ -31,6 +31,23 @@ pub fn reg_type<X: Xlen>() -> &'static str {
     }
 }
 
+/// Fixed address constant for state.
+pub const STATE_FIXED_REF: &str = "((RvState*)RV_STATE_ADDR)";
+
+/// Fixed address constant for memory.
+pub const MEMORY_FIXED_REF: &str = "((uint8_t*)RV_MEMORY_ADDR)";
+
+/// Get state reference expression based on fixed address mode.
+/// In fixed address mode: `((RvState*)RV_STATE_ADDR)`
+/// In normal mode: `state`
+pub fn state_ref(fixed_addresses: bool) -> &'static str {
+    if fixed_addresses {
+        STATE_FIXED_REF
+    } else {
+        "state"
+    }
+}
+
 /// Function signature for block functions.
 ///
 /// Captures parameter declarations, argument lists, and save/restore code
@@ -70,6 +87,7 @@ impl FnSignature {
         let counts_instret = config.instret_mode.counts();
         let trace_regs = !config.tracer_config.is_none();
         let fixed_addresses = config.fixed_addresses.is_some();
+        let state = state_ref(fixed_addresses);
 
         // Base signature depends on whether fixed addresses are used
         let mut params = String::new();
@@ -83,7 +101,8 @@ impl FnSignature {
             // args_from_state is empty since we call with no state/memory args
         } else {
             // Without fixed addresses: state and memory are passed as arguments
-            params.push_str("RvState* state, uint8_t* memory");
+            // restrict: state and memory never alias each other or hot registers
+            params.push_str("RvState* restrict state, uint8_t* restrict memory");
             args.push_str("state, memory");
             args_from_state.push_str("state, state->memory");
         }
@@ -97,8 +116,8 @@ impl FnSignature {
             }
             params.push_str("uint64_t instret");
             args.push_str("instret");
-            args_from_state.push_str("state->instret");
-            save_to_state.push_str("state->instret = instret;");
+            args_from_state.push_str(&format!("{}->instret", state));
+            save_to_state.push_str(&format!("{}->instret = instret;", state));
             // save_to_state_no_instret does NOT include instret
         }
 
@@ -131,13 +150,13 @@ impl FnSignature {
             if params.is_empty() {
                 params.push_str(&format!("{} {}", rtype, name));
                 args.push_str(name);
-                args_from_state.push_str(&format!("state->regs[{}]", reg));
+                args_from_state.push_str(&format!("{}->regs[{}]", state, reg));
             } else {
                 params.push_str(&format!(", {} {}", rtype, name));
                 args.push_str(&format!(", {}", name));
-                args_from_state.push_str(&format!(", state->regs[{}]", reg));
+                args_from_state.push_str(&format!(", {}->regs[{}]", state, reg));
             }
-            let reg_save = format!(" state->regs[{}] = {};", reg, name);
+            let reg_save = format!(" {}->regs[{}] = {};", state, reg, name);
             save_to_state.push_str(&reg_save);
             save_to_state_no_instret.push_str(&reg_save);
         }
@@ -167,7 +186,7 @@ impl FnSignature {
         } else if self.is_hot_reg(reg) {
             abi_name(reg).to_string()
         } else {
-            format!("state->regs[{}]", reg)
+            format!("{}->regs[{}]", state_ref(self.fixed_addresses), reg)
         }
     }
 
@@ -178,7 +197,12 @@ impl FnSignature {
         } else if self.is_hot_reg(reg) {
             format!("{} = {};", abi_name(reg), value)
         } else {
-            format!("state->regs[{}] = {};", reg, value)
+            format!(
+                "{}->regs[{}] = {};",
+                state_ref(self.fixed_addresses),
+                reg,
+                value
+            )
         }
     }
 
@@ -203,8 +227,8 @@ mod tests {
         let config = EmitConfig::<Rv64>::new(32);
         let sig = FnSignature::new(&config);
 
-        assert!(sig.params.contains("RvState* state"));
-        assert!(sig.params.contains("uint8_t* memory"));
+        assert!(sig.params.contains("RvState* restrict state"));
+        assert!(sig.params.contains("uint8_t* restrict memory"));
         assert!(sig.args.contains("state"));
         assert!(sig.args.contains("memory"));
     }
@@ -251,7 +275,8 @@ mod tests {
 
         assert_eq!(sig.reg_read(0), "0");
         assert_eq!(sig.reg_read(1), "ra");
-        assert_eq!(sig.reg_read(2), "state->regs[2]");
+        // Non-hot regs use state reference
+        assert!(sig.reg_read(2).contains("->regs[2]"));
     }
 
     #[test]
@@ -262,7 +287,8 @@ mod tests {
 
         assert_eq!(sig.reg_write(0, "42"), "");
         assert_eq!(sig.reg_write(1, "42"), "ra = 42;");
-        assert_eq!(sig.reg_write(2, "42"), "state->regs[2] = 42;");
+        // Non-hot regs use state reference
+        assert!(sig.reg_write(2, "42").contains("->regs[2] = 42;"));
     }
 
     #[test]

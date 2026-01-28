@@ -9,9 +9,9 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
-use crate::config::{EmitConfig, InstretMode};
+use crate::config::{EmitConfig, FixedAddressConfig, InstretMode};
 use crate::inputs::EmitInputs;
-use crate::signature::FnSignature;
+use crate::signature::{FnSignature, state_ref};
 use crate::tracer::TracerKind;
 
 /// Instruction slot size (2 bytes for compressed instruction support).
@@ -35,6 +35,8 @@ pub struct DispatchConfig<X: Xlen> {
     pub tracer_kind: Option<TracerKind>,
     /// Export functions mode: compiled for calling exported functions.
     pub export_functions: bool,
+    /// Fixed addresses configuration (if enabled).
+    pub fixed_addresses: Option<FixedAddressConfig>,
     _marker: std::marker::PhantomData<X>,
 }
 
@@ -50,6 +52,7 @@ impl<X: Xlen> DispatchConfig<X> {
             has_tracing: !config.tracer_config.is_none(),
             tracer_kind: config.tracer_config.builtin_kind(),
             export_functions: config.export_functions,
+            fixed_addresses: config.fixed_addresses,
             _marker: std::marker::PhantomData,
         }
     }
@@ -98,16 +101,19 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
 }
 
 fn gen_trap_handler<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
+    let state = state_ref(cfg.fixed_addresses.is_some());
+
     format!(
         r#"/* Trap handler for invalid addresses - replaces NULL checks */
 __attribute__((preserve_none, cold))
 void rv_trap({params}) {{
-    state->has_exited = true;
-    state->exit_code = 1;
+    {state}->has_exited = true;
+    {state}->exit_code = 1;
     {save_to_state}
 }}
 "#,
         params = cfg.sig.params,
+        state = state,
         save_to_state = cfg.sig.save_to_state,
     )
 }
@@ -127,6 +133,15 @@ fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     let export_functions_val: u32 = if cfg.export_functions { 1 } else { 0 };
     let instret_mode_val: u32 = cfg.instret_mode.as_c_mode();
 
+    let fixed_addr_exports = if let Some(fixed) = cfg.fixed_addresses {
+        format!(
+            "const uint64_t RV_FIXED_STATE_ADDR = {:#x}ull;\nconst uint64_t RV_FIXED_MEMORY_ADDR = {:#x}ull;\n",
+            fixed.state_addr, fixed.memory_addr
+        )
+    } else {
+        String::new()
+    };
+
     format!(
         r#"/* Minimal C API - state management happens in Rust */
 
@@ -134,10 +149,11 @@ fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
 const uint32_t RV_TRACER_KIND = {tracer_kind};
 const uint32_t RV_EXPORT_FUNCTIONS = {export_functions};
 const uint32_t RV_INSTRET_MODE = {instret_mode};
-"#,
+{fixed_addr_exports}"#,
         tracer_kind = tracer_kind_val,
         export_functions = export_functions_val,
         instret_mode = instret_mode_val,
+        fixed_addr_exports = fixed_addr_exports,
     )
 }
 

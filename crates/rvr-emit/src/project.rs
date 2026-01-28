@@ -415,7 +415,7 @@ impl<X: Xlen> CProject<X> {
 
     /// Write syscall runtime source.
     pub fn write_syscalls(&self) -> std::io::Result<()> {
-        let cfg = SyscallsConfig::new(&self.base_name);
+        let cfg = SyscallsConfig::new(&self.base_name, self.config.fixed_addresses.is_some());
         let src = gen_syscalls_source::<X>(&cfg);
         let path = self.syscalls_path();
         trace!(path = %path.display(), "writing syscalls");

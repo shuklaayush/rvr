@@ -7,19 +7,22 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
-use crate::signature::reg_type;
+use crate::signature::{MEMORY_FIXED_REF, reg_type};
 
 /// Syscall runtime generation configuration.
 pub struct SyscallsConfig {
     /// Base name for output files.
     pub base_name: String,
+    /// Whether fixed addresses are used.
+    pub fixed_addresses: bool,
 }
 
 impl SyscallsConfig {
     /// Create a syscall config.
-    pub fn new(base_name: impl Into<String>) -> Self {
+    pub fn new(base_name: impl Into<String>, fixed_addresses: bool) -> Self {
         Self {
             base_name: base_name.into(),
+            fixed_addresses,
         }
     }
 }
@@ -28,6 +31,16 @@ impl SyscallsConfig {
 pub fn gen_syscalls_source<X: Xlen>(cfg: &SyscallsConfig) -> String {
     let mut s = String::new();
     let rtype = reg_type::<X>();
+
+    // Memory access depends on fixed address mode
+    let (mem_ref, mem_arg) = if cfg.fixed_addresses {
+        (MEMORY_FIXED_REF, "")
+    } else {
+        ("state->memory", "state->memory, ")
+    };
+    let guest_ptr_impl = format!("return {} + phys_addr(addr);", mem_ref);
+    let wr_mem_secs = format!("wr_mem_u64({mem_arg}tp, 0, secs);");
+    let wr_mem_nsecs = format!("wr_mem_u64({mem_arg}tp, 8, nsecs);");
 
     writeln!(
         s,
@@ -46,11 +59,12 @@ static inline reg_t align_up(reg_t value, reg_t alignment) {{
     return (value + alignment - 1) & ~(alignment - 1);
 }}
 
-static inline uint8_t* guest_ptr(RvState* state, reg_t addr) {{
-    return state->memory + phys_addr(addr);
+static inline uint8_t* guest_ptr(RvState* restrict state, reg_t addr) {{
+    (void)state;
+    {guest_ptr_impl}
 }}
 
-reg_t rv_sys_write(RvState* state, reg_t fd, reg_t buf, reg_t count) {{
+reg_t rv_sys_write(RvState* restrict state, reg_t fd, reg_t buf, reg_t count) {{
     if (fd == 1 || fd == 2) {{
         FILE* out = (fd == 1) ? stdout : stderr;
         uint8_t* ptr = guest_ptr(state, buf);
@@ -62,7 +76,7 @@ reg_t rv_sys_write(RvState* state, reg_t fd, reg_t buf, reg_t count) {{
     return (reg_t)-1;
 }}
 
-reg_t rv_sys_read(RvState* state, reg_t fd, reg_t buf, reg_t count) {{
+reg_t rv_sys_read(RvState* restrict state, reg_t fd, reg_t buf, reg_t count) {{
     if (fd == 0) {{
         uint8_t* ptr = guest_ptr(state, buf);
         size_t n = (size_t)count;
@@ -72,7 +86,7 @@ reg_t rv_sys_read(RvState* state, reg_t fd, reg_t buf, reg_t count) {{
     return (reg_t)-1;
 }}
 
-reg_t rv_sys_brk(RvState* state, reg_t addr) {{
+reg_t rv_sys_brk(RvState* restrict state, reg_t addr) {{
     if (addr == 0) {{
         return state->brk;
     }}
@@ -84,7 +98,7 @@ reg_t rv_sys_brk(RvState* state, reg_t addr) {{
 }}
 
 reg_t rv_sys_mmap(
-    RvState* state,
+    RvState* restrict state,
     reg_t addr,
     reg_t len,
     reg_t prot,
@@ -113,7 +127,7 @@ reg_t rv_sys_mmap(
     return (reg_t)-12; /* ENOMEM */
 }}
 
-reg_t rv_sys_fstat(RvState* state, reg_t fd, reg_t statbuf) {{
+reg_t rv_sys_fstat(RvState* restrict state, reg_t fd, reg_t statbuf) {{
     (void)state;
     (void)statbuf;
     if (fd == 1 || fd == 2) {{
@@ -122,7 +136,7 @@ reg_t rv_sys_fstat(RvState* state, reg_t fd, reg_t statbuf) {{
     return (reg_t)-1;
 }}
 
-reg_t rv_sys_getrandom(RvState* state, reg_t buf, reg_t len, reg_t flags) {{
+reg_t rv_sys_getrandom(RvState* restrict state, reg_t buf, reg_t len, reg_t flags) {{
     (void)flags;
     static uint64_t rng_state = 0x123456789abcdef0ULL;
     uint8_t* ptr = guest_ptr(state, buf);
@@ -136,8 +150,9 @@ reg_t rv_sys_getrandom(RvState* state, reg_t buf, reg_t len, reg_t flags) {{
     return (reg_t)len;
 }}
 
-reg_t rv_sys_clock_gettime(RvState* state, reg_t clk_id, reg_t tp) {{
+reg_t rv_sys_clock_gettime(RvState* restrict state, reg_t clk_id, reg_t tp) {{
     (void)clk_id;
+    (void)state;
     struct timespec ts;
 #if defined(CLOCK_REALTIME)
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -146,13 +161,16 @@ reg_t rv_sys_clock_gettime(RvState* state, reg_t clk_id, reg_t tp) {{
 #endif
     uint64_t secs = (uint64_t)ts.tv_sec;
     uint64_t nsecs = (uint64_t)ts.tv_nsec;
-    wr_mem_u64(state->memory, tp, 0, secs);
-    wr_mem_u64(state->memory, tp, 8, nsecs);
+    {wr_mem_secs}
+    {wr_mem_nsecs}
     return 0;
 }}
 "#,
         cfg.base_name,
-        rtype = rtype
+        rtype = rtype,
+        guest_ptr_impl = guest_ptr_impl,
+        wr_mem_secs = wr_mem_secs,
+        wr_mem_nsecs = wr_mem_nsecs,
     )
     .unwrap();
 
