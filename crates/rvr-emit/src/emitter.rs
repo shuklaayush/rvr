@@ -18,7 +18,7 @@ const TOHOST_ADDR: u64 = 0x80001000;
 
 use crate::config::EmitConfig;
 use crate::inputs::EmitInputs;
-use crate::signature::FnSignature;
+use crate::signature::{FnSignature, state_ref};
 
 /// C code emitter.
 pub struct CEmitter<X: Xlen> {
@@ -114,6 +114,16 @@ impl<X: Xlen> CEmitter<X> {
         self.out.push_str(s);
     }
 
+    /// Get state reference expression.
+    fn state_ref(&self) -> &'static str {
+        state_ref(self.sig.fixed_addresses)
+    }
+
+    /// Check if using fixed addresses (no memory parameter).
+    fn uses_fixed_addresses(&self) -> bool {
+        self.sig.fixed_addresses
+    }
+
     // ============= Expression rendering =============
 
     /// Render expression to C code.
@@ -129,7 +139,14 @@ impl<X: Xlen> CEmitter<X> {
             }
             Expr::Read(read) => self.render_read(read),
             Expr::PcConst(pc) => self.fmt_addr(X::to_u64(*pc)),
-            Expr::Var(name) => name.clone(),
+            Expr::Var(name) => {
+                // Handle "state" specially in fixed address mode
+                if name == "state" && self.sig.fixed_addresses {
+                    self.state_ref().to_string()
+                } else {
+                    name.clone()
+                }
+            }
             Expr::Unary { op, expr } => {
                 let o = self.render_expr(expr);
                 match op {
@@ -365,16 +382,17 @@ impl<X: Xlen> CEmitter<X> {
                 } else if self.config.has_tracing() {
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
+                    let state = self.state_ref();
                     if self.sig.is_hot_reg(*reg) {
                         let val = self.sig.reg_read(*reg);
                         format!(
-                            "trd_regval(&state->tracer, {}, {}, {}, {})",
-                            pc_lit, op_lit, reg, val
+                            "trd_regval(&{}->tracer, {}, {}, {}, {})",
+                            state, pc_lit, op_lit, reg, val
                         )
                     } else {
                         format!(
-                            "trd_reg(&state->tracer, {}, {}, state, {})",
-                            pc_lit, op_lit, reg
+                            "trd_reg(&{}->tracer, {}, {}, {}, {})",
+                            state, pc_lit, op_lit, state, reg
                         )
                     }
                 } else {
@@ -401,12 +419,26 @@ impl<X: Xlen> CEmitter<X> {
                     };
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
+                    let state = self.state_ref();
                     format!(
-                        "{}(&state->tracer, {}, {}, memory, {}, {})",
-                        load_fn, pc_lit, op_lit, base, offset
+                        "{}(&{}->tracer, {}, {}, memory, {}, {})",
+                        load_fn, state, pc_lit, op_lit, base, offset
                     )
+                } else if self.uses_fixed_addresses() {
+                    // Fixed addresses: memory helpers don't take memory parameter
+                    let load_fn = match (*width, *signed) {
+                        (1, true) => "rd_mem_i8",
+                        (1, false) => "rd_mem_u8",
+                        (2, true) => "rd_mem_i16",
+                        (2, false) => "rd_mem_u16",
+                        (4, true) if X::VALUE == 64 => "rd_mem_i32",
+                        (4, _) => "rd_mem_u32",
+                        (8, _) => "rd_mem_u64",
+                        _ => "rd_mem_u32",
+                    };
+                    format!("{}({}, {})", load_fn, base, offset)
                 } else {
-                    // Use direct memory functions when tracing disabled
+                    // Normal mode: pass memory parameter
                     let load_fn = match (*width, *signed) {
                         (1, true) => "rd_mem_i8",
                         (1, false) => "rd_mem_u8",
@@ -439,12 +471,26 @@ impl<X: Xlen> CEmitter<X> {
                     };
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
+                    let state = self.state_ref();
                     format!(
-                        "{}(&state->tracer, {}, {}, memory, {}, 0)",
-                        load_fn, pc_lit, op_lit, base
+                        "{}(&{}->tracer, {}, {}, memory, {}, 0)",
+                        load_fn, state, pc_lit, op_lit, base
                     )
+                } else if self.uses_fixed_addresses() {
+                    // Fixed addresses: memory helpers don't take memory parameter
+                    let load_fn = match (*width, *signed) {
+                        (1, true) => "rd_mem_i8",
+                        (1, false) => "rd_mem_u8",
+                        (2, true) => "rd_mem_i16",
+                        (2, false) => "rd_mem_u16",
+                        (4, true) if X::VALUE == 64 => "rd_mem_i32",
+                        (4, _) => "rd_mem_u32",
+                        (8, _) => "rd_mem_u64",
+                        _ => "rd_mem_u32",
+                    };
+                    format!("{}({}, 0)", load_fn, base)
                 } else {
-                    // Use direct memory functions when tracing disabled
+                    // Normal mode: pass memory parameter
                     let load_fn = match (*width, *signed) {
                         (1, true) => "rd_mem_i8",
                         (1, false) => "rd_mem_u8",
@@ -459,37 +505,42 @@ impl<X: Xlen> CEmitter<X> {
                 }
             }
             ReadExpr::Csr(csr) => {
+                let state = self.state_ref();
+                let state_arg = if self.uses_fixed_addresses() {
+                    ""
+                } else {
+                    &format!("{}, ", state)
+                };
                 if self.config.has_tracing() {
                     let pc_lit = self.fmt_addr(self.current_pc);
                     let op_lit = self.current_op;
                     if self.config.instret_mode.counts() {
                         format!(
-                            "trd_csr(&state->tracer, {}, {}, state, instret, 0x{:x})",
-                            pc_lit, op_lit, csr
+                            "trd_csr(&{}->tracer, {}, {}, {}0x{:x}, instret)",
+                            state, pc_lit, op_lit, state_arg, csr
                         )
                     } else {
                         format!(
-                            "trd_csr(&state->tracer, {}, {}, state, 0x{:x})",
-                            pc_lit, op_lit, csr
+                            "trd_csr(&{}->tracer, {}, {}, {}0x{:x})",
+                            state, pc_lit, op_lit, state_arg, csr
                         )
                     }
                 } else if self.config.instret_mode.counts() {
-                    // Use direct rd_csr when tracing disabled
-                    format!("rd_csr(state, instret, 0x{:x})", csr)
+                    format!("rd_csr({}0x{:x}, instret)", state_arg, csr)
                 } else {
-                    format!("rd_csr(state, 0x{:x})", csr)
+                    format!("rd_csr({}0x{:x})", state_arg, csr)
                 }
             }
-            ReadExpr::Pc => "state->pc".to_string(),
-            ReadExpr::Cycle => "state->cycle".to_string(),
-            ReadExpr::Instret => "state->instret".to_string(),
+            ReadExpr::Pc => format!("{}->pc", self.state_ref()),
+            ReadExpr::Cycle => format!("{}->cycle", self.state_ref()),
+            ReadExpr::Instret => format!("{}->instret", self.state_ref()),
             ReadExpr::Temp(idx) => format!("_t{}", idx),
-            ReadExpr::TraceIdx => "state->trace_idx".to_string(),
-            ReadExpr::PcIdx => "state->pc_idx".to_string(),
-            ReadExpr::ResAddr => "state->reservation_addr".to_string(),
-            ReadExpr::ResValid => "state->reservation_valid".to_string(),
-            ReadExpr::Exited => "state->exited".to_string(),
-            ReadExpr::ExitCode => "state->exit_code".to_string(),
+            ReadExpr::TraceIdx => format!("{}->trace_idx", self.state_ref()),
+            ReadExpr::PcIdx => format!("{}->pc_idx", self.state_ref()),
+            ReadExpr::ResAddr => format!("{}->reservation_addr", self.state_ref()),
+            ReadExpr::ResValid => format!("{}->reservation_valid", self.state_ref()),
+            ReadExpr::Exited => format!("{}->exited", self.state_ref()),
+            ReadExpr::ExitCode => format!("{}->exit_code", self.state_ref()),
         }
     }
     // ============= Statement rendering =============
@@ -499,6 +550,7 @@ impl<X: Xlen> CEmitter<X> {
         match stmt {
             Stmt::Write { target, value } => {
                 let value_str = self.render_expr(value);
+                let state = self.state_ref();
                 match target {
                     WriteTarget::Reg(reg) => {
                         if *reg == 0 {
@@ -512,16 +564,16 @@ impl<X: Xlen> CEmitter<X> {
                                 self.writeln(
                                     indent,
                                     &format!(
-                                        "{} = twr_regval(&state->tracer, {}, {}, {}, {});",
-                                        name, pc_lit, op_lit, reg, value_str
+                                        "{} = twr_regval(&{}->tracer, {}, {}, {}, {});",
+                                        name, state, pc_lit, op_lit, reg, value_str
                                     ),
                                 );
                             } else {
                                 self.writeln(
                                     indent,
                                     &format!(
-                                        "twr_reg(&state->tracer, {}, {}, state, {}, {});",
-                                        pc_lit, op_lit, reg, value_str
+                                        "twr_reg(&{}->tracer, {}, {}, {}, {}, {});",
+                                        state, pc_lit, op_lit, state, reg, value_str
                                     ),
                                 );
                             }
@@ -557,12 +609,25 @@ impl<X: Xlen> CEmitter<X> {
                             self.writeln(
                                 indent,
                                 &format!(
-                                    "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
-                                    store_fn, pc_lit, op_lit, base_str, offset, value_str
+                                    "{}(&{}->tracer, {}, {}, memory, {}, {}, {});",
+                                    store_fn, state, pc_lit, op_lit, base_str, offset, value_str
                                 ),
                             );
+                        } else if self.uses_fixed_addresses() {
+                            // Fixed addresses: memory helpers don't take memory parameter
+                            let store_fn = match width {
+                                1 => "wr_mem_u8",
+                                2 => "wr_mem_u16",
+                                4 => "wr_mem_u32",
+                                8 => "wr_mem_u64",
+                                _ => "wr_mem_u32",
+                            };
+                            self.writeln(
+                                indent,
+                                &format!("{}({}, {}, {});", store_fn, base_str, offset, value_str),
+                            );
                         } else {
-                            // Use direct memory functions when tracing disabled
+                            // Normal mode: pass memory parameter
                             let store_fn = match width {
                                 1 => "wr_mem_u8",
                                 2 => "wr_mem_u16",
@@ -580,26 +645,30 @@ impl<X: Xlen> CEmitter<X> {
                         }
                     }
                     WriteTarget::Csr(csr) => {
+                        let state_arg = if self.uses_fixed_addresses() {
+                            "".to_string()
+                        } else {
+                            format!("{}, ", state)
+                        };
                         if self.config.has_tracing() {
                             let pc_lit = self.fmt_addr(self.current_pc);
                             let op_lit = self.current_op;
                             self.writeln(
                                 indent,
                                 &format!(
-                                    "twr_csr(&state->tracer, {}, {}, state, 0x{:x}, {});",
-                                    pc_lit, op_lit, csr, value_str
+                                    "twr_csr(&{}->tracer, {}, {}, {}0x{:x}, {});",
+                                    state, pc_lit, op_lit, state_arg, csr, value_str
                                 ),
                             );
                         } else {
-                            // Use direct wr_csr when tracing disabled
                             self.writeln(
                                 indent,
-                                &format!("wr_csr(state, 0x{:x}, {});", csr, value_str),
+                                &format!("wr_csr({}0x{:x}, {});", state_arg, csr, value_str),
                             );
                         }
                     }
                     WriteTarget::Pc => {
-                        self.writeln(indent, &format!("state->pc = {};", value_str));
+                        self.writeln(indent, &format!("{}->pc = {};", state, value_str));
                     }
                     WriteTarget::Temp(idx) => {
                         self.writeln(
@@ -608,19 +677,22 @@ impl<X: Xlen> CEmitter<X> {
                         );
                     }
                     WriteTarget::ResAddr => {
-                        self.writeln(indent, &format!("state->reservation_addr = {};", value_str));
+                        self.writeln(
+                            indent,
+                            &format!("{}->reservation_addr = {};", state, value_str),
+                        );
                     }
                     WriteTarget::ResValid => {
                         self.writeln(
                             indent,
-                            &format!("state->reservation_valid = {};", value_str),
+                            &format!("{}->reservation_valid = {};", state, value_str),
                         );
                     }
                     WriteTarget::Exited => {
-                        self.writeln(indent, &format!("state->has_exited = {};", value_str));
+                        self.writeln(indent, &format!("{}->has_exited = {};", state, value_str));
                     }
                     WriteTarget::ExitCode => {
-                        self.writeln(indent, &format!("state->exit_code = {};", value_str));
+                        self.writeln(indent, &format!("{}->exit_code = {};", state, value_str));
                     }
                 }
             }
@@ -677,6 +749,8 @@ impl<X: Xlen> CEmitter<X> {
             String::new()
         };
 
+        let state = self.state_ref();
+
         // Generate the tohost check
         self.writeln(
             indent,
@@ -687,10 +761,13 @@ impl<X: Xlen> CEmitter<X> {
         );
         self.writeln(
             indent + 1,
-            &format!("handle_tohost_write(state, {});", value),
+            &format!("handle_tohost_write({}, {});", state, value),
         );
-        self.writeln(indent + 1, "if (unlikely(state->has_exited)) {");
-        self.writeln(indent + 2, &format!("state->pc = {};", pc_lit));
+        self.writeln(
+            indent + 1,
+            &format!("if (unlikely({}->has_exited)) {{", state),
+        );
+        self.writeln(indent + 2, &format!("{}->pc = {};", state, pc_lit));
         if !instret_update.is_empty() || !save_call.is_empty() {
             self.writeln(indent + 2, &format!("{}{}", instret_update, save_call));
         }
@@ -711,9 +788,14 @@ impl<X: Xlen> CEmitter<X> {
             self.writeln(
                 indent + 1,
                 &format!(
-                    "{}(&state->tracer, {}, {}, memory, {}, {}, {});",
-                    tstore_fn, pc_lit, op_lit, base, offset, value
+                    "{}(&{}->tracer, {}, {}, memory, {}, {}, {});",
+                    tstore_fn, state, pc_lit, op_lit, base, offset, value
                 ),
+            );
+        } else if self.uses_fixed_addresses() {
+            self.writeln(
+                indent + 1,
+                &format!("{}({}, {}, {});", store_fn, base, offset, value),
             );
         } else {
             self.writeln(
@@ -757,13 +839,10 @@ impl<X: Xlen> CEmitter<X> {
             "__attribute__((preserve_none, nonnull(1)))"
         };
 
-        self.write(&format!("{} void B_{}({}) {{\n", attrs, pc_str, self.sig.params));
-
-        // With fixed addresses, declare state and memory as local variables
-        if self.sig.fixed_addresses {
-            self.write("    RvState* restrict state = (RvState*)RV_STATE_ADDR;\n");
-            self.write("    uint8_t* restrict memory = (uint8_t*)RV_MEMORY_ADDR;\n");
-        }
+        self.write(&format!(
+            "{} void B_{}({}) {{\n",
+            attrs, pc_str, self.sig.params
+        ));
     }
 
     /// Format PC for block names (hex without 0x prefix).
@@ -1024,8 +1103,10 @@ impl<X: Xlen> CEmitter<X> {
         // Tracing hooks (if enabled)
         let trace_taken = if self.config.has_tracing() {
             let target_lit = self.fmt_addr(target);
+            let state = self.state_ref();
             format!(
-                "trace_branch_taken(&state->tracer, {}, {}, {});\n    ",
+                "trace_branch_taken(&{}->tracer, {}, {}, {});\n    ",
+                state,
                 self.fmt_addr(self.current_pc),
                 self.current_op,
                 target_lit
@@ -1036,8 +1117,10 @@ impl<X: Xlen> CEmitter<X> {
 
         let trace_not_taken = if self.config.has_tracing() {
             let fall_lit = self.fmt_addr(fall_pc);
+            let state = self.state_ref();
             format!(
-                "trace_branch_not_taken(&state->tracer, {}, {}, {});\n",
+                "trace_branch_not_taken(&{}->tracer, {}, {}, {});\n",
+                state,
                 self.fmt_addr(self.current_pc),
                 self.current_op,
                 fall_lit
@@ -1064,14 +1147,15 @@ impl<X: Xlen> CEmitter<X> {
             );
             self.writeln(1, "}");
         } else {
+            let state = self.state_ref();
             self.writeln(1, &format!("if ({}) {{", cond_str));
             if !trace_taken.is_empty() {
                 self.writeln(2, trace_taken.trim_end());
             }
-            self.writeln(2, "state->has_exited = true;");
-            self.writeln(2, "state->exit_code = 1;");
+            self.writeln(2, &format!("{}->has_exited = true;", state));
+            self.writeln(2, &format!("{}->exit_code = 1;", state));
             let pc_lit = self.fmt_addr(target);
-            self.writeln(2, &format!("state->pc = {};", pc_lit));
+            self.writeln(2, &format!("{}->pc = {};", state, pc_lit));
             if !save_to_state.is_empty() {
                 self.writeln(2, &save_to_state);
             }
@@ -1094,10 +1178,11 @@ impl<X: Xlen> CEmitter<X> {
             );
         } else {
             // Invalid fall address - exit
-            self.writeln(1, "state->has_exited = true;");
-            self.writeln(1, "state->exit_code = 1;");
+            let state = self.state_ref();
+            self.writeln(1, &format!("{}->has_exited = true;", state));
+            self.writeln(1, &format!("{}->exit_code = 1;", state));
             let pc_lit = self.fmt_addr(fall_pc);
-            self.writeln(1, &format!("state->pc = {};", pc_lit));
+            self.writeln(1, &format!("{}->pc = {};", state, pc_lit));
             if !save_to_state.is_empty() {
                 self.writeln(1, &save_to_state);
             }
@@ -1129,15 +1214,16 @@ impl<X: Xlen> CEmitter<X> {
             );
             self.writeln(indent, "}");
         } else {
+            let state = self.state_ref();
             self.writeln(indent, &format!("if ({}) {{", cond_str));
-            self.writeln(indent + 1, "state->has_exited = true;");
-            self.writeln(indent + 1, "state->exit_code = 1;");
+            self.writeln(indent + 1, &format!("{}->has_exited = true;", state));
+            self.writeln(indent + 1, &format!("{}->exit_code = 1;", state));
             let pc_lit = self.fmt_addr(target);
-            self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
+            self.writeln(indent + 1, &format!("{}->pc = {};", state, pc_lit));
             if self.config.instret_mode.counts() {
                 self.writeln(
                     indent + 1,
-                    &format!("state->instret = instret + {};", self.instr_idx),
+                    &format!("{}->instret = instret + {};", state, self.instr_idx),
                 );
             }
             // Use save_to_state_no_instret since we already handled instret above
@@ -1157,10 +1243,11 @@ impl<X: Xlen> CEmitter<X> {
     /// Render exit with custom indent.
     fn render_exit_impl(&mut self, code: &str, indent: usize) {
         let save_to_state = self.sig.save_to_state.clone();
-        self.writeln(indent, "state->has_exited = true;");
-        self.writeln(indent, &format!("state->exit_code = {};", code));
+        let state = self.state_ref();
+        self.writeln(indent, &format!("{}->has_exited = true;", state));
+        self.writeln(indent, &format!("{}->exit_code = {};", state, code));
         let pc_lit = self.fmt_addr(self.current_pc);
-        self.writeln(indent, &format!("state->pc = {};", pc_lit));
+        self.writeln(indent, &format!("{}->pc = {};", state, pc_lit));
         if !save_to_state.is_empty() {
             self.writeln(indent, &save_to_state);
         }
@@ -1193,9 +1280,10 @@ impl<X: Xlen> CEmitter<X> {
 
     fn render_exit_check(&mut self, indent: usize) {
         let save_to_state = self.sig.save_to_state.clone();
+        let state = self.state_ref();
         let pc_lit = self.fmt_addr(self.current_pc);
-        self.writeln(indent, "if (unlikely(state->has_exited)) {");
-        self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
+        self.writeln(indent, &format!("if (unlikely({}->has_exited)) {{", state));
+        self.writeln(indent + 1, &format!("{}->pc = {};", state, pc_lit));
         if !save_to_state.is_empty() {
             self.writeln(indent + 1, &save_to_state);
         }
@@ -1240,7 +1328,8 @@ impl<X: Xlen> CEmitter<X> {
     pub fn render_block_trace(&mut self, pc: u64) {
         if self.config.has_tracing() {
             let pc_lit = self.fmt_addr(pc);
-            self.writeln(1, &format!("trace_block(&state->tracer, {});", pc_lit));
+            let state = self.state_ref();
+            self.writeln(1, &format!("trace_block(&{state}->tracer, {});", pc_lit));
         }
     }
 
@@ -1248,9 +1337,13 @@ impl<X: Xlen> CEmitter<X> {
     pub fn emit_trace_pc(&mut self) {
         if self.config.has_tracing() {
             let pc_lit = self.fmt_addr(self.current_pc);
+            let state = self.state_ref();
             self.writeln(
                 1,
-                &format!("trace_pc(&state->tracer, {}, {});", pc_lit, self.current_op),
+                &format!(
+                    "trace_pc(&{state}->tracer, {}, {});",
+                    pc_lit, self.current_op
+                ),
             );
         }
     }
@@ -1259,7 +1352,11 @@ impl<X: Xlen> CEmitter<X> {
     pub fn emit_trace_pc_for(&mut self, pc: u64, op: u16) {
         if self.config.has_tracing() {
             let pc_lit = self.fmt_addr(pc);
-            self.writeln(1, &format!("trace_pc(&state->tracer, {}, {});", pc_lit, op));
+            let state = self.state_ref();
+            self.writeln(
+                1,
+                &format!("trace_pc(&{state}->tracer, {}, {});", pc_lit, op),
+            );
         }
     }
 
@@ -1270,8 +1367,12 @@ impl<X: Xlen> CEmitter<X> {
         }
         let save_to_state = self.sig.save_to_state.clone();
         let pc_lit = self.fmt_addr(pc);
-        self.writeln(1, "if (unlikely(state->target_instret <= instret)) {");
-        self.writeln(2, &format!("state->pc = {};", pc_lit));
+        let state = self.state_ref();
+        self.writeln(
+            1,
+            &format!("if (unlikely({state}->target_instret <= instret)) {{"),
+        );
+        self.writeln(2, &format!("{state}->pc = {};", pc_lit));
         if !save_to_state.is_empty() {
             self.writeln(2, &save_to_state);
         }
@@ -1387,11 +1488,12 @@ impl<X: Xlen> CEmitter<X> {
             );
             self.writeln(indent, "}");
         } else {
+            let state = self.state_ref();
             self.writeln(indent, &format!("if ({}) {{", cond_str));
-            self.writeln(indent + 1, "state->has_exited = true;");
-            self.writeln(indent + 1, "state->exit_code = 1;");
+            self.writeln(indent + 1, &format!("{state}->has_exited = true;"));
+            self.writeln(indent + 1, &format!("{state}->exit_code = 1;"));
             let pc_lit = self.fmt_addr(target);
-            self.writeln(indent + 1, &format!("state->pc = {};", pc_lit));
+            self.writeln(indent + 1, &format!("{state}->pc = {};", pc_lit));
             if !save_to_state.is_empty() {
                 self.writeln(indent + 1, &save_to_state);
             }

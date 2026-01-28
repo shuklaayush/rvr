@@ -462,6 +462,8 @@ impl<X: Xlen> EmitConfig<X> {
     /// instead of function arguments. Requires runtime to map at these addresses.
     pub fn with_fixed_addresses(mut self, config: FixedAddressConfig) -> Self {
         self.fixed_addresses = Some(config);
+        // Re-compute hot registers since fixed_addresses affects the calculation
+        self.init_hot_regs(default_total_slots());
         self
     }
 
@@ -534,16 +536,31 @@ mod tests {
     fn test_compute_num_hot_regs() {
         let tracer = TracerConfig::none();
         // Without fixed addresses: 10 - 3 (state + memory + instret) = 7
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer, false), 7);
+        assert_eq!(
+            compute_num_hot_regs(10, InstretMode::Count, &tracer, false),
+            7
+        );
         // Without fixed addresses: 10 - 2 (state + memory) = 8
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer, false), 8);
+        assert_eq!(
+            compute_num_hot_regs(10, InstretMode::Off, &tracer, false),
+            8
+        );
         // Without fixed addresses: 10 - 3 (state + memory + instret) = 7
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Suspend, &tracer, false), 7);
+        assert_eq!(
+            compute_num_hot_regs(10, InstretMode::Suspend, &tracer, false),
+            7
+        );
 
         // With fixed addresses: 10 - 1 (instret only) = 9
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer, true), 9);
+        assert_eq!(
+            compute_num_hot_regs(10, InstretMode::Count, &tracer, true),
+            9
+        );
         // With fixed addresses: 10 - 0 = 10
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer, true), 10);
+        assert_eq!(
+            compute_num_hot_regs(10, InstretMode::Off, &tracer, true),
+            10
+        );
     }
 
     #[test]
