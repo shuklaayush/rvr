@@ -141,18 +141,22 @@ pub const REG_PRIORITY: [u8; 31] = [
     4, // tp
 ];
 
-/// x86_64: 10 slots = 8 hot regs (optimal based on benchmarking).
-/// More causes register exhaustion, fewer increases memory access overhead.
-pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 10;
+/// x86_64 preserve_none: 12 argument registers.
+/// R12, R13, R14, R15, RDI, RSI, RDX, RCX, R8, R9, R11, RAX.
+/// Only RSP and RBP are callee-saved.
+/// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
+pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 12;
 
-/// AArch64: 31 GPRs (x0-x30), minus SP and ~7 for compiler temps = ~23 usable.
-pub const AARCH64_DEFAULT_TOTAL_SLOTS: usize = 23;
+/// AArch64 preserve_none: 24 argument registers.
+/// X20-X28 (9), X0-X7 (8), X9-X15 (7). Only LR and FP are callee-saved.
+/// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
+pub const AARCH64_DEFAULT_TOTAL_SLOTS: usize = 24;
 
-/// Fixed slots when instret counting is enabled (state + instret).
-pub const FIXED_SLOTS_WITH_INSTRET: usize = 2;
+/// Fixed slots when instret counting is enabled (state + memory + instret).
+pub const FIXED_SLOTS_WITH_INSTRET: usize = 3;
 
-/// Fixed slots when instret counting is disabled (state only).
-pub const FIXED_SLOTS_NO_INSTRET: usize = 1;
+/// Fixed slots when instret counting is disabled (state + memory).
+pub const FIXED_SLOTS_NO_INSTRET: usize = 2;
 
 /// Get platform-specific default total slots.
 pub fn default_total_slots() -> usize {

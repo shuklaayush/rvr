@@ -356,7 +356,9 @@ fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 {addr_check}    return addr & RV_MEMORY_MASK;
 }}
 
-/* Memory access: compute phys base first, then add offset */
+/* Memory access: compute phys base first, then add offset.
+   TODO: Should be phys_addr(base + off) instead of phys_addr(base) + off
+   to handle address wrapping correctly. */
 __attribute__((hot, pure, nonnull, always_inline))
 static inline uint32_t rd_mem_u8(uint8_t* restrict memory, {addr_type} base, int16_t off) {{
     uint8_t* phys = &memory[phys_addr(base)];
@@ -672,7 +674,8 @@ fn gen_trace_helpers<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     format!(
-        r#"/* Traced memory read helpers - call optimized base functions */
+        r#"/* Traced memory read helpers - call optimized base functions.
+   TODO: phys_addr(base) + off should be phys_addr(base + off) for correct wrapping. */
 __attribute__((hot, nonnull, always_inline))
 static inline uint32_t trd_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off) {{
     uint32_t val = rd_mem_u8(memory, base, off);
@@ -722,7 +725,8 @@ static inline uint64_t trd_mem_u64(Tracer* t, {addr_type} pc, uint16_t op, uint8
     return val;
 }}
 
-/* Traced memory write helpers - call optimized base functions */
+/* Traced memory write helpers - call optimized base functions.
+   TODO: phys_addr(base) + off should be phys_addr(base + off) for correct wrapping. */
 __attribute__((hot, nonnull, always_inline))
 static inline void twr_mem_u8(Tracer* t, {addr_type} pc, uint16_t op, uint8_t* restrict memory, {addr_type} base, int16_t off, uint32_t val) {{
     trace_mem_write_byte(t, pc, op, phys_addr(base) + off, (uint8_t)val);
