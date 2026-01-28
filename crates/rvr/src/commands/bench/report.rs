@@ -3,14 +3,13 @@
 use std::path::Path;
 use std::process::Command;
 
-use rvr::Compiler;
 use rvr::bench::{self, Arch};
 
 use super::{
     BENCHMARKS, BenchmarkSource, coremark, find_project_root, libriscv, polkavm, riscv_tests,
     run_libriscv_benchmark, run_single_arch,
 };
-use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
+use crate::cli::{BenchCompileArgs, EXIT_FAILURE, EXIT_SUCCESS};
 use crate::terminal::{self, Spinner};
 
 // ============================================================================
@@ -183,8 +182,7 @@ pub fn bench_report(
     no_libriscv: bool,
     no_host: bool,
     force: bool,
-    cc: &str,
-    linker: Option<&str>,
+    args: &BenchCompileArgs,
 ) -> i32 {
     use std::io::Write;
 
@@ -231,13 +229,6 @@ pub fn bench_report(
 
     // Run benchmarks
     let archs = Arch::ALL;
-    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
-        eprintln!("error: invalid compiler: {}", e);
-        std::process::exit(EXIT_FAILURE);
-    });
-    if let Some(ld) = linker {
-        compiler = compiler.with_linker(ld);
-    }
 
     for benchmark in BENCHMARKS.iter() {
         println!("Running {}...", benchmark.name);
@@ -277,17 +268,9 @@ pub fn bench_report(
 
         // Run rvr for each architecture
         for arch in archs {
-            if let Some(row) = run_single_arch(
-                benchmark,
-                arch,
-                &project_dir,
-                "base", // report always uses base (not fast) mode
-                false,
-                runs,
-                &compiler,
-                host_time,
-                force,
-            ) {
+            if let Some(row) =
+                run_single_arch(benchmark, arch, &project_dir, runs, host_time, force, args)
+            {
                 rows.push(row);
             }
         }

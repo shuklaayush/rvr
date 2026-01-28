@@ -1,11 +1,13 @@
-//! Benchmark commands and registry.
+//! Benchmark commands.
 
 mod coremark;
 mod libriscv;
 mod polkavm;
+mod registry;
 mod report;
 mod riscv_tests;
 
+pub use registry::{BENCHMARKS, BenchmarkInfo, BenchmarkSource, find_benchmark};
 pub use report::bench_report;
 
 use std::path::PathBuf;
@@ -14,9 +16,63 @@ use std::process::{Command, Stdio};
 use rvr::bench::{self, Arch};
 use rvr::{CompileOptions, Compiler, InstretMode, SyscallMode};
 
-use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
+use crate::cli::{BenchCompileArgs, EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
 use crate::terminal::{self, Spinner};
+
+// ============================================================================
+// Compile helpers
+// ============================================================================
+
+/// Compute output directory suffix from compile args.
+fn compile_suffix(args: &BenchCompileArgs) -> &'static str {
+    match (args.instret, args.fixed_addresses) {
+        (true, false) => "base",
+        (true, true) => "fixed",
+        (false, false) => "noinstret",
+        (false, true) => "noinstret-fixed",
+    }
+}
+
+/// Create compiler from args.
+fn create_compiler(args: &BenchCompileArgs) -> Compiler {
+    let mut compiler: Compiler = args.cc.parse().unwrap_or_else(|e: String| {
+        terminal::error(&e);
+        std::process::exit(EXIT_FAILURE);
+    });
+    if let Some(ld) = &args.linker {
+        compiler = compiler.with_linker(ld);
+    }
+    compiler
+}
+
+/// Build compile options from benchmark info and compile args.
+fn build_compile_options(benchmark: &BenchmarkInfo, args: &BenchCompileArgs) -> CompileOptions {
+    let compiler = create_compiler(args);
+    let mut options = CompileOptions::new()
+        .with_compiler(compiler)
+        .with_export_functions(benchmark.uses_exports)
+        .with_quiet(true);
+
+    if !args.instret {
+        options = options.with_instret_mode(InstretMode::Off);
+    }
+    if args.fixed_addresses {
+        options = options.with_fixed_addresses(rvr::FixedAddressConfig::default());
+    }
+
+    match &benchmark.source {
+        BenchmarkSource::RiscvTests => {
+            options = options.with_htif(true);
+        }
+        BenchmarkSource::Libriscv | BenchmarkSource::Coremark => {
+            options = options.with_syscall_mode(SyscallMode::Linux);
+        }
+        _ => {}
+    }
+
+    options
+}
 
 // ============================================================================
 // Helpers
@@ -187,237 +243,6 @@ fn run_libriscv_benchmark(
         time_secs: avg_time,
         perf,
     })
-}
-
-// ============================================================================
-// Benchmark registry
-// ============================================================================
-
-/// How to build a benchmark.
-#[derive(Clone, Copy)]
-pub enum BenchmarkSource {
-    /// Rust project - build with `rvr build`
-    Rust {
-        /// Path to project directory (relative to repo root)
-        path: &'static str,
-    },
-    /// Polkavm benchmark - build with benchmarks/build.sh
-    Polkavm,
-    /// C benchmark from riscv-tests - build with riscv-gcc
-    RiscvTests,
-    /// C benchmark from libriscv - build with riscv-gcc using riscv-tests runtime
-    Libriscv,
-    /// CoreMark benchmark from EEMBC
-    Coremark,
-}
-
-/// Benchmark metadata.
-pub struct BenchmarkInfo {
-    /// Benchmark name (used in CLI and paths).
-    pub name: &'static str,
-    /// Short description.
-    pub description: &'static str,
-    /// Whether benchmark uses export_functions mode (initialize/run pattern).
-    pub uses_exports: bool,
-    /// Path to host binary relative to project root (for comparison).
-    pub host_binary: Option<&'static str>,
-    /// Default architectures for this benchmark.
-    pub default_archs: &'static str,
-    /// Supported architectures (None = all, Some = only those listed).
-    pub supported_archs: Option<&'static str>,
-    /// Whether a host version can be built.
-    pub has_host: bool,
-    /// How to build this benchmark.
-    pub source: BenchmarkSource,
-}
-
-/// All registered benchmarks.
-/// ELF binaries are at: bin/{arch}/{name}
-const BENCHMARKS: &[BenchmarkInfo] = &[
-    // riscv-tests benchmarks (C-based)
-    BenchmarkInfo {
-        name: "towers",
-        description: "Towers of Hanoi (recursive)",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "qsort",
-        description: "Quick sort algorithm",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "rsort",
-        description: "Radix sort algorithm",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "median",
-        description: "Median filter",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "multiply",
-        description: "Software multiply",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "vvadd",
-        description: "Vector-vector addition",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "memcpy",
-        description: "Memory copy operations",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    BenchmarkInfo {
-        name: "dhrystone",
-        description: "Classic Dhrystone benchmark",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::RiscvTests,
-    },
-    // libriscv benchmarks (use Linux syscalls, not HTIF)
-    BenchmarkInfo {
-        name: "fib",
-        description: "Fibonacci (recursive tail-call)",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Libriscv,
-    },
-    BenchmarkInfo {
-        name: "fib-asm",
-        description: "Fibonacci (hand-written assembly)",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: Some("rv64i,rv64e"), // RV64 assembly only
-        has_host: false,                      // Can't compile assembly for host
-        source: BenchmarkSource::Libriscv,
-    },
-    // coremark benchmark
-    BenchmarkInfo {
-        name: "coremark",
-        description: "CoreMark CPU benchmark (EEMBC)",
-        uses_exports: false,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Coremark,
-    },
-    // polkavm benchmarks
-    BenchmarkInfo {
-        name: "minimal",
-        description: "Minimal function call overhead",
-        uses_exports: true,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Polkavm,
-    },
-    BenchmarkInfo {
-        name: "prime-sieve",
-        description: "Prime number sieve algorithm",
-        uses_exports: true,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Polkavm,
-    },
-    BenchmarkInfo {
-        name: "pinky",
-        description: "NES emulator (cycle-accurate)",
-        uses_exports: true,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Polkavm,
-    },
-    BenchmarkInfo {
-        name: "memset",
-        description: "Memory set operations",
-        uses_exports: true,
-        host_binary: None,
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Polkavm,
-    },
-    // rust benchmarks
-    BenchmarkInfo {
-        name: "reth",
-        description: "Reth block validator",
-        uses_exports: false,
-        host_binary: Some("programs/reth/target/release/reth"),
-        default_archs: "rv64i",
-        supported_archs: None,
-        has_host: true,
-        source: BenchmarkSource::Rust {
-            path: "programs/reth",
-        },
-    },
-];
-
-impl BenchmarkInfo {
-    /// Check if this benchmark supports the given architecture.
-    fn supports_arch(&self, arch: &Arch) -> bool {
-        match self.supported_archs {
-            None => true,
-            Some(archs) => Arch::parse_list(archs)
-                .map(|list| list.contains(arch))
-                .unwrap_or(false),
-        }
-    }
-}
-
-/// Find benchmark by name.
-fn find_benchmark(name: &str) -> Option<&'static BenchmarkInfo> {
-    BENCHMARKS.iter().find(|b| b.name == name)
 }
 
 // ============================================================================
@@ -710,13 +535,7 @@ pub fn bench_build(name: Option<&str>, arch: Option<&str>, no_host: bool) -> i32
 }
 
 /// Compile benchmark ELF to native .so.
-pub fn bench_compile(
-    name: Option<&str>,
-    arch: Option<&str>,
-    fast: bool,
-    cc: &str,
-    linker: Option<&str>,
-) -> i32 {
+pub fn bench_compile(name: Option<&str>, arch: Option<&str>, args: &BenchCompileArgs) -> i32 {
     let project_dir = find_project_root();
 
     let benchmarks: Vec<&BenchmarkInfo> = match name {
@@ -730,15 +549,7 @@ pub fn bench_compile(
         None => BENCHMARKS.iter().collect(),
     };
 
-    let suffix = if fast { "fast" } else { "base" };
-
-    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
-        terminal::error(&e);
-        std::process::exit(EXIT_FAILURE);
-    });
-    if let Some(ld) = linker {
-        compiler = compiler.with_linker(ld);
-    }
+    let suffix = compile_suffix(args);
 
     for benchmark in &benchmarks {
         let arch_str = arch.unwrap_or(benchmark.default_archs);
@@ -769,22 +580,7 @@ pub fn bench_compile(
 
             let spinner = Spinner::new(format!("Compiling {} ({})", benchmark.name, a.as_str()));
 
-            let mut options = CompileOptions::new()
-                .with_compiler(compiler.clone())
-                .with_export_functions(benchmark.uses_exports)
-                .with_quiet(true);
-            if fast {
-                options = options.with_instret_mode(InstretMode::Off);
-            }
-            match &benchmark.source {
-                BenchmarkSource::RiscvTests => {
-                    options = options.with_htif(true);
-                }
-                BenchmarkSource::Libriscv => {
-                    options = options.with_syscall_mode(SyscallMode::Linux);
-                }
-                _ => {}
-            }
+            let options = build_compile_options(benchmark, args);
 
             if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
                 spinner.finish_with_failure(&format!("compile failed: {}", e));
@@ -809,12 +605,10 @@ pub fn bench_run(
     name: Option<&str>,
     arch: Option<&str>,
     runs: usize,
-    fast: bool,
     compare_host: bool,
     compare_libriscv: bool,
     force: bool,
-    cc: &str,
-    linker: Option<&str>,
+    args: &BenchCompileArgs,
 ) -> i32 {
     let project_dir = find_project_root();
 
@@ -828,15 +622,6 @@ pub fn bench_run(
         },
         None => BENCHMARKS.iter().collect(),
     };
-
-    let suffix = if fast { "fast" } else { "base" };
-    let mut compiler: Compiler = cc.parse().unwrap_or_else(|e: String| {
-        terminal::error(&format!("invalid compiler: {}", e));
-        std::process::exit(EXIT_FAILURE);
-    });
-    if let Some(ld) = linker {
-        compiler = compiler.with_linker(ld);
-    }
 
     for benchmark in &benchmarks {
         let arch_str = arch.unwrap_or(benchmark.default_archs);
@@ -1105,17 +890,9 @@ pub fn bench_run(
         }
 
         for a in &archs {
-            if let Some(row) = run_single_arch(
-                benchmark,
-                a,
-                &project_dir,
-                suffix,
-                fast,
-                runs,
-                &compiler,
-                host_time,
-                force,
-            ) {
+            if let Some(row) =
+                run_single_arch(benchmark, a, &project_dir, runs, host_time, force, args)
+            {
                 rows.push(row);
             }
         }
@@ -1158,23 +935,21 @@ fn needs_recompile(elf_path: &std::path::Path, lib_path: &std::path::Path) -> bo
 }
 
 /// Run benchmark for a single architecture, returning a table row.
-#[allow(clippy::too_many_arguments)]
 fn run_single_arch(
     benchmark: &BenchmarkInfo,
     arch: &Arch,
     project_dir: &std::path::Path,
-    suffix: &str,
-    fast: bool,
     runs: usize,
-    compiler: &Compiler,
     host_time: Option<f64>,
     force: bool,
+    args: &BenchCompileArgs,
 ) -> Option<bench::TableRow> {
     // Skip unsupported architectures
     if !benchmark.supports_arch(arch) {
         return None;
     }
 
+    let suffix = compile_suffix(args);
     let elf_path = project_dir
         .join("bin")
         .join(arch.as_str())
@@ -1292,23 +1067,7 @@ fn run_single_arch(
         }
 
         let spinner = Spinner::new(format!("Compiling {} ({})", benchmark.name, arch.as_str()));
-        let mut options = CompileOptions::new()
-            .with_compiler(compiler.clone())
-            .with_export_functions(benchmark.uses_exports)
-            .with_quiet(true);
-        if fast {
-            options = options.with_instret_mode(InstretMode::Off);
-        }
-        match &benchmark.source {
-            BenchmarkSource::RiscvTests => {
-                options = options.with_htif(true);
-            }
-            BenchmarkSource::Libriscv | BenchmarkSource::Coremark => {
-                // libriscv and coremark benchmarks use Linux syscall conventions
-                options = options.with_syscall_mode(SyscallMode::Linux);
-            }
-            _ => {}
-        }
+        let options = build_compile_options(benchmark, args);
 
         if let Err(e) = rvr::compile_with_options(&elf_path, &out_dir, options) {
             spinner.finish_with_failure(&format!("compile failed: {}", e));
