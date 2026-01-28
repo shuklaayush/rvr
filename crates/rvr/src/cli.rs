@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rvr::{InstretMode, SyscallMode};
+use rvr::{FixedAddressConfig, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
 
 /// Exit code for success.
@@ -72,6 +72,12 @@ pub enum Commands {
         #[arg(long)]
         linker: Option<String>,
 
+        /// Use fixed addresses for state and memory (experimental).
+        /// Format: "STATE_ADDR,MEMORY_ADDR" (hex) or "default" for default addresses.
+        /// Requires runtime to map memory at these addresses.
+        #[arg(long, value_name = "ADDRS")]
+        fixed_addresses: Option<String>,
+
         #[command(flatten)]
         tracer: TracerArgs,
     },
@@ -94,7 +100,7 @@ pub enum Commands {
         htif: bool,
 
         /// Emit #line directives with source locations (requires debug info in ELF)
-        #[arg(long)]
+        #[arg(long, default_value = "true")]
         line_info: bool,
 
         /// Instruction retirement mode
@@ -104,6 +110,12 @@ pub enum Commands {
         /// Syscall handling mode
         #[arg(long, value_enum, default_value = "baremetal")]
         syscalls: SyscallModeArg,
+
+        /// Use fixed addresses for state and memory (experimental).
+        /// Format: "STATE_ADDR,MEMORY_ADDR" (hex) or "default" for default addresses.
+        /// Requires runtime to map memory at these addresses.
+        #[arg(long, value_name = "ADDRS")]
+        fixed_addresses: Option<String>,
 
         #[command(flatten)]
         tracer: TracerArgs,
@@ -200,6 +212,26 @@ pub enum Commands {
     },
 }
 
+/// Shared compilation options for benchmark commands.
+#[derive(clap::Args, Clone, Debug)]
+pub struct BenchCompileArgs {
+    /// C compiler command
+    #[arg(long, default_value = "clang")]
+    pub cc: String,
+
+    /// Linker to use
+    #[arg(long)]
+    pub linker: Option<String>,
+
+    /// Enable instruction counting (use --instret=false to disable)
+    #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+    pub instret: bool,
+
+    /// Use fixed addresses for state and memory (experimental)
+    #[arg(long)]
+    pub fixed_addresses: bool,
+}
+
 #[derive(Subcommand)]
 pub enum BenchCommands {
     /// List available benchmarks
@@ -226,13 +258,8 @@ pub enum BenchCommands {
         #[arg(long)]
         force: bool,
 
-        /// C compiler command
-        #[arg(long, default_value = "clang")]
-        cc: String,
-
-        /// Linker to use
-        #[arg(long)]
-        linker: Option<String>,
+        #[command(flatten)]
+        compile: BenchCompileArgs,
     },
     /// Build benchmark ELF from source
     Build {
@@ -258,17 +285,8 @@ pub enum BenchCommands {
         #[arg(short, long)]
         arch: Option<String>,
 
-        /// Fast mode (no instret counting)
-        #[arg(short, long)]
-        fast: bool,
-
-        /// C compiler command
-        #[arg(long, default_value = "clang")]
-        cc: String,
-
-        /// Linker to use
-        #[arg(long)]
-        linker: Option<String>,
+        #[command(flatten)]
+        compile: BenchCompileArgs,
     },
     /// Run compiled benchmark
     Run {
@@ -284,10 +302,6 @@ pub enum BenchCommands {
         #[arg(short, long, default_value = "3")]
         runs: usize,
 
-        /// Fast mode (must match compile)
-        #[arg(short, long)]
-        fast: bool,
-
         /// Include host binary comparison (if available)
         #[arg(long)]
         compare_host: bool,
@@ -300,13 +314,8 @@ pub enum BenchCommands {
         #[arg(long)]
         force: bool,
 
-        /// C compiler command (used with --force)
-        #[arg(long, default_value = "clang")]
-        cc: String,
-
-        /// Linker to use (used with --force)
-        #[arg(long)]
-        linker: Option<String>,
+        #[command(flatten)]
+        compile: BenchCompileArgs,
     },
 }
 
@@ -515,4 +524,35 @@ pub fn build_tracer_config(args: &TracerArgs) -> Result<TracerConfig, String> {
         config = config.with_passed_vars(passed_vars);
     }
     Ok(config)
+}
+
+/// Parse fixed addresses from CLI argument.
+///
+/// Accepts:
+/// - "default" - use default addresses (64GB, 128GB)
+/// - "STATE_ADDR,MEMORY_ADDR" - hex addresses (e.g., "0x1000000000,0x2000000000")
+pub fn parse_fixed_addresses(arg: &str) -> Result<FixedAddressConfig, String> {
+    let arg = arg.trim();
+
+    if arg.eq_ignore_ascii_case("default") {
+        return Ok(FixedAddressConfig::default());
+    }
+
+    let parts: Vec<&str> = arg.split(',').collect();
+    if parts.len() != 2 {
+        return Err("expected format: STATE_ADDR,MEMORY_ADDR (hex) or 'default'".to_string());
+    }
+
+    let parse_hex = |s: &str| -> Result<u64, String> {
+        let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+        u64::from_str_radix(s, 16).map_err(|e| format!("invalid hex address: {}", e))
+    };
+
+    let state_addr = parse_hex(parts[0])?;
+    let memory_addr = parse_hex(parts[1])?;
+
+    Ok(FixedAddressConfig {
+        state_addr,
+        memory_addr,
+    })
 }

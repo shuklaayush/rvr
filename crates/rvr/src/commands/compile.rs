@@ -7,6 +7,7 @@ use tracing::{error, info};
 
 use crate::cli::{
     EXIT_FAILURE, EXIT_SUCCESS, InstretModeArg, SyscallModeArg, TracerArgs, build_tracer_config,
+    parse_fixed_addresses,
 };
 
 /// Handle the `compile` command.
@@ -21,6 +22,7 @@ pub fn cmd_compile(
     jobs: usize,
     cc: Option<&str>,
     linker: Option<&str>,
+    fixed_addresses: Option<&str>,
     tracer: &TracerArgs,
 ) -> i32 {
     info!(input = %input.display(), output = %output.display(), "compiling");
@@ -33,13 +35,30 @@ pub fn cmd_compile(
         }
     };
 
-    let options = CompileOptions::new()
+    let mut options = CompileOptions::new()
         .with_addr_check(addr_check)
         .with_htif(htif)
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config)
         .with_jobs(jobs);
+
+    if let Some(addrs) = fixed_addresses {
+        match parse_fixed_addresses(addrs) {
+            Ok(config) => {
+                info!(
+                    state_addr = format!("{:#x}", config.state_addr),
+                    memory_addr = format!("{:#x}", config.memory_addr),
+                    "using fixed addresses"
+                );
+                options = options.with_fixed_addresses(config);
+            }
+            Err(e) => {
+                error!(error = %e, "invalid fixed addresses");
+                return EXIT_FAILURE;
+            }
+        }
+    }
 
     let options = if let Some(cc) = cc {
         let mut compiler: Compiler = cc.parse().unwrap_or_else(|e| {
@@ -76,6 +95,7 @@ pub fn cmd_lift(
     line_info: bool,
     instret: InstretModeArg,
     syscalls: SyscallModeArg,
+    fixed_addresses: Option<&str>,
     tracer: &TracerArgs,
 ) -> i32 {
     info!(input = %input.display(), output = %output.display(), "lifting");
@@ -88,13 +108,30 @@ pub fn cmd_lift(
         }
     };
 
-    let options = CompileOptions::new()
+    let mut options = CompileOptions::new()
         .with_addr_check(addr_check)
         .with_htif(htif)
         .with_line_info(line_info)
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config);
+
+    if let Some(addrs) = fixed_addresses {
+        match parse_fixed_addresses(addrs) {
+            Ok(config) => {
+                info!(
+                    state_addr = format!("{:#x}", config.state_addr),
+                    memory_addr = format!("{:#x}", config.memory_addr),
+                    "using fixed addresses"
+                );
+                options = options.with_fixed_addresses(config);
+            }
+            Err(e) => {
+                error!(error = %e, "invalid fixed addresses");
+                return EXIT_FAILURE;
+            }
+        }
+    }
 
     match rvr::lift_to_c_with_options(input, output, options) {
         Ok(path) => {
