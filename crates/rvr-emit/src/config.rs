@@ -186,12 +186,20 @@ pub fn default_total_slots() -> usize {
 }
 
 /// Compute number of hot RISC-V registers from total argument slots.
+///
+/// Fixed slots depend on configuration:
+/// - With fixed addresses: only instret (if enabled) takes a slot
+/// - Without fixed addresses: state + memory + instret (if enabled)
 pub fn compute_num_hot_regs(
     total_slots: usize,
     instret_mode: InstretMode,
     tracer_config: &TracerConfig,
+    fixed_addresses: bool,
 ) -> usize {
-    let fixed = if instret_mode.counts() {
+    let fixed = if fixed_addresses {
+        // Only instret takes an argument slot (state/memory are constants)
+        if instret_mode.counts() { 1 } else { 0 }
+    } else if instret_mode.counts() {
         FIXED_SLOTS_WITH_INSTRET
     } else {
         FIXED_SLOTS_NO_INSTRET
@@ -242,6 +250,32 @@ pub enum SyscallMode {
     Linux,
 }
 
+/// Fixed address configuration for state and memory.
+///
+/// When enabled, state and memory are accessed via compile-time constant addresses
+/// instead of being passed as function arguments. This frees up argument registers
+/// for hot values but requires the runtime to map memory at these exact addresses.
+///
+/// Default addresses are chosen to minimize collision with typical ASLR mappings:
+/// - Above 4GB mark (avoid 32-bit conflicts)
+/// - Below typical mmap regions (~0x7f... on Linux)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedAddressConfig {
+    /// Fixed address for RvState struct.
+    pub state_addr: u64,
+    /// Fixed address for guest memory base.
+    pub memory_addr: u64,
+}
+
+impl Default for FixedAddressConfig {
+    fn default() -> Self {
+        Self {
+            state_addr: 0x10_0000_0000,  // 64 GB
+            memory_addr: 0x20_0000_0000, // 128 GB
+        }
+    }
+}
+
 /// Code generation configuration.
 #[derive(Clone, Debug)]
 pub struct EmitConfig<X: Xlen> {
@@ -271,6 +305,9 @@ pub struct EmitConfig<X: Xlen> {
     pub syscall_mode: SyscallMode,
     /// Export functions mode: compiled for calling exported functions rather than running from entry point.
     pub export_functions: bool,
+    /// Fixed addresses for state and memory (optional).
+    /// When set, state/memory are not passed as arguments but accessed via constant addresses.
+    pub fixed_addresses: Option<FixedAddressConfig>,
     _marker: PhantomData<X>,
 }
 
@@ -297,6 +334,7 @@ impl<X: Xlen> EmitConfig<X> {
             compiler: Compiler::default(),
             syscall_mode: SyscallMode::default(),
             export_functions: false,
+            fixed_addresses: None,
             _marker: PhantomData,
         }
     }
@@ -329,8 +367,12 @@ impl<X: Xlen> EmitConfig<X> {
     ///
     /// Only includes registers that exist (< num_regs) for E extension support.
     pub fn init_hot_regs(&mut self, total_slots: usize) {
-        let num_hot_regs =
-            compute_num_hot_regs(total_slots, self.instret_mode, &self.tracer_config);
+        let num_hot_regs = compute_num_hot_regs(
+            total_slots,
+            self.instret_mode,
+            &self.tracer_config,
+            self.fixed_addresses.is_some(),
+        );
         self.hot_regs.clear();
 
         let mut count = 0;
@@ -414,6 +456,20 @@ impl<X: Xlen> EmitConfig<X> {
         self
     }
 
+    /// Set fixed addresses for state and memory.
+    ///
+    /// When enabled, state/memory are accessed via compile-time constant addresses
+    /// instead of function arguments. Requires runtime to map at these addresses.
+    pub fn with_fixed_addresses(mut self, config: FixedAddressConfig) -> Self {
+        self.fixed_addresses = Some(config);
+        self
+    }
+
+    /// Check if fixed addresses are enabled.
+    pub fn has_fixed_addresses(&self) -> bool {
+        self.fixed_addresses.is_some()
+    }
+
     /// Bytes per register based on XLEN.
     pub fn reg_bytes(&self) -> usize {
         X::REG_BYTES
@@ -477,12 +533,17 @@ mod tests {
     #[test]
     fn test_compute_num_hot_regs() {
         let tracer = TracerConfig::none();
-        // 10 - 3 (state + memory + instret) = 7
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer), 7);
-        // 10 - 2 (state + memory) = 8
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer), 8);
-        // 10 - 3 (state + memory + instret) = 7
-        assert_eq!(compute_num_hot_regs(10, InstretMode::Suspend, &tracer), 7);
+        // Without fixed addresses: 10 - 3 (state + memory + instret) = 7
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer, false), 7);
+        // Without fixed addresses: 10 - 2 (state + memory) = 8
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer, false), 8);
+        // Without fixed addresses: 10 - 3 (state + memory + instret) = 7
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Suspend, &tracer, false), 7);
+
+        // With fixed addresses: 10 - 1 (instret only) = 9
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Count, &tracer, true), 9);
+        // With fixed addresses: 10 - 0 = 10
+        assert_eq!(compute_num_hot_regs(10, InstretMode::Off, &tracer, true), 10);
     }
 
     #[test]

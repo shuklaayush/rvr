@@ -747,10 +747,23 @@ impl<X: Xlen> CEmitter<X> {
                 start_comment, end_comment, instr_count
             ));
         }
-        self.write(&format!(
-            "__attribute__((preserve_none, nonnull(1))) void B_{}({}) {{\n",
-            pc_str, self.sig.params
-        ));
+
+        // Function attributes differ based on whether fixed addresses are used
+        let attrs = if self.sig.fixed_addresses {
+            // No nonnull since state/memory aren't pointer arguments
+            "__attribute__((preserve_none))"
+        } else {
+            // nonnull(1) for state pointer (first argument)
+            "__attribute__((preserve_none, nonnull(1)))"
+        };
+
+        self.write(&format!("{} void B_{}({}) {{\n", attrs, pc_str, self.sig.params));
+
+        // With fixed addresses, declare state and memory as local variables
+        if self.sig.fixed_addresses {
+            self.write("    RvState* restrict state = (RvState*)RV_STATE_ADDR;\n");
+            self.write("    uint8_t* restrict memory = (uint8_t*)RV_MEMORY_ADDR;\n");
+        }
     }
 
     /// Format PC for block names (hex without 0x prefix).

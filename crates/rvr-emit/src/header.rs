@@ -10,7 +10,7 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
-use crate::config::{EmitConfig, InstretMode, SyscallMode};
+use crate::config::{EmitConfig, FixedAddressConfig, InstretMode, SyscallMode};
 use crate::inputs::EmitInputs;
 use crate::signature::{FnSignature, reg_type};
 use crate::tracer::TracerConfig;
@@ -55,6 +55,8 @@ pub struct HeaderConfig<X: Xlen> {
     pub tracer_config: TracerConfig,
     /// Syscall mode.
     pub syscall_mode: SyscallMode,
+    /// Fixed addresses for state and memory (optional).
+    pub fixed_addresses: Option<FixedAddressConfig>,
     _marker: std::marker::PhantomData<X>,
 }
 
@@ -79,6 +81,7 @@ impl<X: Xlen> HeaderConfig<X> {
             sig: FnSignature::new(config),
             tracer_config: config.tracer_config.clone(),
             syscall_mode: config.syscall_mode,
+            fixed_addresses: config.fixed_addresses,
             _marker: std::marker::PhantomData,
         }
     }
@@ -167,7 +170,7 @@ static inline int unlikely(int x) {{ return __builtin_expect(!!(x), 0); }}
 }
 
 fn gen_constants<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
-    format!(
+    let mut s = format!(
         r#"/* Architecture constants (C23 constexpr) */
 constexpr int XLEN = {xlen};
 
@@ -207,7 +210,23 @@ constexpr int32_t  RV_INT32_MIN   = INT32_MIN;
         csr_mcycleh = CSR_MCYCLEH,
         csr_minstret = CSR_MINSTRET,
         csr_minstreth = CSR_MINSTRETH,
-    )
+    );
+
+    // Add fixed address constants if enabled
+    if let Some(fixed) = cfg.fixed_addresses {
+        write!(
+            s,
+            r#"/* Fixed addresses for state and memory (requires runtime mapping) */
+constexpr uint64_t RV_STATE_ADDR  = {:#x}ull;
+constexpr uint64_t RV_MEMORY_ADDR = {:#x}ull;
+
+"#,
+            fixed.state_addr, fixed.memory_addr
+        )
+        .unwrap();
+    }
+
+    s
 }
 
 fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {

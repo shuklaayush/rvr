@@ -198,7 +198,7 @@
 
 // Core types - always available
 pub use rvr_elf::{ElfImage, get_elf_xlen};
-pub use rvr_emit::{Compiler, EmitConfig, InstretMode, SyscallMode, TracerConfig};
+pub use rvr_emit::{Compiler, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode, TracerConfig};
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
 // CSR constants for use with Runner::get_csr/set_csr
@@ -408,6 +408,9 @@ pub struct CompileOptions {
     pub compiler: Compiler,
     /// Suppress compilation output (make commands, etc).
     pub quiet: bool,
+    /// Fixed addresses for state and memory (optional).
+    /// When set, state/memory are accessed via compile-time constant addresses.
+    pub fixed_addresses: Option<FixedAddressConfig>,
 }
 
 impl CompileOptions {
@@ -485,6 +488,15 @@ impl CompileOptions {
         self
     }
 
+    /// Set fixed addresses for state and memory.
+    ///
+    /// When enabled, state/memory are accessed via compile-time constant addresses
+    /// instead of function arguments. Requires runtime to map at these addresses.
+    pub fn with_fixed_addresses(mut self, config: FixedAddressConfig) -> Self {
+        self.fixed_addresses = Some(config);
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.addr_check = self.addr_check;
@@ -495,6 +507,7 @@ impl CompileOptions {
         config.tracer_config = self.tracer_config.clone();
         config.compiler = self.compiler.clone();
         config.syscall_mode = self.syscall_mode;
+        config.fixed_addresses = self.fixed_addresses;
     }
 
     /// Check if line info is enabled.

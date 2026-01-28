@@ -59,6 +59,8 @@ pub struct FnSignature {
     pub counts_instret: bool,
     /// Whether tracing is enabled for reg access.
     pub trace_regs: bool,
+    /// Whether fixed addresses are used for state/memory.
+    pub fixed_addresses: bool,
 }
 
 impl FnSignature {
@@ -67,27 +69,56 @@ impl FnSignature {
         let rtype = reg_type::<X>();
         let counts_instret = config.instret_mode.counts();
         let trace_regs = !config.tracer_config.is_none();
+        let fixed_addresses = config.fixed_addresses.is_some();
 
-        // Base signature: state pointer and memory base
-        let mut params = String::from("RvState* state, uint8_t* memory");
-        let mut args = String::from("state, memory");
-        let mut args_from_state = String::from("state, state->memory");
+        // Base signature depends on whether fixed addresses are used
+        let mut params = String::new();
+        let mut args = String::new();
+        let mut args_from_state = String::new();
         let mut save_to_state = String::new();
         let mut save_to_state_no_instret = String::new();
 
+        if fixed_addresses {
+            // With fixed addresses: state/memory are constants, not arguments
+            // args_from_state is empty since we call with no state/memory args
+        } else {
+            // Without fixed addresses: state and memory are passed as arguments
+            params.push_str("RvState* state, uint8_t* memory");
+            args.push_str("state, memory");
+            args_from_state.push_str("state, state->memory");
+        }
+
         // Add instret if counting is enabled
         if counts_instret {
-            params.push_str(", uint64_t instret");
-            args.push_str(", instret");
-            args_from_state.push_str(", state->instret");
+            if !params.is_empty() {
+                params.push_str(", ");
+                args.push_str(", ");
+                args_from_state.push_str(", ");
+            }
+            params.push_str("uint64_t instret");
+            args.push_str("instret");
+            args_from_state.push_str("state->instret");
             save_to_state.push_str("state->instret = instret;");
             // save_to_state_no_instret does NOT include instret
         }
 
         // Add tracer passed variables
-        params.push_str(&config.tracer_config.passed_var_params::<X>());
-        args.push_str(&config.tracer_config.passed_var_args());
-        args_from_state.push_str(&config.tracer_config.passed_var_args_from_state());
+        // Note: passed_var_* methods return strings with leading ", " when non-empty
+        let tracer_params = config.tracer_config.passed_var_params::<X>();
+        let tracer_args = config.tracer_config.passed_var_args();
+        let tracer_args_from_state = config.tracer_config.passed_var_args_from_state();
+        if !tracer_params.is_empty() {
+            if params.is_empty() {
+                // Strip leading ", " if params is empty
+                params.push_str(tracer_params.trim_start_matches(", "));
+                args.push_str(tracer_args.trim_start_matches(", "));
+                args_from_state.push_str(tracer_args_from_state.trim_start_matches(", "));
+            } else {
+                params.push_str(&tracer_params);
+                args.push_str(&tracer_args);
+                args_from_state.push_str(&tracer_args_from_state);
+            }
+        }
         let tracer_save = config.tracer_config.passed_var_save_to_state();
         save_to_state.push_str(&tracer_save);
         save_to_state_no_instret.push_str(&tracer_save);
@@ -97,9 +128,15 @@ impl FnSignature {
         for &reg in &config.hot_regs {
             hot_reg_set.insert(reg);
             let name = abi_name(reg);
-            params.push_str(&format!(", {} {}", rtype, name));
-            args.push_str(&format!(", {}", name));
-            args_from_state.push_str(&format!(", state->regs[{}]", reg));
+            if params.is_empty() {
+                params.push_str(&format!("{} {}", rtype, name));
+                args.push_str(name);
+                args_from_state.push_str(&format!("state->regs[{}]", reg));
+            } else {
+                params.push_str(&format!(", {} {}", rtype, name));
+                args.push_str(&format!(", {}", name));
+                args_from_state.push_str(&format!(", state->regs[{}]", reg));
+            }
             let reg_save = format!(" state->regs[{}] = {};", reg, name);
             save_to_state.push_str(&reg_save);
             save_to_state_no_instret.push_str(&reg_save);
@@ -114,6 +151,7 @@ impl FnSignature {
             hot_reg_set,
             counts_instret,
             trace_regs,
+            fixed_addresses,
         }
     }
 
