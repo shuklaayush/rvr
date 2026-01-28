@@ -10,6 +10,15 @@ use rvr::PerfCounters;
 use rvr::bench::Arch;
 use rvr::perf::HostPerfCounters;
 
+/// Header to make RISC-V code compile on host.
+/// - Renames syscall to _host_syscall (so function definition compiles)
+/// - Stubs out asm/register bindings (so the function body compiles)
+/// - Stores result in global to prevent optimizer removing fib call
+const HOST_COMPAT_H: &str = r#"long __host_result;
+#define syscall _host_syscall
+#define asm(x) /* removed */
+"#;
+
 /// Build a libriscv benchmark directly from source.
 /// These benchmarks use Linux syscall conventions (syscall 93 for exit).
 pub fn build_benchmark(
@@ -72,16 +81,6 @@ pub fn build_benchmark(
 
     Ok(out_path)
 }
-
-/// Header to make RISC-V code compile on host.
-/// - Renames syscall to _host_syscall (so function definition compiles)
-/// - Stubs out asm/register bindings (so the function body compiles)
-/// - Stores result in global to prevent optimizer removing fib call
-const HOST_COMPAT_H: &str = r#"
-long __host_result;
-#define syscall _host_syscall
-#define asm(x) /* removed */
-"#;
 
 /// Build a libriscv benchmark as a shared library for the host.
 pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {

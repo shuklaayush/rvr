@@ -8,29 +8,7 @@ use rvr::bench::Arch;
 
 /// Host-compatible setStats() for riscv-tests benchmarks.
 /// Uses clock_gettime instead of CSRs, prints timing in parseable format.
-const HOST_SYSCALLS_C: &str = r#"
-#include <stdint.h>
-#include <stdio.h>
-#include <time.h>
-
-static uint64_t start_nanos;
-static uint64_t elapsed_nanos;
-
-static uint64_t get_nanos(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-}
-
-void setStats(int enable) {
-    if (enable) {
-        start_nanos = get_nanos();
-    } else {
-        elapsed_nanos = get_nanos() - start_nanos;
-        printf("host_nanos = %lu\n", (unsigned long)elapsed_nanos);
-    }
-}
-"#;
+const HOST_SYSCALLS_C: &str = include_str!("host_syscalls.c");
 
 /// Fix header for dhrystone - uses TIME code path to avoid multiple definition issues.
 const DHRYSTONE_FIX_H: &str = "#define TIME 1\n";
