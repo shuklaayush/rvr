@@ -25,25 +25,23 @@ pub const NUM_REGS_E: usize = 16;
 /// - `S`: Suspender state type (ZST when `()`, real struct when suspending)
 /// - `NUM_REGS`: Number of general-purpose registers (32 for I, 16 for E)
 ///
-/// # Layout
+/// # Layout (hot fields first for cache locality)
 ///
 /// ```text
-/// offset 0:     memory (*mut u8)
-/// offset 8:     regs[NUM_REGS]
-/// offset ?:     csrs[4096]
-/// offset ?:     pc
-/// offset ?:     _pad0 (u32)
-/// offset ?:     instret (u64, 8-byte aligned)
-/// offset ?:     suspender (only when S != (), right after instret for C compatibility)
+/// offset 0:     regs[NUM_REGS]           (hot - most accessed)
+/// offset ?:     pc                        (hot)
+/// offset ?:     instret (u64)             (hot)
+/// offset ?:     suspender (only when S != (), right after instret)
 /// offset ?:     reservation_addr
 /// offset ?:     reservation_valid (u8)
 /// offset ?:     has_exited (u8)
 /// offset ?:     exit_code (u8)
 /// offset ?:     _pad1 (u8)
-/// offset ?:     _pad2 (i64, 8-byte aligned)
 /// offset ?:     brk
 /// offset ?:     start_brk
+/// offset ?:     memory (*mut u8)          (cold - rarely used in hot paths)
 /// offset ?:     tracer (only when T != ())
+/// offset ?:     csrs[4096]                (cold - huge array at end)
 /// ```
 #[repr(C)]
 pub struct RvState<
@@ -52,22 +50,13 @@ pub struct RvState<
     S: SuspenderState = (),
     const NUM_REGS: usize = NUM_REGS_I,
 > {
-    /// Guest memory pointer.
-    pub memory: *mut u8,
-
-    /// General-purpose registers.
+    /// General-purpose registers (hot - most frequently accessed).
     pub regs: [X::Reg; NUM_REGS],
 
-    /// Control and status registers.
-    pub csrs: [X::Reg; NUM_CSRS],
-
-    /// Program counter.
+    /// Program counter (hot).
     pub pc: X::Reg,
 
-    /// Alignment padding.
-    _pad0: u32,
-
-    /// Instructions retired counter.
+    /// Instructions retired counter (hot).
     pub instret: u64,
 
     /// Suspender state (ZST when S = (), real struct when suspending).
@@ -86,11 +75,8 @@ pub struct RvState<
     /// Exit code (valid when has_exited is true).
     pub exit_code: u8,
 
-    /// Alignment padding.
-    _pad1: u8,
-
-    /// Alignment padding (8-byte alignment for brk).
-    _pad2: i64,
+    /// Alignment padding (for brk alignment).
+    _pad0: u8,
 
     /// Current heap break.
     pub brk: X::Reg,
@@ -98,8 +84,14 @@ pub struct RvState<
     /// Initial heap break.
     pub start_brk: X::Reg,
 
+    /// Guest memory pointer (cold - rarely accessed in hot paths).
+    pub memory: *mut u8,
+
     /// Tracer state (ZST when T = (), real struct when tracing).
     pub tracer: T,
+
+    /// Control and status registers (cold - huge array, rarely used).
+    pub csrs: [X::Reg; NUM_CSRS],
 }
 
 impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<X, T, S, NUM_REGS> {
@@ -111,22 +103,20 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
     /// or null if memory will be set later.
     pub fn new() -> Self {
         Self {
-            memory: std::ptr::null_mut(),
             regs: [X::from_u64(0); NUM_REGS],
-            csrs: [X::from_u64(0); NUM_CSRS],
             pc: X::from_u64(0),
-            _pad0: 0,
             instret: 0,
             suspender: S::default(),
             reservation_addr: X::from_u64(0),
             reservation_valid: 0,
             has_exited: 0,
             exit_code: 0,
-            _pad1: 0,
-            _pad2: 0,
+            _pad0: 0,
             brk: X::from_u64(0),
             start_brk: X::from_u64(0),
+            memory: std::ptr::null_mut(),
             tracer: T::default(),
+            csrs: [X::from_u64(0); NUM_CSRS],
         }
     }
 
@@ -253,55 +243,55 @@ mod tests {
     #[test]
     fn test_rv64_state_layout() {
         // These offsets must match the generated C header for RV64 with 32 regs.
+        // Hot fields first, CSRs at end for better cache locality.
         // When T = () and S = (), both are ZST and don't affect layout.
-        // Suspender is positioned after instret (ZST when S = ()).
-        assert_eq!(offset_of!(Rv64State, memory), 0);
-        assert_eq!(offset_of!(Rv64State, regs), 8);
-        assert_eq!(offset_of!(Rv64State, csrs), 8 + 32 * 8); // 264
-        assert_eq!(offset_of!(Rv64State, pc), 264 + 4096 * 8); // 33032
-        assert_eq!(offset_of!(Rv64State, _pad0), 33032 + 8); // 33040
-        assert_eq!(offset_of!(Rv64State, instret), 33048);
-        // Suspender ZST is here at 33056, adds 0 bytes
-        assert_eq!(offset_of!(Rv64State, reservation_addr), 33056);
-        assert_eq!(offset_of!(Rv64State, reservation_valid), 33064);
-        assert_eq!(offset_of!(Rv64State, has_exited), 33065);
-        assert_eq!(offset_of!(Rv64State, exit_code), 33066);
-        assert_eq!(offset_of!(Rv64State, _pad1), 33067);
-        assert_eq!(offset_of!(Rv64State, _pad2), 33072);
-        assert_eq!(offset_of!(Rv64State, brk), 33080);
-        assert_eq!(offset_of!(Rv64State, start_brk), 33088);
-        assert_eq!(size_of::<Rv64State>(), 33096);
+        assert_eq!(offset_of!(Rv64State, regs), 0);
+        assert_eq!(offset_of!(Rv64State, pc), 32 * 8); // 256
+        assert_eq!(offset_of!(Rv64State, instret), 256 + 8); // 264
+        // Suspender ZST is here at 272, adds 0 bytes
+        assert_eq!(offset_of!(Rv64State, reservation_addr), 272);
+        assert_eq!(offset_of!(Rv64State, reservation_valid), 280);
+        assert_eq!(offset_of!(Rv64State, has_exited), 281);
+        assert_eq!(offset_of!(Rv64State, exit_code), 282);
+        assert_eq!(offset_of!(Rv64State, _pad0), 283);
+        assert_eq!(offset_of!(Rv64State, brk), 288); // aligned to 8
+        assert_eq!(offset_of!(Rv64State, start_brk), 296);
+        assert_eq!(offset_of!(Rv64State, memory), 304);
+        // Tracer ZST is here at 312, adds 0 bytes
+        assert_eq!(offset_of!(Rv64State, csrs), 312);
+        assert_eq!(size_of::<Rv64State>(), 312 + 4096 * 8); // 33080
     }
 
     #[test]
     fn test_rv32_state_layout() {
         // For RV32 with 32 regs, no tracer, no suspender
-        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, memory), 0);
-        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, regs), 8);
-        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, csrs), 8 + 32 * 4); // 136
-        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, pc), 136 + 4096 * 4); // 16520
+        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, regs), 0);
+        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, pc), 32 * 4); // 128
+        // pc is 4 bytes for RV32, instret is u64 needing 8-byte alignment
+        // So there's 4 bytes of implicit padding after pc
+        assert_eq!(offset_of!(RvState<Rv32, (), (), 32>, instret), 136); // 128 + 4 (pc) + 4 (padding) = 136
     }
 
     #[test]
     fn test_rv64e_state_layout() {
         // For RV64 with 16 regs (E extension)
-        assert_eq!(offset_of!(Rv64EState, memory), 0);
-        assert_eq!(offset_of!(Rv64EState, regs), 8);
-        assert_eq!(offset_of!(Rv64EState, csrs), 8 + 16 * 8); // 136
-        assert_eq!(offset_of!(Rv64EState, pc), 136 + 4096 * 8); // 32904
+        assert_eq!(offset_of!(Rv64EState, regs), 0);
+        assert_eq!(offset_of!(Rv64EState, pc), 16 * 8); // 128
+        assert_eq!(offset_of!(Rv64EState, instret), 136);
     }
 
     #[test]
     fn test_rv64_state_with_preflight_tracer() {
-        // When tracer is PreflightTracer (32 bytes), it adds at the end
+        // When tracer is PreflightTracer (32 bytes), it comes before csrs
         type StateWithTracer = Rv64StateWith<PreflightTracer<Rv64>>;
-        let base_size = size_of::<Rv64State>();
         let tracer_size = size_of::<PreflightTracer<Rv64>>();
         assert_eq!(tracer_size, 32);
-        assert_eq!(size_of::<StateWithTracer>(), base_size + tracer_size);
 
-        // Tracer offset is at start_brk + 8
-        assert_eq!(offset_of!(StateWithTracer, tracer), 33096);
+        // Tracer offset is at memory + 8
+        assert_eq!(offset_of!(StateWithTracer, tracer), 312);
+        // CSRs come after tracer
+        assert_eq!(offset_of!(StateWithTracer, csrs), 312 + 32); // 344
+        assert_eq!(size_of::<StateWithTracer>(), 344 + 4096 * 8); // 33112
     }
 
     #[test]
@@ -309,13 +299,13 @@ mod tests {
         // When suspender is InstretSuspender (8 bytes), it's placed right after instret
         // for C layout compatibility (state->target_instret access)
         type StateWithSuspender = RvState<Rv64, (), InstretSuspender, NUM_REGS_I>;
-        let base_size = size_of::<Rv64State>();
         let suspender_size = size_of::<InstretSuspender>();
         assert_eq!(suspender_size, 8);
-        assert_eq!(size_of::<StateWithSuspender>(), base_size + suspender_size);
 
-        // Suspender offset is right after instret (at 33048 + 8 = 33056)
-        assert_eq!(offset_of!(StateWithSuspender, suspender), 33056);
+        // Suspender offset is right after instret (at 264 + 8 = 272)
+        assert_eq!(offset_of!(StateWithSuspender, suspender), 272);
+        // Reservation addr is pushed by 8 bytes
+        assert_eq!(offset_of!(StateWithSuspender, reservation_addr), 280);
     }
 
     #[test]

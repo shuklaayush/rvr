@@ -29,7 +29,7 @@ mod state;
 mod suspender;
 mod tracer;
 
-pub use memory::{DEFAULT_MEMORY_SIZE, GUARD_SIZE, GuardedMemory, MemoryError};
+pub use memory::{DEFAULT_MEMORY_SIZE, FixedMemory, GUARD_SIZE, GuardedMemory, MemoryError};
 pub use state::{
     NUM_CSRS, NUM_REGS_E, NUM_REGS_I, Rv32EState, Rv32State, Rv32StateWith, Rv64EState, Rv64State,
     Rv64StateWith, RvState,
