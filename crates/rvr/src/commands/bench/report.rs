@@ -630,6 +630,11 @@ fn run_libriscv_arch(
     runs: usize,
     host_time: Option<f64>,
 ) -> Option<bench::TableRow> {
+    // Skip unsupported architectures (e.g., fib-asm is rv64 only)
+    if !benchmark.supports_arch(arch) {
+        return None;
+    }
+
     let elf_path = project_dir
         .join("bin")
         .join(arch.as_str())

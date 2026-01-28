@@ -1060,6 +1060,10 @@ pub fn bench_run(
         );
         if compare_libriscv && libriscv_compatible {
             for a in &archs {
+                // Skip unsupported architectures (e.g., fib-asm is rv64 only)
+                if !benchmark.supports_arch(a) {
+                    continue;
+                }
                 let elf_path = project_dir.join(format!("bin/{}/{}", a.as_str(), benchmark.name));
                 if !elf_path.exists() {
                     terminal::warning(&format!(
