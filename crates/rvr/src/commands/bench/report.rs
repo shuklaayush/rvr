@@ -277,13 +277,12 @@ pub fn bench_report(
 
         // Run rvr for each architecture
         for arch in archs {
-            let suffix = arch.as_str();
             if let Some(row) = run_single_arch(
                 benchmark,
                 arch,
                 &project_dir,
-                suffix,
-                false, // not fast mode
+                "base", // report always uses base (not fast) mode
+                false,
                 runs,
                 &compiler,
                 host_time,
