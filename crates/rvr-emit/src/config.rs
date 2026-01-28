@@ -278,7 +278,7 @@ impl<X: Xlen> EmitConfig<X> {
             addr_check: false,
             instret_mode: InstretMode::Count,
             emit_comments: true,
-            emit_line_info: false,
+            emit_line_info: true,
             htif_enabled: false,
             htif_verbose: false,
             memory_bits: 32,
