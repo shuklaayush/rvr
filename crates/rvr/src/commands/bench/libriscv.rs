@@ -10,6 +10,8 @@ use rvr::PerfCounters;
 use rvr::bench::Arch;
 use rvr::perf::HostPerfCounters;
 
+use super::host_lib_ext;
+
 /// Header to make RISC-V code compile on host.
 /// - Renames syscall to _host_syscall (so function definition compiles)
 /// - Stubs out asm/register bindings (so the function body compiles)
@@ -105,7 +107,7 @@ pub fn build_host_benchmark(project_dir: &std::path::Path, name: &str) -> Result
     std::fs::write(&compat_h, HOST_COMPAT_H)
         .map_err(|e| format!("failed to write compat header: {}", e))?;
 
-    let out_path = out_dir.join(format!("{}.so", name));
+    let out_path = out_dir.join(format!("{}.{}", name, host_lib_ext()));
 
     // Use sed to remove __asm__ volatile lines, then compile with compat header
     let output = Command::new("sh")

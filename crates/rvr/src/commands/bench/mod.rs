@@ -24,6 +24,15 @@ use crate::terminal::{self, Spinner};
 // Compile helpers
 // ============================================================================
 
+/// Get the host dynamic library extension (.dylib on macOS, .so elsewhere).
+pub(crate) fn host_lib_ext() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    }
+}
+
 /// Compute output directory suffix from compile args.
 fn compile_suffix(args: &BenchCompileArgs) -> &'static str {
     match (args.instret, args.fixed_addresses) {
@@ -682,9 +691,11 @@ pub fn bench_run(
                     }
                 }
                 BenchmarkSource::Polkavm => {
-                    let host_lib = project_dir
-                        .join("bin/host")
-                        .join(format!("{}.so", benchmark.name));
+                    let host_lib = project_dir.join("bin/host").join(format!(
+                        "{}.{}",
+                        benchmark.name,
+                        host_lib_ext()
+                    ));
                     if !host_lib.exists() {
                         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
                         if let Err(e) = polkavm::build_host_benchmark(&project_dir, benchmark.name)
@@ -753,9 +764,11 @@ pub fn bench_run(
                             benchmark.name
                         ));
                     } else {
-                        let host_lib = project_dir
-                            .join("bin/host")
-                            .join(format!("{}.so", benchmark.name));
+                        let host_lib = project_dir.join("bin/host").join(format!(
+                            "{}.{}",
+                            benchmark.name,
+                            host_lib_ext()
+                        ));
                         if !host_lib.exists() || force {
                             let spinner =
                                 Spinner::new(format!("Building {} (host)", benchmark.name));

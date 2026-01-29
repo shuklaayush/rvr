@@ -11,6 +11,8 @@ use libloading::os::unix::{Library, RTLD_NOW, Symbol};
 use rvr::PerfCounters;
 use rvr::perf::HostPerfCounters;
 
+use super::host_lib_ext;
+
 /// Polkavm guest programs directory (relative to project root).
 const POLKAVM_GUEST_PROGRAMS: &str = "programs/polkavm/guest-programs";
 
@@ -234,7 +236,7 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
     }
 
     // Find the built library in target/<host_target>/release/
-    let lib_name = format!("lib{}.so", bench_name.replace('-', "_"));
+    let lib_name = format!("lib{}.{}", bench_name.replace('-', "_"), host_lib_ext());
     let lib_path = guest_programs
         .join("target")
         .join(&host_target)
@@ -250,7 +252,7 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
     std::fs::create_dir_all(&dest_dir)
         .map_err(|e| format!("failed to create {}: {}", dest_dir.display(), e))?;
 
-    let dest = dest_dir.join(format!("{}.so", benchmark));
+    let dest = dest_dir.join(format!("{}.{}", benchmark, host_lib_ext()));
     std::fs::copy(&lib_path, &dest).map_err(|e| format!("failed to copy: {}", e))?;
 
     Ok(dest)

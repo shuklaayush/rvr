@@ -6,8 +6,8 @@ use std::process::Command;
 use rvr::bench::{self, Arch};
 
 use super::{
-    BENCHMARKS, BenchmarkSource, coremark, find_project_root, libriscv, polkavm, riscv_tests,
-    run_libriscv_benchmark, run_single_arch,
+    BENCHMARKS, BenchmarkSource, coremark, find_project_root, host_lib_ext, libriscv, polkavm,
+    riscv_tests, run_libriscv_benchmark, run_single_arch,
 };
 use crate::cli::{BenchCompileArgs, EXIT_FAILURE, EXIT_SUCCESS};
 use crate::terminal::{self, Spinner};
@@ -431,9 +431,10 @@ fn run_polkavm_host_benchmark(
     runs: usize,
     force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
-    let host_lib = project_dir
-        .join("bin/host")
-        .join(format!("{}.so", benchmark.name));
+    let host_lib =
+        project_dir
+            .join("bin/host")
+            .join(format!("{}.{}", benchmark.name, host_lib_ext()));
 
     if !host_lib.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
@@ -524,9 +525,10 @@ fn run_libriscv_host_benchmark(
     runs: usize,
     force: bool,
 ) -> Option<(bench::TableRow, Option<f64>)> {
-    let host_lib = project_dir
-        .join("bin/host")
-        .join(format!("{}.so", benchmark.name));
+    let host_lib =
+        project_dir
+            .join("bin/host")
+            .join(format!("{}.{}", benchmark.name, host_lib_ext()));
 
     if !host_lib.exists() || force {
         let spinner = Spinner::new(format!("Building {} (host)", benchmark.name));
