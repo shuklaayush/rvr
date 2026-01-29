@@ -338,8 +338,9 @@ impl<X: Xlen> Pipeline<X> {
 
         debug!(addresses = addresses.len(), "resolving debug info");
 
-        // Load debug info via addr2line
-        let debug_info = match DebugInfo::load(elf_path, &addresses) {
+        // Load debug info via addr2line (version derived from compiler)
+        let addr2line_cmd = self.config.compiler.addr2line();
+        let debug_info = match DebugInfo::load(elf_path, &addresses, &addr2line_cmd) {
             Ok(info) => info,
             Err(e) => {
                 warn!(error = %e, "failed to load debug info");

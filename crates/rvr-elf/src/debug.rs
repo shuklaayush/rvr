@@ -25,7 +25,13 @@ impl DebugInfo {
     /// Load debug info for a set of addresses from an ELF file.
     ///
     /// Writes addresses to a temp file and calls llvm-addr2line via shell.
-    pub fn load(elf_path: &str, addresses: &[u64]) -> Result<Self, String> {
+    ///
+    /// # Arguments
+    ///
+    /// * `elf_path` - Path to the ELF file.
+    /// * `addresses` - Addresses to resolve.
+    /// * `addr2line_cmd` - The llvm-addr2line command (e.g., "llvm-addr2line-20").
+    pub fn load(elf_path: &str, addresses: &[u64], addr2line_cmd: &str) -> Result<Self, String> {
         if addresses.is_empty() {
             return Ok(Self::new());
         }
@@ -42,7 +48,8 @@ impl DebugInfo {
 
         // Run llvm-addr2line via shell with file redirection
         let cmd = format!(
-            "llvm-addr2line -e {} -f -C < {}",
+            "{} -e {} -f -C < {}",
+            addr2line_cmd,
             elf_path,
             tmp.path().display()
         );
@@ -50,7 +57,7 @@ impl DebugInfo {
         let output = Command::new("sh")
             .args(["-c", &cmd])
             .output()
-            .map_err(|e| format!("failed to run llvm-addr2line: {}", e))?;
+            .map_err(|e| format!("failed to run {}: {}", addr2line_cmd, e))?;
 
         // tmp is automatically cleaned up when dropped
 

@@ -85,14 +85,36 @@ impl Compiler {
             return Some(linker.clone());
         }
 
-        // Auto-derive from compiler command
+        Some(format!("lld{}", self.version_suffix()))
+    }
+
+    /// Get llvm-addr2line command, auto-derived from compiler version.
+    ///
+    /// Auto-derivation extracts version suffix from compiler command:
+    /// - "clang" → "llvm-addr2line"
+    /// - "clang-20" → "llvm-addr2line-20"
+    /// - "/opt/llvm/bin/clang-18" → "llvm-addr2line-18"
+    /// - "gcc" → "llvm-addr2line" (fallback)
+    pub fn addr2line(&self) -> String {
+        format!("llvm-addr2line{}", self.version_suffix())
+    }
+
+    /// Extract version suffix from compiler command.
+    ///
+    /// - "clang" → ""
+    /// - "clang-20" → "-20"
+    /// - "/opt/llvm/bin/clang-18" → "-18"
+    /// - "gcc-13" → "" (no version for gcc)
+    fn version_suffix(&self) -> &str {
+        if !self.is_clang() {
+            return "";
+        }
+
         // Extract the basename first (handle paths like /opt/llvm/bin/clang-20)
         let basename = self.command.rsplit('/').next().unwrap_or(&self.command);
 
         // Extract version suffix: "clang-20" → "-20", "clang" → ""
-        let suffix = basename.strip_prefix("clang").unwrap_or("");
-
-        Some(format!("lld{}", suffix))
+        basename.strip_prefix("clang").unwrap_or("")
     }
 }
 
@@ -587,5 +609,27 @@ mod tests {
         // Explicit linker override
         let c = Compiler::new("clang-20").with_linker("lld-19");
         assert_eq!(c.linker(), Some("lld-19".to_string()));
+    }
+
+    #[test]
+    fn test_compiler_addr2line_derivation() {
+        // Basic clang -> llvm-addr2line
+        let c = Compiler::new("clang");
+        assert_eq!(c.addr2line(), "llvm-addr2line");
+
+        // Versioned clang-20 -> llvm-addr2line-20
+        let c = Compiler::new("clang-20");
+        assert_eq!(c.addr2line(), "llvm-addr2line-20");
+
+        // Path with version
+        let c = Compiler::new("/opt/llvm/bin/clang-18");
+        assert_eq!(c.addr2line(), "llvm-addr2line-18");
+
+        // GCC uses llvm-addr2line without version
+        let c = Compiler::new("gcc");
+        assert_eq!(c.addr2line(), "llvm-addr2line");
+
+        let c = Compiler::new("gcc-13");
+        assert_eq!(c.addr2line(), "llvm-addr2line");
     }
 }
