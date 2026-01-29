@@ -655,36 +655,36 @@ fn lift_base<X: Xlen>(
     size: u8,
 ) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {
-        OP_ADD => lift_r(args, |a, b| Expr::add(a, b)),
-        OP_SUB => lift_r(args, |a, b| Expr::sub(a, b)),
-        OP_SLL => lift_shift(args, |a, b| Expr::sll(a, b)),
-        OP_SLT => lift_r(args, |a, b| Expr::slt(a, b)),
-        OP_SLTU => lift_r(args, |a, b| Expr::sltu(a, b)),
-        OP_XOR => lift_r(args, |a, b| Expr::xor(a, b)),
-        OP_SRL => lift_shift(args, |a, b| Expr::srl(a, b)),
-        OP_SRA => lift_shift(args, |a, b| Expr::sra(a, b)),
-        OP_OR => lift_r(args, |a, b| Expr::or(a, b)),
-        OP_AND => lift_r(args, |a, b| Expr::and(a, b)),
+        OP_ADD => lift_r(args, Expr::add),
+        OP_SUB => lift_r(args, Expr::sub),
+        OP_SLL => lift_shift(args, Expr::sll),
+        OP_SLT => lift_r(args, Expr::slt),
+        OP_SLTU => lift_r(args, Expr::sltu),
+        OP_XOR => lift_r(args, Expr::xor),
+        OP_SRL => lift_shift(args, Expr::srl),
+        OP_SRA => lift_shift(args, Expr::sra),
+        OP_OR => lift_r(args, Expr::or),
+        OP_AND => lift_r(args, Expr::and),
 
-        OP_ADDI => lift_i(args, |a, b| Expr::add(a, b)),
-        OP_SLTI => lift_i(args, |a, b| Expr::slt(a, b)),
-        OP_SLTIU => lift_i(args, |a, b| Expr::sltu(a, b)),
-        OP_XORI => lift_i(args, |a, b| Expr::xor(a, b)),
-        OP_ORI => lift_i(args, |a, b| Expr::or(a, b)),
-        OP_ANDI => lift_i(args, |a, b| Expr::and(a, b)),
-        OP_SLLI => lift_shamt(args, |a, b| Expr::sll(a, b)),
-        OP_SRLI => lift_shamt(args, |a, b| Expr::srl(a, b)),
-        OP_SRAI => lift_shamt(args, |a, b| Expr::sra(a, b)),
+        OP_ADDI => lift_i(args, Expr::add),
+        OP_SLTI => lift_i(args, Expr::slt),
+        OP_SLTIU => lift_i(args, Expr::sltu),
+        OP_XORI => lift_i(args, Expr::xor),
+        OP_ORI => lift_i(args, Expr::or),
+        OP_ANDI => lift_i(args, Expr::and),
+        OP_SLLI => lift_shamt(args, Expr::sll),
+        OP_SRLI => lift_shamt(args, Expr::srl),
+        OP_SRAI => lift_shamt(args, Expr::sra),
 
-        OP_ADDW => lift_r(args, |a, b| Expr::addw(a, b)),
-        OP_SUBW => lift_r(args, |a, b| Expr::subw(a, b)),
-        OP_SLLW => lift_shiftw(args, |a, b| Expr::sllw(a, b)),
-        OP_SRLW => lift_shiftw(args, |a, b| Expr::srlw(a, b)),
-        OP_SRAW => lift_shiftw(args, |a, b| Expr::sraw(a, b)),
-        OP_ADDIW => lift_i(args, |a, b| Expr::addw(a, b)),
-        OP_SLLIW => lift_shamt(args, |a, b| Expr::sllw(a, b)),
-        OP_SRLIW => lift_shamt(args, |a, b| Expr::srlw(a, b)),
-        OP_SRAIW => lift_shamt(args, |a, b| Expr::sraw(a, b)),
+        OP_ADDW => lift_r(args, Expr::addw),
+        OP_SUBW => lift_r(args, Expr::subw),
+        OP_SLLW => lift_shiftw(args, Expr::sllw),
+        OP_SRLW => lift_shiftw(args, Expr::srlw),
+        OP_SRAW => lift_shiftw(args, Expr::sraw),
+        OP_ADDIW => lift_i(args, Expr::addw),
+        OP_SLLIW => lift_shamt(args, Expr::sllw),
+        OP_SRLIW => lift_shamt(args, Expr::srlw),
+        OP_SRAIW => lift_shamt(args, Expr::sraw),
 
         OP_LUI => lift_lui(args),
         OP_AUIPC => lift_auipc(args, pc),
@@ -791,10 +791,7 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(
-                        Expr::read(*rs1),
-                        Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
-                    ),
+                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as i64 as u64))),
                 )]
             } else {
                 Vec::new()
@@ -831,7 +828,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+                    Expr::imm(X::from_u64(*imm as i64 as u64)),
                 )]
             } else {
                 Vec::new()
@@ -846,13 +843,11 @@ fn lift_auipc<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminato
     match args {
         InstrArgs::U { rd, imm } => {
             let stmts = if *rd != 0 {
-                vec![Stmt::write_reg(
-                    *rd,
-                    Expr::add(
-                        Expr::imm(pc),
-                        Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
-                    ),
-                )]
+                // Pre-fold pc + imm at lift time since both are constants
+                let pc_val = X::to_u64(pc) as i64;
+                let imm_val = *imm as i64;
+                let result = X::from_u64((pc_val + imm_val) as u64);
+                vec![Stmt::write_reg(*rd, Expr::imm(result))]
             } else {
                 Vec::new()
             };
@@ -927,11 +922,9 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
                 ));
             }
             // Clear low bit for 2-byte alignment (use !1 to get correct mask for XLEN)
+            // Note: add(base, imm(0)) is optimized to just base by Expr::add
             let target = Expr::and(
-                Expr::add(
-                    base,
-                    Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
-                ),
+                Expr::add(base, Expr::imm(X::from_u64(*imm as i64 as u64))),
                 Expr::imm(X::from_u64(!1u64)),
             );
             (stmts, Terminator::jump_dyn(target))

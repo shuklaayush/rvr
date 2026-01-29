@@ -841,23 +841,23 @@ fn lift_c<X: Xlen>(
 ) -> (Vec<Stmt<X>>, Terminator<X>) {
     match opid {
         // R-type
-        OP_C_ADD => lift_r(args, |a, b| Expr::add(a, b)),
-        OP_C_SUB => lift_r(args, |a, b| Expr::sub(a, b)),
-        OP_C_XOR => lift_r(args, |a, b| Expr::xor(a, b)),
-        OP_C_OR => lift_r(args, |a, b| Expr::or(a, b)),
-        OP_C_AND => lift_r(args, |a, b| Expr::and(a, b)),
+        OP_C_ADD => lift_r(args, Expr::add),
+        OP_C_SUB => lift_r(args, Expr::sub),
+        OP_C_XOR => lift_r(args, Expr::xor),
+        OP_C_OR => lift_r(args, Expr::or),
+        OP_C_AND => lift_r(args, Expr::and),
         OP_C_MV => lift_mv(args),
-        OP_C_ADDW => lift_r(args, |a, b| Expr::addw(a, b)),
-        OP_C_SUBW => lift_r(args, |a, b| Expr::subw(a, b)),
+        OP_C_ADDW => lift_r(args, Expr::addw),
+        OP_C_SUBW => lift_r(args, Expr::subw),
 
         // I-type
-        OP_C_ADDI | OP_C_ADDI4SPN | OP_C_ADDI16SP => lift_i(args, |a, b| Expr::add(a, b)),
-        OP_C_ADDIW => lift_i(args, |a, b| Expr::addw(a, b)),
+        OP_C_ADDI | OP_C_ADDI4SPN | OP_C_ADDI16SP => lift_i(args, Expr::add),
+        OP_C_ADDIW => lift_i(args, Expr::addw),
         OP_C_LI => lift_i(args, |_, b| b),
-        OP_C_ANDI => lift_i(args, |a, b| Expr::and(a, b)),
-        OP_C_SLLI => lift_shamt(args, |a, b| Expr::sll(a, b)),
-        OP_C_SRLI => lift_shamt(args, |a, b| Expr::srl(a, b)),
-        OP_C_SRAI => lift_shamt(args, |a, b| Expr::sra(a, b)),
+        OP_C_ANDI => lift_i(args, Expr::and),
+        OP_C_SLLI => lift_shamt(args, Expr::sll),
+        OP_C_SRLI => lift_shamt(args, Expr::srl),
+        OP_C_SRAI => lift_shamt(args, Expr::sra),
 
         // U-type
         OP_C_LUI => lift_lui(args),
@@ -933,10 +933,7 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(
-                        Expr::read(*rs1),
-                        Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
-                    ),
+                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as i64 as u64))),
                 )]
             } else {
                 Vec::new()
@@ -973,7 +970,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::sext32(Expr::imm(X::from_u64(*imm as u32 as u64))),
+                    Expr::imm(X::from_u64(*imm as i64 as u64)),
                 )]
             } else {
                 Vec::new()

@@ -242,7 +242,9 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let offset_regs = 0;
     let size_regs = cfg.num_registers * reg_bytes;
     let offset_pc = offset_regs + size_regs;
-    let offset_instret = offset_pc + reg_bytes;
+    // instret is uint64_t, needs 8-byte alignment (implicit padding after pc on RV32)
+    let instret_unaligned = offset_pc + reg_bytes;
+    let offset_instret = (instret_unaligned + 7) & !7; // Align to 8 bytes
 
     // Optional target_instret for suspend mode
     let offset_target_instret = offset_instret + 8;

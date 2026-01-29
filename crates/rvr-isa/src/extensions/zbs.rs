@@ -353,6 +353,7 @@ fn lift_bset<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         }
     };
     // rd = rs1 | (1 << (rs2 & (XLEN-1)))
+    // Note: or(reg(0), x) is optimized to x by Expr::or
     let mask = X::from_u64((X::VALUE - 1) as u64);
     let index = Expr::and(Expr::reg(rs2), Expr::imm(mask));
     let bit = Expr::sll(Expr::imm(X::from_u64(1)), index);
@@ -381,6 +382,7 @@ fn lift_bseti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         }
     };
     // rd = rs1 | (1 << shamt)
+    // Note: or(reg(0), x) is optimized to x by Expr::or
     let bit = Expr::sll(
         Expr::imm(X::from_u64(1)),
         Expr::imm(X::from_u64(shamt as u64)),

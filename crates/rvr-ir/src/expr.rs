@@ -200,6 +200,16 @@ impl<X: Xlen> Expr<X> {
         }
     }
 
+    /// Check if expression is statically known to be zero.
+    /// This includes Imm(0) and Read(Reg(0)) since x0 is hardwired to zero.
+    fn is_zero(&self) -> bool {
+        match self {
+            Expr::Imm(v) => X::to_u64(*v) == 0,
+            Expr::Read(ReadExpr::Reg(0)) => true,
+            _ => false,
+        }
+    }
+
     fn ternary(op: TernaryOp, first: Self, second: Self, third: Self) -> Self {
         Self::Ternary {
             op,
@@ -210,10 +220,31 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn add(left: Self, right: Self) -> Self {
+        // Constant fold and identity optimizations
+        // Handles: add(imm, imm), add(x, 0), add(0, x), add(reg(0), x), add(x, reg(0))
+        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+            return Self::Imm(X::from_u64(X::to_u64(*l).wrapping_add(X::to_u64(*r))));
+        }
+        if right.is_zero() {
+            return left;
+        }
+        if left.is_zero() {
+            return right;
+        }
         Self::binary(BinaryOp::Add, left, right)
     }
 
     pub fn sub(left: Self, right: Self) -> Self {
+        // Handles: sub(imm, imm), sub(x, 0), sub(0, x) -> neg(x)
+        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+            return Self::Imm(X::from_u64(X::to_u64(*l).wrapping_sub(X::to_u64(*r))));
+        }
+        if right.is_zero() {
+            return left;
+        }
+        if left.is_zero() {
+            return Self::neg(right);
+        }
         Self::binary(BinaryOp::Sub, left, right)
     }
 
@@ -222,26 +253,56 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn and(left: Self, right: Self) -> Self {
+        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+            return Self::Imm(X::from_u64(X::to_u64(*l) & X::to_u64(*r)));
+        }
         Self::binary(BinaryOp::And, left, right)
     }
 
     pub fn or(left: Self, right: Self) -> Self {
+        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+            return Self::Imm(X::from_u64(X::to_u64(*l) | X::to_u64(*r)));
+        }
+        if right.is_zero() {
+            return left;
+        }
+        if left.is_zero() {
+            return right;
+        }
         Self::binary(BinaryOp::Or, left, right)
     }
 
     pub fn xor(left: Self, right: Self) -> Self {
+        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+            return Self::Imm(X::from_u64(X::to_u64(*l) ^ X::to_u64(*r)));
+        }
+        if right.is_zero() {
+            return left;
+        }
+        if left.is_zero() {
+            return right;
+        }
         Self::binary(BinaryOp::Xor, left, right)
     }
 
     pub fn sll(left: Self, right: Self) -> Self {
+        if right.is_zero() {
+            return left;
+        }
         Self::binary(BinaryOp::Sll, left, right)
     }
 
     pub fn srl(left: Self, right: Self) -> Self {
+        if right.is_zero() {
+            return left;
+        }
         Self::binary(BinaryOp::Srl, left, right)
     }
 
     pub fn sra(left: Self, right: Self) -> Self {
+        if right.is_zero() {
+            return left;
+        }
         Self::binary(BinaryOp::Sra, left, right)
     }
 
@@ -262,6 +323,10 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn ltu(left: Self, right: Self) -> Self {
+        // sltu(0, x) is (0 < x) which equals (x != 0)
+        if left.is_zero() {
+            return Self::ne(right, Self::Imm(X::from_u64(0)));
+        }
         Self::binary(BinaryOp::Ltu, left, right)
     }
 
@@ -276,6 +341,12 @@ impl<X: Xlen> Expr<X> {
 
     /// Sign extend from 32 bits.
     pub fn sext32(val: Self) -> Self {
+        // Constant fold: sext32(imm) -> imm with sign extension applied
+        if let Expr::Imm(v) = &val {
+            let v64 = X::to_u64(*v);
+            let sext = (v64 as i32) as i64 as u64;
+            return Self::Imm(X::from_u64(sext));
+        }
         Self::unary(UnaryOp::Sext32, val)
     }
 
@@ -322,22 +393,46 @@ impl<X: Xlen> Expr<X> {
     // ===== RV64 word ops =====
 
     pub fn addw(left: Self, right: Self) -> Self {
+        // addw(x, 0) or addw(0, x) is just sext32(x)
+        if right.is_zero() {
+            return Self::sext32(left);
+        }
+        if left.is_zero() {
+            return Self::sext32(right);
+        }
         Self::binary(BinaryOp::AddW, left, right)
     }
 
     pub fn subw(left: Self, right: Self) -> Self {
+        // subw(x, 0) is sext32(x)
+        if right.is_zero() {
+            return Self::sext32(left);
+        }
+        // subw(0, x) is negw: sext32(neg(x))
+        if left.is_zero() {
+            return Self::sext32(Self::neg(right));
+        }
         Self::binary(BinaryOp::SubW, left, right)
     }
 
     pub fn sllw(left: Self, right: Self) -> Self {
+        if right.is_zero() {
+            return Self::sext32(left);
+        }
         Self::binary(BinaryOp::SllW, left, right)
     }
 
     pub fn srlw(left: Self, right: Self) -> Self {
+        if right.is_zero() {
+            return Self::sext32(left);
+        }
         Self::binary(BinaryOp::SrlW, left, right)
     }
 
     pub fn sraw(left: Self, right: Self) -> Self {
+        if right.is_zero() {
+            return Self::sext32(left);
+        }
         Self::binary(BinaryOp::SraW, left, right)
     }
 
@@ -414,22 +509,39 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn sext8(val: Self) -> Self {
+        if let Expr::Imm(v) = &val {
+            let sext = (X::to_u64(*v) as i8) as i64 as u64;
+            return Self::Imm(X::from_u64(sext));
+        }
         Self::unary(UnaryOp::Sext8, val)
     }
 
     pub fn sext16(val: Self) -> Self {
+        if let Expr::Imm(v) = &val {
+            let sext = (X::to_u64(*v) as i16) as i64 as u64;
+            return Self::Imm(X::from_u64(sext));
+        }
         Self::unary(UnaryOp::Sext16, val)
     }
 
     pub fn zext8(val: Self) -> Self {
+        if let Expr::Imm(v) = &val {
+            return Self::Imm(X::from_u64(X::to_u64(*v) & 0xff));
+        }
         Self::unary(UnaryOp::Zext8, val)
     }
 
     pub fn zext16(val: Self) -> Self {
+        if let Expr::Imm(v) = &val {
+            return Self::Imm(X::from_u64(X::to_u64(*v) & 0xffff));
+        }
         Self::unary(UnaryOp::Zext16, val)
     }
 
     pub fn zext32(val: Self) -> Self {
+        if let Expr::Imm(v) = &val {
+            return Self::Imm(X::from_u64(X::to_u64(*v) & 0xffffffff));
+        }
         Self::unary(UnaryOp::Zext32, val)
     }
 

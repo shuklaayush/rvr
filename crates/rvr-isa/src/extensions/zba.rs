@@ -172,6 +172,7 @@ fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
     };
 
     // rd = rs2 + (rs1 << shift)
+    // Note: add(reg(0), x) is optimized to x by Expr::add
     let shifted = Expr::sll(Expr::reg(rs1), Expr::imm(X::from_u64(shift as u64)));
     let result = Expr::add(Expr::reg(rs2), shifted);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
@@ -200,6 +201,7 @@ fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
     };
 
     // rd = rs2 + zext32(rs1)
+    // Note: add(reg(0), x) is optimized to x by Expr::add
     let rs1_zext = Expr::zext32(Expr::reg(rs1));
     let result = Expr::add(Expr::reg(rs2), rs1_zext);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
@@ -228,6 +230,7 @@ fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
     };
 
     // rd = rs2 + (zext32(rs1) << shift)
+    // Note: add(reg(0), x) is optimized to x by Expr::add
     let rs1_zext = Expr::zext32(Expr::reg(rs1));
     let shifted = Expr::sll(rs1_zext, Expr::imm(X::from_u64(shift as u64)));
     let result = Expr::add(Expr::reg(rs2), shifted);
