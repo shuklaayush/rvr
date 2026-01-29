@@ -88,10 +88,14 @@ pub fn build_benchmark(
         .map_err(|e| format!("failed to run cargo: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // Find actual compiler error (error[E...]) rather than generic "could not compile"
         let error_detail = stderr
             .lines()
-            .rfind(|l| l.starts_with("error"))
+            .find(|l| l.contains("error[E"))
+            .or_else(|| stderr.lines().find(|l| l.starts_with("error:")))
+            .or_else(|| stderr.lines().rfind(|l| l.starts_with("error")))
             .unwrap_or("unknown error");
+        tracing::warn!("cargo build failed:\n{}", stderr);
         return Err(format!(
             "cargo build failed for {}/{}: {}",
             benchmark, arch, error_detail
@@ -215,11 +219,14 @@ pub fn build_host_benchmark(project_root: &Path, benchmark: &str) -> Result<Path
         .map_err(|e| format!("failed to run cargo: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // Find actual compiler error (error[E...]) rather than generic "could not compile"
         let error_detail = stderr
             .lines()
-            .rfind(|l| l.starts_with("error"))
+            .find(|l| l.contains("error[E"))
+            .or_else(|| stderr.lines().find(|l| l.starts_with("error:")))
+            .or_else(|| stderr.lines().rfind(|l| l.starts_with("error")))
             .unwrap_or("unknown error");
-        tracing::debug!("cargo build stderr:\n{}", stderr);
+        tracing::warn!("cargo build failed:\n{}", stderr);
         return Err(format!(
             "cargo build failed for {} (host): {}",
             benchmark, error_detail

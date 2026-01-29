@@ -380,10 +380,14 @@ fn run_rust_host_benchmark(
             Ok(o) if o.status.success() => spinner.finish_and_clear(),
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
+                // Find actual compiler error (error[E...]) rather than generic "could not compile"
                 let error_detail = stderr
                     .lines()
-                    .rfind(|l| l.starts_with("error"))
+                    .find(|l| l.contains("error[E"))
+                    .or_else(|| stderr.lines().find(|l| l.starts_with("error:")))
+                    .or_else(|| stderr.lines().rfind(|l| l.starts_with("error")))
                     .unwrap_or("build failed");
+                tracing::warn!("cargo build failed:\n{}", stderr);
                 spinner.finish_with_failure(error_detail);
                 return Some((
                     bench::TableRow::error("host", error_detail.to_string()),
