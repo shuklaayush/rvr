@@ -12,6 +12,20 @@ use thiserror::Error;
 /// Guard page size (16KB, must be >= page size and cover max load/store offset).
 pub const GUARD_SIZE: usize = 1 << 14;
 
+/// Get flags for fixed-address mmap that fails if address is already mapped.
+///
+/// Uses MAP_FIXED_NOREPLACE on Linux (safer - returns EEXIST if address is taken).
+/// Falls back to MAP_FIXED on macOS/BSD (will unmap existing mappings).
+#[cfg(target_os = "linux")]
+fn map_fixed_flags() -> MapFlags {
+    MapFlags::MAP_FIXED_NOREPLACE
+}
+
+#[cfg(not(target_os = "linux"))]
+fn map_fixed_flags() -> MapFlags {
+    MapFlags::MAP_FIXED
+}
+
 /// Default memory size (4GB).
 pub const DEFAULT_MEMORY_SIZE: usize = 1 << 32;
 
@@ -125,7 +139,7 @@ impl GuardedMemory {
                 NonZeroUsize::new(region_start),
                 NonZeroUsize::new(total_size).unwrap(),
                 ProtFlags::PROT_NONE,
-                MapFlags::MAP_PRIVATE | MapFlags::MAP_NORESERVE | MapFlags::MAP_FIXED_NOREPLACE,
+                MapFlags::MAP_PRIVATE | MapFlags::MAP_NORESERVE | map_fixed_flags(),
             )
             .map_err(|e| {
                 if e == Errno::EEXIST {
@@ -241,7 +255,7 @@ impl FixedMemory {
                 NonZeroUsize::new(addr),
                 NonZeroUsize::new(size).unwrap(),
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_PRIVATE | MapFlags::MAP_FIXED_NOREPLACE,
+                MapFlags::MAP_PRIVATE | map_fixed_flags(),
             )
             .map_err(|e| {
                 if e == Errno::EEXIST {
