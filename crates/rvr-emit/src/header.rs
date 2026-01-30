@@ -410,8 +410,13 @@ fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     format!(
-        r#"static inline {addr_type} phys_addr({addr_type} addr) {{
-{addr_check}    return addr & RV_MEMORY_MASK;
+        r#"/* Physical address translation with optimizer hints.
+ * The __builtin_assume tells the compiler that addr < RV_MEMORY_SIZE,
+ * which allows it to prove that consecutive virtual addresses map to
+ * consecutive physical addresses, enabling loop vectorization. */
+static inline {addr_type} phys_addr({addr_type} addr) {{
+{addr_check}    __builtin_assume(addr <= RV_MEMORY_MASK);
+    return addr & RV_MEMORY_MASK;
 }}
 
 /* Memory access: compute phys base first, then add offset. */
