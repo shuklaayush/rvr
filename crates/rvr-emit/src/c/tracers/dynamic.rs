@@ -2,7 +2,7 @@
 
 use rvr_ir::Xlen;
 
-use crate::signature::reg_type;
+use super::super::signature::reg_type;
 
 pub fn gen_tracer_dynamic<X: Xlen>() -> String {
     let rtype = reg_type::<X>();

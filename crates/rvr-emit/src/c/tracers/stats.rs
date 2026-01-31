@@ -3,7 +3,7 @@
 use rvr_ir::Xlen;
 use rvr_isa::REG_ABI_NAMES;
 
-use crate::signature::reg_type;
+use super::super::signature::reg_type;
 
 pub fn gen_tracer_stats<X: Xlen>() -> String {
     let reg_names = REG_ABI_NAMES

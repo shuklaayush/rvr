@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use rvr_ir::Xlen;
 
-use crate::tracers;
+use super::tracers;
 
 /// Built-in tracer kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -278,7 +278,7 @@ impl TracerConfig {
             return String::new();
         }
 
-        let rtype = crate::signature::reg_type::<X>();
+        let rtype = super::signature::reg_type::<X>();
         let mut result = String::new();
         for var in &self.passed_vars {
             let param_type = match var.kind {

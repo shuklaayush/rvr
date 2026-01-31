@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
-use crate::signature::{MEMORY_FIXED_REF, reg_type};
+use super::signature::{MEMORY_FIXED_REF, reg_type};
 
 /// Syscall runtime generation configuration.
 pub struct SyscallsConfig {

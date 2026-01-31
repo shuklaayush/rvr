@@ -9,10 +9,10 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
+use super::signature::{FnSignature, state_ref};
+use super::tracer::TracerKind;
 use crate::config::{EmitConfig, FixedAddressConfig, InstretMode};
 use crate::inputs::EmitInputs;
-use crate::signature::{FnSignature, state_ref};
-use crate::tracer::TracerKind;
 
 /// Instruction slot size (2 bytes for compressed instruction support).
 pub const INSTRUCTION_SIZE: u64 = 2;
@@ -176,7 +176,7 @@ fn gen_runtime_functions<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
         ""
     };
 
-    let reg_type = crate::signature::reg_type::<X>();
+    let reg_type = super::signature::reg_type::<X>();
 
     format!(
         r#"/* Execute from given PC. Returns: 0=continue, 1=exited, 2=suspended */

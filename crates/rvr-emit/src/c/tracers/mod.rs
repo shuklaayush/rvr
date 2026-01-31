@@ -2,7 +2,7 @@
 
 use rvr_ir::Xlen;
 
-use crate::tracer::TracerKind;
+use super::tracer::TracerKind;
 
 mod debug;
 mod dynamic;

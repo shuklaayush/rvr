@@ -15,15 +15,15 @@ use std::path::{Path, PathBuf};
 use rvr_ir::{BlockIR, Xlen};
 use tracing::{debug, info, trace};
 
+use super::dispatch::{DispatchConfig, gen_dispatch_file};
+use super::emitter::CEmitter;
+use super::header::{HeaderConfig, gen_blocks_header, gen_header};
+use super::htif::{HtifConfig, gen_htif_header, gen_htif_source};
+use super::memory::{MemoryConfig, MemorySegment, gen_memory_file_with_embed, gen_segment_bins};
+use super::syscalls::{SyscallsConfig, gen_syscalls_source};
+use super::tracer::gen_tracer_header;
 use crate::config::{EmitConfig, SyscallMode};
-use crate::dispatch::{DispatchConfig, gen_dispatch_file};
-use crate::emitter::CEmitter;
-use crate::header::{HeaderConfig, gen_blocks_header, gen_header};
-use crate::htif::{HtifConfig, gen_htif_header, gen_htif_source};
 use crate::inputs::EmitInputs;
-use crate::memory::{MemoryConfig, MemorySegment, gen_memory_file_with_embed, gen_segment_bins};
-use crate::syscalls::{SyscallsConfig, gen_syscalls_source};
-use crate::tracer::gen_tracer_header;
 
 /// Default instructions per partition.
 pub const DEFAULT_PARTITION_SIZE: usize = 8192;

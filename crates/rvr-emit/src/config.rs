@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use rvr_ir::Xlen;
 
-use crate::tracer::TracerConfig;
+use crate::c::TracerConfig;
 
 /// Number of registers for I extension.
 pub const NUM_REGS_I: usize = 32;
@@ -276,6 +276,14 @@ pub enum SyscallMode {
 ///
 /// Controls how guest virtual addresses are translated to physical addresses
 /// in the emulator's memory buffer.
+///
+/// # Address Translation Semantics
+///
+/// | Mode      | Mask Address | Bounds Check | Trap on OOB |
+/// |-----------|--------------|--------------|-------------|
+/// | Unchecked | No           | No           | No (guards) |
+/// | Wrap      | Yes          | No           | No          |
+/// | Bounds    | Yes          | Yes          | Yes         |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AddressMode {
     /// Assume valid + passthrough. Guard pages catch OOB at runtime.
@@ -286,6 +294,56 @@ pub enum AddressMode {
     Wrap,
     /// Bounds check + trap + mask. Explicit trap on invalid addresses.
     Bounds,
+}
+
+impl AddressMode {
+    /// Whether addresses should be masked to memory size.
+    ///
+    /// True for Wrap and Bounds modes. C emitters use `& MASK`, x86 uses `and`.
+    pub fn needs_mask(self) -> bool {
+        matches!(self, Self::Wrap | Self::Bounds)
+    }
+
+    /// Whether addresses should be bounds-checked before access.
+    ///
+    /// True for Bounds mode only. C emitters use `if (out_of_bounds) trap()`,
+    /// x86 uses `cmp; jbe ok; jmp trap; ok:`.
+    pub fn needs_bounds_check(self) -> bool {
+        self == Self::Bounds
+    }
+
+    /// Whether addresses are assumed valid (for optimizer hints).
+    ///
+    /// True for Unchecked mode. C emitters use `__builtin_assume()`.
+    pub fn assumes_valid(self) -> bool {
+        self == Self::Unchecked
+    }
+}
+
+/// Code generation backend.
+///
+/// Controls the output format of the recompiler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Backend {
+    /// Emit C code, compile with clang/gcc.
+    #[default]
+    C,
+    /// Emit x86-64 assembly, compile with gcc/as.
+    X86Asm,
+}
+
+/// Analysis mode for the compilation pipeline.
+///
+/// Controls how much CFG analysis is performed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnalysisMode {
+    /// Full CFG analysis: block merging, absorption, optimizations.
+    /// Best for C backend where LLVM benefits from larger functions.
+    #[default]
+    FullCfg,
+    /// Basic mode: decode instructions, mark jump targets, no block merging.
+    /// Faster compilation, sufficient for x86 backend.
+    Basic,
 }
 
 /// Fixed address configuration for state and memory.
@@ -321,6 +379,10 @@ pub struct EmitConfig<X: Xlen> {
     pub num_regs: usize,
     /// Registers passed as arguments (hot registers).
     pub hot_regs: Vec<u8>,
+    /// Code generation backend (C or x86 assembly).
+    pub backend: Backend,
+    /// Analysis mode (full CFG or linear scan).
+    pub analysis_mode: AnalysisMode,
     /// Address translation mode.
     pub address_mode: AddressMode,
     /// Instruction retirement mode.
@@ -361,6 +423,8 @@ impl<X: Xlen> EmitConfig<X> {
         Self {
             num_regs,
             hot_regs: Vec::new(),
+            backend: Backend::default(),
+            analysis_mode: AnalysisMode::default(),
             address_mode: AddressMode::default(),
             instret_mode: InstretMode::Count,
             emit_comments: true,

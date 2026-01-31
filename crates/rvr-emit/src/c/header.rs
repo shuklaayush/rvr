@@ -10,10 +10,11 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
+use super::signature::{FnSignature, MEMORY_FIXED_REF, STATE_FIXED_REF, reg_type};
+use super::tracer::TracerConfig;
 use crate::config::{AddressMode, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode};
 use crate::inputs::EmitInputs;
-use crate::signature::{FnSignature, MEMORY_FIXED_REF, STATE_FIXED_REF, reg_type};
-use crate::tracer::TracerConfig;
+use crate::layout::RvStateLayout;
 
 /// Number of CSRs.
 pub const NUM_CSRS: usize = 4096;
@@ -231,42 +232,24 @@ constexpr uint64_t RV_MEMORY_ADDR = {:#x}ull;
 
 fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let rtype = reg_type::<X>();
-    let reg_bytes = HeaderConfig::<X>::reg_bytes();
-    let has_suspend = cfg.instret_mode.suspends();
     let has_tracer = !cfg.tracer_config.is_none();
 
-    // Compute offsets - hot fields first for better cache locality and smaller offsets
-    // Layout: regs, pc, instret, [target_instret], reservation, exit control, brk, memory, [tracer], csrs
+    // Use shared layout computation (single source of truth)
+    let layout =
+        RvStateLayout::from_params(X::REG_BYTES, cfg.num_registers, cfg.instret_mode.suspends());
 
-    // Hot fields first
-    let offset_regs = 0;
-    let size_regs = cfg.num_registers * reg_bytes;
-    let offset_pc = offset_regs + size_regs;
-    // instret is uint64_t, needs 8-byte alignment (implicit padding after pc on RV32)
-    let instret_unaligned = offset_pc + reg_bytes;
-    let offset_instret = (instret_unaligned + 7) & !7; // Align to 8 bytes
-
-    // Optional target_instret for suspend mode
-    let offset_target_instret = offset_instret + 8;
-    let suspender_size = if has_suspend { 8 } else { 0 };
-
-    // Reservation for LR/SC
-    let offset_reservation_addr = offset_instret + 8 + suspender_size;
-    let offset_reservation_valid = offset_reservation_addr + reg_bytes;
-
-    // Execution control (pack booleans together)
-    let offset_has_exited = offset_reservation_valid + 1;
-    let offset_exit_code = offset_has_exited + 1;
-    let offset_pad0 = offset_exit_code + 1;
-
-    // Align to 8 bytes for brk
-    let brk_align_offset = offset_pad0 + 1;
-    let brk_padding = (8 - (brk_align_offset % 8)) % 8;
-    let offset_brk = brk_align_offset + brk_padding;
-    let offset_start_brk = offset_brk + reg_bytes;
-
-    // Memory pointer (cold - only used for init, not in hot paths with fixed addresses)
-    let offset_memory = offset_start_brk + reg_bytes;
+    // Extract offsets from layout
+    let offset_regs = layout.offset_regs;
+    let offset_pc = layout.offset_pc;
+    let offset_instret = layout.offset_instret;
+    let offset_target_instret = layout.offset_target_instret;
+    let offset_reservation_addr = layout.offset_reservation_addr;
+    let offset_reservation_valid = layout.offset_reservation_valid;
+    let offset_has_exited = layout.offset_has_exited;
+    let offset_exit_code = layout.offset_exit_code;
+    let offset_brk = layout.offset_brk;
+    let offset_start_brk = layout.offset_start_brk;
+    let offset_memory = layout.offset_memory;
 
     // Tracer if enabled (before CSRs)
     let offset_tracer = offset_memory + 8;
@@ -279,7 +262,7 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     // Optional suspender field
-    let suspender_field = if has_suspend {
+    let suspender_field = if layout.instret_suspend {
         format!(
             "    uint64_t target_instret;            /* offset {} */\n",
             offset_target_instret
@@ -287,6 +270,9 @@ fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     } else {
         String::new()
     };
+
+    // Compute pad offset (after exit_code)
+    let offset_pad0 = offset_exit_code + 1;
 
     // Optional tracer field (before CSRs)
     let tracer_field = if has_tracer {
@@ -397,17 +383,20 @@ fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     // - Unchecked: assume valid + passthrough, guard pages catch OOB
     // - Wrap: mask to memory size, matches sv39/sv48 behavior
     // - Bounds: trap on invalid + assume + mask, explicit errors
-    let phys_addr_body = match cfg.address_mode {
-        AddressMode::Unchecked => {
-            "    __builtin_assume(addr <= RV_MEMORY_MASK);\n    return addr;".to_string()
-        }
-        AddressMode::Wrap => "    return addr & RV_MEMORY_MASK;".to_string(),
-        AddressMode::Bounds => {
-            format!(
-                "    if (unlikely((int{0}_t)(addr << ({0} - MEMORY_BITS)) >> ({0} - MEMORY_BITS) != (int{0}_t)addr)) __builtin_trap();\n    __builtin_assume(addr <= RV_MEMORY_MASK);\n    return addr & RV_MEMORY_MASK;",
-                X::VALUE
-            )
-        }
+    // Generate phys_addr body based on AddressMode semantics
+    let mode = cfg.address_mode;
+    let phys_addr_body = if mode.assumes_valid() {
+        // Unchecked: assume valid, no masking (guard pages catch OOB)
+        "    __builtin_assume(addr <= RV_MEMORY_MASK);\n    return addr;".to_string()
+    } else if mode.needs_bounds_check() {
+        // Bounds: check bounds + trap + mask
+        format!(
+            "    if (unlikely((int{0}_t)(addr << ({0} - MEMORY_BITS)) >> ({0} - MEMORY_BITS) != (int{0}_t)addr)) __builtin_trap();\n    __builtin_assume(addr <= RV_MEMORY_MASK);\n    return addr & RV_MEMORY_MASK;",
+            X::VALUE
+        )
+    } else {
+        // Wrap: mask only
+        "    return addr & RV_MEMORY_MASK;".to_string()
     };
 
     // Conditional parts based on fixed address mode
@@ -949,7 +938,7 @@ fn gen_syscall_declarations<X: Xlen>() -> String {
 
 fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let text_start = cfg.text_start;
-    let rtype = crate::signature::reg_type::<X>();
+    let rtype = super::signature::reg_type::<X>();
 
     // Fast path: power-of-2 text_start allows single AND instruction
     // Slow path: subtraction needed for arbitrary text_start
