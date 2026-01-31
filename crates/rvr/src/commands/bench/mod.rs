@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use rvr::bench::{self, Arch};
 use rvr::{CompileOptions, Compiler, InstretMode, SyscallMode};
 
-use crate::cli::{BenchCompileArgs, EXIT_FAILURE, EXIT_SUCCESS};
+use crate::cli::{AddressModeArg, BenchCompileArgs, EXIT_FAILURE, EXIT_SUCCESS};
 use crate::commands::build::build_rust_project;
 use crate::terminal::{self, Spinner};
 
@@ -34,12 +34,37 @@ pub(crate) fn host_lib_ext() -> &'static str {
 }
 
 /// Compute output directory suffix from compile args.
-fn compile_suffix(args: &BenchCompileArgs) -> &'static str {
-    match (args.instret, args.fixed_addresses) {
-        (true, false) => "base",
-        (true, true) => "fixed",
-        (false, false) => "noinstret",
-        (false, true) => "noinstret-fixed",
+///
+/// Explicitly includes all config values:
+/// - address_mode: "wrap" (default, shown as base), "bounds", or "unchecked"
+/// - instret: "" (enabled) or "-noinstret"
+/// - fixed_addresses: "" (disabled) or "-fixed"
+///
+/// Examples: "base", "bounds", "unchecked-noinstret", "bounds-fixed"
+fn compile_suffix(args: &BenchCompileArgs) -> String {
+    let mut parts = Vec::new();
+
+    // Address mode (wrap is default/base)
+    match args.address_mode {
+        AddressModeArg::Wrap => {} // default, use "base"
+        AddressModeArg::Bounds => parts.push("bounds"),
+        AddressModeArg::Unchecked => parts.push("unchecked"),
+    }
+
+    // Instret (only add suffix when disabled)
+    if !args.instret {
+        parts.push("noinstret");
+    }
+
+    // Fixed addresses (only add suffix when enabled)
+    if args.fixed_addresses {
+        parts.push("fixed");
+    }
+
+    if parts.is_empty() {
+        "base".to_string()
+    } else {
+        parts.join("-")
     }
 }
 
@@ -61,6 +86,7 @@ fn build_compile_options(benchmark: &BenchmarkInfo, args: &BenchCompileArgs) -> 
     let mut options = CompileOptions::new()
         .with_compiler(compiler)
         .with_export_functions(benchmark.uses_exports)
+        .with_address_mode(args.address_mode.into())
         .with_quiet(true);
 
     if !args.instret {
@@ -585,7 +611,7 @@ pub fn bench_compile(name: Option<&str>, arch: Option<&str>, args: &BenchCompile
                 .join("target/benchmarks")
                 .join(benchmark.name)
                 .join(a.as_str())
-                .join(suffix);
+                .join(&suffix);
 
             let spinner = Spinner::new(format!("Compiling {} ({})", benchmark.name, a.as_str()));
 
@@ -971,7 +997,7 @@ fn run_single_arch(
         .join("target/benchmarks")
         .join(benchmark.name)
         .join(arch.as_str())
-        .join(suffix);
+        .join(&suffix);
 
     let backend_name = format!("rvr-{}", arch.as_str());
 
