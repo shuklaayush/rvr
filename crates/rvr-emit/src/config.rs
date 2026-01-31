@@ -163,7 +163,7 @@ pub const REG_PRIORITY: [u8; 31] = [
     4, // tp
 ];
 
-/// x86_64 preserve_none: 12 argument registers available.
+/// x86_64 preserve_none: 12 argument registers available (C backend).
 /// R12, R13, R14, R15, RDI, RSI, RDX, RCX, R8, R9, R11, RAX.
 /// Only RSP and RBP are callee-saved.
 /// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
@@ -179,6 +179,16 @@ pub const REG_PRIORITY: [u8; 31] = [
 /// This shouldn't be a hard error - LLVM should always be able to spill pure C code.
 /// Workaround: use 11 slots instead of 12.
 pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 11;
+
+/// x86_64 assembly backend: 10 GPRs available for hot registers.
+///
+/// Reserved: rbx (state ptr), r15 (memory ptr), rsp (stack), rax/rcx/rdx (temps)
+/// Available: r14, r13, r12, rbp, rdi, rsi, r11, r10, r9, r8
+///
+/// Comparison to PolkaVM (13 regs): They use rax/rdx as hot regs, but that
+/// requires spilling during mul/div. We keep rax/rcx/rdx as dedicated temps
+/// for simpler codegen.
+pub const X86_64_ASM_HOT_REG_SLOTS: usize = 10;
 
 /// AArch64 preserve_none: 24 argument registers.
 /// X20-X28 (9), X0-X7 (8), X9-X15 (7). Only LR and FP are callee-saved.

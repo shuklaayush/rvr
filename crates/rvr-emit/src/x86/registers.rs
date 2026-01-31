@@ -7,20 +7,26 @@
 /// - rbx: RvState pointer (callee-saved)
 /// - r15: Memory base pointer (callee-saved)
 /// - rsp: Stack pointer
-/// - rax, rcx, rdx: Temporaries for complex operations
+/// - rax, rcx, rdx: Temporaries for complex operations (mul/div/shifts)
 pub mod reserved {
     pub const STATE_PTR: &str = "rbx";
     pub const MEMORY_PTR: &str = "r15";
 }
 
 /// Available x86 registers for hot RISC-V register mapping.
-/// These are callee-saved or caller-saved registers we can use.
-/// Order matters - first entries are preferred.
-pub const AVAILABLE_REGS: [&str; 8] = [
+/// Order matters - callee-saved first (fewer save/restore), then caller-saved.
+/// With 10 registers available, we can map most frequently-used RISC-V registers.
+///
+/// Comparison to PolkaVM (13 regs): They use rax/rdx as hot regs too, but that
+/// requires spilling during mul/div. We keep rax/rcx/rdx as dedicated temps
+/// for simpler codegen at the cost of 3 fewer hot registers.
+pub const AVAILABLE_REGS: [&str; 10] = [
     "r14", // callee-saved
     "r13", // callee-saved
     "r12", // callee-saved
     "rbp", // callee-saved (we save/restore in prologue)
+    "rdi", // caller-saved, free after prologue (was arg0)
+    "rsi", // caller-saved, free after prologue (was arg1)
     "r11", // caller-saved
     "r10", // caller-saved
     "r9",  // caller-saved
@@ -28,8 +34,9 @@ pub const AVAILABLE_REGS: [&str; 8] = [
 ];
 
 /// 32-bit versions of available registers.
-pub const AVAILABLE_REGS_32: [&str; 8] =
-    ["r14d", "r13d", "r12d", "ebp", "r11d", "r10d", "r9d", "r8d"];
+pub const AVAILABLE_REGS_32: [&str; 10] = [
+    "r14d", "r13d", "r12d", "ebp", "edi", "esi", "r11d", "r10d", "r9d", "r8d",
+];
 
 /// Register mapping from RISC-V to x86.
 #[derive(Clone, Debug)]
@@ -170,5 +177,28 @@ mod tests {
         let hot_regs: Vec<_> = map.hot_regs().collect();
         // Should return 64-bit register names for RV64
         assert_eq!(hot_regs, vec![(1, "r14"), (10, "r13")]);
+    }
+
+    #[test]
+    fn test_max_hot_regs() {
+        // Test all 10 available registers
+        let hot: Vec<u8> = (1..=10).collect(); // regs 1-10
+        let map = RegMap::new(&hot, false);
+
+        assert_eq!(map.get(1), Some("r14"));
+        assert_eq!(map.get(2), Some("r13"));
+        assert_eq!(map.get(3), Some("r12"));
+        assert_eq!(map.get(4), Some("rbp"));
+        assert_eq!(map.get(5), Some("rdi")); // New: was not available before
+        assert_eq!(map.get(6), Some("rsi")); // New: was not available before
+        assert_eq!(map.get(7), Some("r11"));
+        assert_eq!(map.get(8), Some("r10"));
+        assert_eq!(map.get(9), Some("r9"));
+        assert_eq!(map.get(10), Some("r8"));
+
+        // 11th register should not be mapped (only 10 available)
+        let hot11: Vec<u8> = (1..=11).collect();
+        let map11 = RegMap::new(&hot11, false);
+        assert!(map11.get(11).is_none());
     }
 }

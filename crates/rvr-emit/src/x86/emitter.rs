@@ -85,8 +85,8 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Third temp register (rdi/edi) - available after prologue.
-    /// Use for parallel operations to reduce dependencies.
-    #[allow(dead_code)]
+    /// Use for parallel operations or when temp1/temp2 are busy.
+    /// Particularly useful when temp2 (rcx) is needed for shift count.
     pub(super) fn temp3(&self) -> &'static str {
         if X::VALUE == 32 { "edi" } else { "rdi" }
     }

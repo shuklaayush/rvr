@@ -75,6 +75,230 @@ impl<X: Xlen> X86Emitter<X> {
         }
     }
 
+    /// Emit an AND instruction: rd = rs1 & rs2
+    pub fn emit_and(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+
+        // AND with zero is always zero
+        if rs1 == 0 || rs2 == 0 {
+            self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+            self.store_to_rv(rd, temp1);
+            return;
+        }
+
+        let src1 = self.load_rv_to_temp(rs1, temp1);
+        let src2 = if let Some(r) = self.rv_reg(rs2) {
+            r.to_string()
+        } else {
+            let temp2 = self.temp2();
+            self.load_rv_to_temp(rs2, temp2)
+        };
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            self.emitf(format!("and{suffix} %{src2}, %{src1}"));
+        } else {
+            if src1 != temp1 {
+                self.emitf(format!("mov{suffix} %{src1}, %{temp1}"));
+            }
+            self.emitf(format!("and{suffix} %{src2}, %{temp1}"));
+            self.store_to_rv(rd, temp1);
+        }
+    }
+
+    /// Emit an OR instruction: rd = rs1 | rs2
+    pub fn emit_or(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+        let src1 = self.load_rv_to_temp(rs1, temp1);
+
+        if rs2 == 0 {
+            self.store_to_rv(rd, &src1);
+            return;
+        }
+
+        let src2 = if let Some(r) = self.rv_reg(rs2) {
+            r.to_string()
+        } else {
+            let temp2 = self.temp2();
+            self.load_rv_to_temp(rs2, temp2)
+        };
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            self.emitf(format!("or{suffix} %{src2}, %{src1}"));
+        } else {
+            if src1 != temp1 {
+                self.emitf(format!("mov{suffix} %{src1}, %{temp1}"));
+            }
+            self.emitf(format!("or{suffix} %{src2}, %{temp1}"));
+            self.store_to_rv(rd, temp1);
+        }
+    }
+
+    /// Emit an XOR instruction: rd = rs1 ^ rs2
+    pub fn emit_xor(&mut self, rd: u8, rs1: u8, rs2: u8) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+        let src1 = self.load_rv_to_temp(rs1, temp1);
+
+        if rs2 == 0 {
+            self.store_to_rv(rd, &src1);
+            return;
+        }
+
+        let src2 = if let Some(r) = self.rv_reg(rs2) {
+            r.to_string()
+        } else {
+            let temp2 = self.temp2();
+            self.load_rv_to_temp(rs2, temp2)
+        };
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            self.emitf(format!("xor{suffix} %{src2}, %{src1}"));
+        } else {
+            if src1 != temp1 {
+                self.emitf(format!("mov{suffix} %{src1}, %{temp1}"));
+            }
+            self.emitf(format!("xor{suffix} %{src2}, %{temp1}"));
+            self.store_to_rv(rd, temp1);
+        }
+    }
+
+    /// Emit an ANDI instruction: rd = rs1 & imm
+    pub fn emit_andi(&mut self, rd: u8, rs1: u8, imm: i32) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+
+        if imm == 0 {
+            self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+            self.store_to_rv(rd, temp1);
+            return;
+        }
+
+        if imm == -1 {
+            // AND with all 1s is identity
+            if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+            } else if let Some(src) = self.rv_reg(rs1) {
+                self.store_to_rv(rd, src);
+                return;
+            } else {
+                let src = self.load_rv_to_temp(rs1, temp1);
+                self.store_to_rv(rd, &src);
+                return;
+            }
+            self.store_to_rv(rd, temp1);
+            return;
+        }
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
+            self.emitf(format!("and{suffix} ${imm}, %{src}"));
+            return;
+        }
+
+        let src = self.load_rv_to_temp(rs1, temp1);
+        if src != temp1 {
+            self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
+        }
+        self.emitf(format!("and{suffix} ${imm}, %{temp1}"));
+        self.store_to_rv(rd, temp1);
+    }
+
+    /// Emit an ORI instruction: rd = rs1 | imm
+    pub fn emit_ori(&mut self, rd: u8, rs1: u8, imm: i32) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+
+        if imm == 0 {
+            if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+                self.store_to_rv(rd, temp1);
+            } else if let Some(src) = self.rv_reg(rs1) {
+                self.store_to_rv(rd, src);
+            } else {
+                let src = self.load_rv_to_temp(rs1, temp1);
+                self.store_to_rv(rd, &src);
+            }
+            return;
+        }
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
+            self.emitf(format!("or{suffix} ${imm}, %{src}"));
+            return;
+        }
+
+        let src = self.load_rv_to_temp(rs1, temp1);
+        if src != temp1 {
+            self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
+        }
+        self.emitf(format!("or{suffix} ${imm}, %{temp1}"));
+        self.store_to_rv(rd, temp1);
+    }
+
+    /// Emit an XORI instruction: rd = rs1 ^ imm
+    pub fn emit_xori(&mut self, rd: u8, rs1: u8, imm: i32) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+
+        if imm == 0 {
+            if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+                self.store_to_rv(rd, temp1);
+            } else if let Some(src) = self.rv_reg(rs1) {
+                self.store_to_rv(rd, src);
+            } else {
+                let src = self.load_rv_to_temp(rs1, temp1);
+                self.store_to_rv(rd, &src);
+            }
+            return;
+        }
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
+            self.emitf(format!("xor{suffix} ${imm}, %{src}"));
+            return;
+        }
+
+        let src = self.load_rv_to_temp(rs1, temp1);
+        if src != temp1 {
+            self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
+        }
+        self.emitf(format!("xor{suffix} ${imm}, %{temp1}"));
+        self.store_to_rv(rd, temp1);
+    }
+
     /// Emit an ADDI instruction: rd = rs1 + imm
     pub fn emit_addi(&mut self, rd: u8, rs1: u8, imm: i32) {
         if rd == 0 {
@@ -132,6 +356,140 @@ impl<X: Xlen> X86Emitter<X> {
             self.emitf(format!("add{suffix} ${imm}, %{temp1}"));
             self.store_to_rv(rd, temp1);
         }
+    }
+
+    /// Emit a SLLI instruction: rd = rs1 << imm
+    pub fn emit_slli(&mut self, rd: u8, rs1: u8, imm: u8) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+        let shift = imm & if X::VALUE == 32 { 0x1f } else { 0x3f };
+
+        if shift == 0 {
+            if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+                self.store_to_rv(rd, temp1);
+            } else if let Some(src) = self.rv_reg(rs1) {
+                self.store_to_rv(rd, src);
+            } else {
+                let src = self.load_rv_to_temp(rs1, temp1);
+                self.store_to_rv(rd, &src);
+            }
+            return;
+        }
+
+        // LEA optimization for small shifts (1, 2, 3)
+        if shift <= 3 {
+            if self.reg_map.is_hot(rs1) {
+                let src64 = self.reg_map.get_64(rs1).unwrap();
+                if shift == 1 {
+                    self.emitf(format!("lea{suffix} (%{src64},%{src64}), %{temp1}"));
+                } else if shift == 2 {
+                    self.emitf(format!("lea{suffix} (,%{src64},4), %{temp1}"));
+                } else {
+                    self.emitf(format!("lea{suffix} (,%{src64},8), %{temp1}"));
+                }
+                self.store_to_rv(rd, temp1);
+                return;
+            } else if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+                self.store_to_rv(rd, temp1);
+                return;
+            }
+        }
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
+            self.emitf(format!("shl{suffix} ${shift}, %{src}"));
+            return;
+        }
+
+        let src = self.load_rv_to_temp(rs1, temp1);
+        if src != temp1 {
+            self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
+        }
+        self.emitf(format!("shl{suffix} ${shift}, %{temp1}"));
+        self.store_to_rv(rd, temp1);
+    }
+
+    /// Emit a SRLI instruction: rd = rs1 >> imm (logical)
+    pub fn emit_srli(&mut self, rd: u8, rs1: u8, imm: u8) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+        let shift = imm & if X::VALUE == 32 { 0x1f } else { 0x3f };
+
+        if shift == 0 {
+            if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+                self.store_to_rv(rd, temp1);
+            } else if let Some(src) = self.rv_reg(rs1) {
+                self.store_to_rv(rd, src);
+            } else {
+                let src = self.load_rv_to_temp(rs1, temp1);
+                self.store_to_rv(rd, &src);
+            }
+            return;
+        }
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
+            self.emitf(format!("shr{suffix} ${shift}, %{src}"));
+            return;
+        }
+
+        let src = self.load_rv_to_temp(rs1, temp1);
+        if src != temp1 {
+            self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
+        }
+        self.emitf(format!("shr{suffix} ${shift}, %{temp1}"));
+        self.store_to_rv(rd, temp1);
+    }
+
+    /// Emit a SRAI instruction: rd = rs1 >> imm (arithmetic)
+    pub fn emit_srai(&mut self, rd: u8, rs1: u8, imm: u8) {
+        if rd == 0 {
+            return;
+        }
+
+        let temp1 = self.temp1();
+        let suffix = self.suffix();
+        let shift = imm & if X::VALUE == 32 { 0x1f } else { 0x3f };
+
+        if shift == 0 {
+            if rs1 == 0 {
+                self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
+                self.store_to_rv(rd, temp1);
+            } else if let Some(src) = self.rv_reg(rs1) {
+                self.store_to_rv(rd, src);
+            } else {
+                let src = self.load_rv_to_temp(rs1, temp1);
+                self.store_to_rv(rd, &src);
+            }
+            return;
+        }
+
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
+            self.emitf(format!("sar{suffix} ${shift}, %{src}"));
+            return;
+        }
+
+        let src = self.load_rv_to_temp(rs1, temp1);
+        if src != temp1 {
+            self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
+        }
+        self.emitf(format!("sar{suffix} ${shift}, %{temp1}"));
+        self.store_to_rv(rd, temp1);
     }
 
     /// Emit a LUI instruction: rd = imm << 12

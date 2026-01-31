@@ -294,9 +294,13 @@ impl<X: Xlen> X86Emitter<X> {
                         }
                     }
                 } else {
-                    let right_reg = self.emit_expr(right, temp2);
-                    if right_reg != temp2 && right_reg != "rcx" && right_reg != "ecx" {
-                        self.emitf(format!("mov{suffix} %{right_reg}, %{temp2}"));
+                    // For variable shifts, evaluate shift amount first to avoid clobbering left
+                    // Use temp3 (rdi) for intermediate, then move to cl
+                    let temp3 = self.temp3();
+                    let right_reg = self.emit_expr(right, temp3);
+                    // Move shift amount to cl (required for variable shifts)
+                    if right_reg != "rcx" && right_reg != "ecx" && right_reg != "cl" {
+                        self.emitf(format!("movl %{}, %ecx", self.reg_dword(&right_reg)));
                     }
                     if is_word {
                         self.emitf(format!("{x86_op}l %cl, %eax"));
