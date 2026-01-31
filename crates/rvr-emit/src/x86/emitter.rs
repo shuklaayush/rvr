@@ -84,6 +84,13 @@ impl<X: Xlen> X86Emitter<X> {
         if X::VALUE == 32 { "ecx" } else { "rcx" }
     }
 
+    /// Third temp register (rdi/edi) - available after prologue.
+    /// Use for parallel operations to reduce dependencies.
+    #[allow(dead_code)]
+    pub(super) fn temp3(&self) -> &'static str {
+        if X::VALUE == 32 { "edi" } else { "rdi" }
+    }
+
     /// Get the dword-sized version of a temp register.
     pub(super) fn temp_dword(&self, temp: &str) -> &'static str {
         match temp {

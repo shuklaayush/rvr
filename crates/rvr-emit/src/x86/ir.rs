@@ -267,6 +267,23 @@ impl<X: Xlen> X86Emitter<X> {
                         0x3f
                     };
                     let shift = (X::to_u64(*imm) & mask) as u8;
+
+                    // LEA optimization: use lea for shift-left by 1, 2, or 3
+                    // lea (%src,%src), %dest is faster than shl $1, %src
+                    if matches!(op, BinaryOp::Sll) && shift <= 3 && shift > 0 {
+                        if shift == 1 {
+                            self.emitf(format!("lea{suffix} (%{temp1},%{temp1}), %{temp1}"));
+                        } else if shift == 2 {
+                            self.emitf(format!("lea{suffix} (,%{temp1},4), %{temp1}"));
+                        } else {
+                            self.emitf(format!("lea{suffix} (,%{temp1},8), %{temp1}"));
+                        }
+                        if dest != temp1 {
+                            self.emitf(format!("mov{suffix} %{temp1}, %{dest}"));
+                        }
+                        return dest.to_string();
+                    }
+
                     if is_word {
                         self.emitf(format!("{x86_op}l ${shift}, %eax"));
                         self.emitf(format!("movslq %eax, %{dest}"));
@@ -323,7 +340,28 @@ impl<X: Xlen> X86Emitter<X> {
         };
 
         match op {
-            BinaryOp::Add => self.emitf(format!("add{suffix} {right_val}, %{temp1}")),
+            BinaryOp::Add => {
+                // LEA optimization: use lea for add with small immediate
+                if right_is_imm {
+                    if let Expr::Imm(imm) = right {
+                        let v = X::to_u64(*imm) as i64;
+                        // LEA works well for small offsets that fit in disp32
+                        if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+                            if X::VALUE == 32 {
+                                self.emitf(format!("leal {}(%{temp1}), %{temp1}", v as i32));
+                            } else {
+                                self.emitf(format!("leaq {}(%{temp1}), %{temp1}", v as i32));
+                            }
+                        } else {
+                            self.emitf(format!("add{suffix} {right_val}, %{temp1}"));
+                        }
+                    } else {
+                        self.emitf(format!("add{suffix} {right_val}, %{temp1}"));
+                    }
+                } else {
+                    self.emitf(format!("add{suffix} {right_val}, %{temp1}"));
+                }
+            }
             BinaryOp::Sub => self.emitf(format!("sub{suffix} {right_val}, %{temp1}")),
             BinaryOp::And => self.emitf(format!("and{suffix} {right_val}, %{temp1}")),
             BinaryOp::Or => self.emitf(format!("or{suffix} {right_val}, %{temp1}")),

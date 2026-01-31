@@ -63,11 +63,16 @@ impl<X: Xlen> X86Emitter<X> {
             self.load_rv_to_temp(rs2, temp2)
         };
 
-        if src1 != temp1 {
-            self.emitf(format!("mov{suffix} %{src1}, %{temp1}"));
+        // In-place optimization: if rd == rs1 and hot, modify in place
+        if rd == rs1 && self.reg_map.is_hot(rd) {
+            self.emitf(format!("sub{suffix} %{src2}, %{src1}"));
+        } else {
+            if src1 != temp1 {
+                self.emitf(format!("mov{suffix} %{src1}, %{temp1}"));
+            }
+            self.emitf(format!("sub{suffix} %{src2}, %{temp1}"));
+            self.store_to_rv(rd, temp1);
         }
-        self.emitf(format!("sub{suffix} %{src2}, %{temp1}"));
-        self.store_to_rv(rd, temp1);
     }
 
     /// Emit an ADDI instruction: rd = rs1 + imm
@@ -92,11 +97,35 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let src = self.load_rv_to_temp(rs1, temp1);
-
+        // In-place optimization: if rd == rs1 and hot, modify in place
         if rd == rs1 && self.reg_map.is_hot(rd) {
+            let src = self.rv_reg(rs1).unwrap();
             self.emitf(format!("add{suffix} ${imm}, %{src}"));
+            return;
+        }
+
+        // LEA optimization: use lea for src + imm -> dest (single instruction)
+        // Works when source is in a register and we're writing to a different dest
+        if self.reg_map.is_hot(rs1) {
+            // Source is hot register - use LEA to add immediate
+            let src64 = self.reg_map.get_64(rs1).unwrap();
+            if X::VALUE == 32 {
+                self.emitf(format!("leal {imm}(%{src64}), %{temp1}"));
+            } else {
+                self.emitf(format!("leaq {imm}(%{src64}), %{temp1}"));
+            }
+            self.store_to_rv(rd, temp1);
+        } else if rs1 == 0 {
+            // Source is x0 (zero) - just load immediate
+            if X::VALUE == 32 {
+                self.emitf(format!("movl ${imm}, %{temp1}"));
+            } else {
+                self.emitf(format!("movq ${imm}, %{temp1}"));
+            }
+            self.store_to_rv(rd, temp1);
         } else {
+            // Source is cold register - load then add
+            let src = self.load_rv_to_temp(rs1, temp1);
             if src != temp1 {
                 self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
             }
