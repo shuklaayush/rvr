@@ -198,8 +198,10 @@
 
 // Core types - always available
 pub use rvr_elf::{ElfImage, get_elf_xlen};
+pub use rvr_emit::c::TracerConfig;
 pub use rvr_emit::{
-    AddressMode, Compiler, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode, TracerConfig,
+    AddressMode, AnalysisMode, Backend, Compiler, EmitConfig, FixedAddressConfig, InstretMode,
+    SyscallMode,
 };
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
@@ -314,22 +316,31 @@ impl<X: Xlen> Recompiler<X> {
         output_dir: &Path,
         jobs: usize,
     ) -> Result<std::path::PathBuf> {
-        // First lift to C source
-        let _c_path = self.lift(elf_path, output_dir)?;
+        // First lift to source (C or x86 assembly)
+        let _source_path = self.lift(elf_path, output_dir)?;
 
-        // Then compile C to .so (compiler choice is already in the Makefile via config)
-        compile_c_to_shared(output_dir, jobs, self.quiet)?;
-
-        // Return the path to the shared library
         let lib_name = output_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("rv");
+
+        // Compile based on backend
+        match self.config.backend {
+            Backend::C => {
+                // Compile C to .so (compiler choice is already in the Makefile via config)
+                compile_c_to_shared(output_dir, jobs, self.quiet)?;
+            }
+            Backend::X86Asm => {
+                // Assemble x86 to .so
+                compile_x86_to_shared(output_dir, lib_name, &self.config.compiler, self.quiet)?;
+            }
+        }
+
         let lib_path = output_dir.join(format!("lib{}.so", lib_name));
         Ok(lib_path)
     }
 
-    /// Lift an ELF file to C source code (without compilation).
+    /// Lift an ELF file to source code (C or x86 assembly, depending on backend).
     pub fn lift(&self, elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
         // Load ELF
         let data = std::fs::read(elf_path)?;
@@ -363,30 +374,40 @@ impl<X: Xlen> Recompiler<X> {
         // Lift to IR
         pipeline.lift_to_ir()?;
 
-        // Load debug info for #line directives (if enabled and ELF has debug info)
-        if self.config.emit_line_info
-            && let Some(path_str) = elf_path.to_str()
-            && let Err(e) = pipeline.load_debug_info(path_str)
-        {
-            warn!(error = %e, "failed to load debug info (continuing without #line directives)");
-        }
-
-        // Emit C code
         let base_name = output_dir
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("rv");
-        pipeline.emit_c(output_dir, base_name)?;
 
-        // Return path to main C file
-        let c_path = output_dir.join(format!("{}_part0.c", base_name));
-        Ok(c_path)
+        // Emit based on backend
+        match self.config.backend {
+            Backend::C => {
+                // Load debug info for #line directives (if enabled and ELF has debug info)
+                if self.config.emit_line_info
+                    && let Some(path_str) = elf_path.to_str()
+                    && let Err(e) = pipeline.load_debug_info(path_str)
+                {
+                    warn!(error = %e, "failed to load debug info (continuing without #line directives)");
+                }
+
+                pipeline.emit_c(output_dir, base_name)?;
+                Ok(output_dir.join(format!("{}_part0.c", base_name)))
+            }
+            Backend::X86Asm => {
+                pipeline.emit_x86(output_dir, base_name)?;
+                Ok(output_dir.join(format!("{}.s", base_name)))
+            }
+        }
     }
 }
 
 /// Options for compile/lift operations.
 #[derive(Clone, Debug)]
 pub struct CompileOptions {
+    /// Code generation backend.
+    pub backend: Backend,
+    /// Analysis mode (full CFG or linear scan).
+    pub analysis_mode: AnalysisMode,
     /// Address translation mode.
     pub address_mode: AddressMode,
     /// Enable HTIF (Host-Target Interface) for riscv-tests.
@@ -419,6 +440,8 @@ pub struct CompileOptions {
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
+            backend: Backend::default(),
+            analysis_mode: AnalysisMode::default(),
             address_mode: AddressMode::default(),
             htif: false,
             htif_verbose: false,
@@ -439,6 +462,18 @@ impl CompileOptions {
     /// Create default options.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set code generation backend.
+    pub fn with_backend(mut self, backend: Backend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// Set analysis mode.
+    pub fn with_analysis_mode(mut self, mode: AnalysisMode) -> Self {
+        self.analysis_mode = mode;
+        self
     }
 
     /// Set address translation mode.
@@ -521,6 +556,8 @@ impl CompileOptions {
 
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
+        config.backend = self.backend;
+        config.analysis_mode = self.analysis_mode;
         config.address_mode = self.address_mode;
         config.htif_enabled = self.htif;
         config.htif_verbose = self.htif_verbose;
@@ -692,6 +729,118 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()
                 debug!("{}", line);
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Compile x86 assembly to shared library.
+///
+/// On non-x86 hosts, uses clang for cross-compilation with:
+/// - `--target=x86_64-unknown-linux-gnu` for x86 target
+/// - `-fuse-ld=lld` for cross-linking
+/// - `-nostdlib` since generated code is self-contained
+fn compile_x86_to_shared(
+    output_dir: &Path,
+    base_name: &str,
+    compiler: &Compiler,
+    quiet: bool,
+) -> Result<()> {
+    let _span = info_span!("compile_x86").entered();
+
+    let asm_path = output_dir.join(format!("{}.s", base_name));
+    let obj_path = output_dir.join(format!("{}.o", base_name));
+    let lib_path = output_dir.join(format!("lib{}.so", base_name));
+
+    if !asm_path.exists() {
+        return Err(Error::CompilationFailed(format!(
+            "Assembly file not found: {}",
+            asm_path.display()
+        )));
+    }
+
+    // Check if we need cross-compilation (non-x86 host)
+    let is_x86_host = cfg!(target_arch = "x86_64") || cfg!(target_arch = "x86");
+    let needs_cross = !is_x86_host;
+
+    let cc = if needs_cross {
+        // On non-x86 hosts, must use clang for cross-compilation
+        "clang"
+    } else {
+        compiler.command()
+    };
+
+    debug!(asm = %asm_path.display(), compiler = %cc, cross = %needs_cross, "assembling");
+
+    // Assemble: cc -c -fPIC -o foo.o foo.s
+    let mut asm_cmd = Command::new(cc);
+
+    if needs_cross {
+        // Cross-compilation: use clang with explicit x86 target
+        asm_cmd.args(["--target=x86_64-unknown-linux-gnu", "-c", "-fPIC"]);
+    } else {
+        // AT&T syntax works with both GCC and LLVM's integrated assembler
+        asm_cmd.args(["-c", "-fPIC"]);
+    }
+
+    asm_cmd.arg("-o").arg(&obj_path).arg(&asm_path);
+
+    let asm_output = asm_cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?;
+
+    if !asm_output.status.success() {
+        let stderr = String::from_utf8_lossy(&asm_output.stderr);
+        error!(stderr = %stderr, "assembly failed");
+        return Err(Error::CompilationFailed(format!(
+            "Assembly failed: {}",
+            stderr.lines().next().unwrap_or("unknown error")
+        )));
+    }
+
+    debug!(obj = %obj_path.display(), "linking");
+
+    // Link to shared library
+    let mut link_cmd = Command::new(cc);
+
+    if needs_cross {
+        // Cross-linking: use lld and no stdlib (our code is self-contained)
+        link_cmd.args([
+            "--target=x86_64-unknown-linux-gnu",
+            "-fuse-ld=lld",
+            "-nostdlib",
+            "-shared",
+            "-Wl,-z,noexecstack",
+        ]);
+    } else {
+        link_cmd.args(["-shared", "-Wl,-z,noexecstack"]);
+        // Use configured linker for clang (e.g., lld, lld-20)
+        if let Some(linker) = compiler.linker() {
+            link_cmd.arg(format!("-fuse-ld={}", linker));
+        }
+    }
+
+    link_cmd.arg("-o").arg(&lib_path).arg(&obj_path);
+
+    let link_output = link_cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| Error::CompilationFailed(format!("Failed to link: {}", e)))?;
+
+    if !link_output.status.success() {
+        let stderr = String::from_utf8_lossy(&link_output.stderr);
+        error!(stderr = %stderr, "linking failed");
+        return Err(Error::CompilationFailed(format!(
+            "Linking failed: {}",
+            stderr.lines().next().unwrap_or("unknown error")
+        )));
+    }
+
+    if !quiet {
+        debug!(lib = %lib_path.display(), cross = %needs_cross, "compiled x86 shared library");
     }
 
     Ok(())

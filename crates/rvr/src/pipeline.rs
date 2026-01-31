@@ -5,7 +5,9 @@ use std::path::Path;
 
 use rvr_cfg::{BlockTable, InstructionTable};
 use rvr_elf::{DebugInfo, ElfImage};
-use rvr_emit::{CProject, EmitConfig, EmitInputs, MemorySegment, NUM_REGS_E, NUM_REGS_I};
+use rvr_emit::c::{CProject, MemorySegment};
+use rvr_emit::x86::X86Emitter;
+use rvr_emit::{AnalysisMode, EmitConfig, EmitInputs, NUM_REGS_E, NUM_REGS_I};
 use rvr_ir::BlockIR;
 use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, info, info_span, trace_span, warn};
@@ -238,17 +240,30 @@ impl<X: Xlen> Pipeline<X> {
 
         let num_instructions = instr_table.valid_indices().count();
 
-        // Create BlockTable with CFG analysis
-        let mut block_table = {
-            let _span = trace_span!("cfg_analysis").entered();
-            BlockTable::from_instruction_table(instr_table, &self.registry)
+        // Create BlockTable - mode determines whether we do CFG analysis
+        let (mut block_table, blocks_before) = match self.config.analysis_mode {
+            AnalysisMode::FullCfg => {
+                let _span = trace_span!("cfg_analysis").entered();
+                let table = BlockTable::from_instruction_table(instr_table, &self.registry);
+                let before = table.len();
+                (table, before)
+            }
+            AnalysisMode::Basic => {
+                // Linear mode: one instruction per block, no CFG analysis
+                debug!("Basic mode: using linear blocks (no CFG analysis)");
+                let table = BlockTable::linear(instr_table);
+                let before = table.len();
+                (table, before)
+            }
         };
-        let blocks_before = block_table.len();
 
-        // Apply block transforms (merge, tail-dup, superblock)
-        let (absorbed, tail_duplicated, superblocked) = {
-            let _span = trace_span!("block_transforms").entered();
-            block_table.optimize(&self.registry)
+        // Apply block transforms only in FullCfg mode
+        let (absorbed, tail_duplicated, superblocked) = match self.config.analysis_mode {
+            AnalysisMode::FullCfg => {
+                let _span = trace_span!("block_transforms").entered();
+                block_table.optimize(&self.registry)
+            }
+            AnalysisMode::Basic => (0, 0, 0),
         };
 
         let num_blocks = block_table.len();
@@ -262,6 +277,7 @@ impl<X: Xlen> Pipeline<X> {
             instructions = num_instructions,
             blocks = num_blocks,
             insns_per_block = format!("{:.1}", insns_per_block),
+            analysis_mode = ?self.config.analysis_mode,
             "built CFG"
         );
 
@@ -511,6 +527,75 @@ impl<X: Xlen> Pipeline<X> {
 
         // Write all files
         project.write_all(&owned_blocks)?;
+
+        Ok(())
+    }
+
+    /// Emit x86-64 assembly to output directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
+    /// Returns `Error::Io` if file writing fails.
+    pub fn emit_x86(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
+        let _span = info_span!("emit_x86").entered();
+
+        let block_table = self
+            .block_table
+            .as_ref()
+            .ok_or(Error::CfgNotBuilt("emit_x86"))?;
+
+        let entry_point = X::to_u64(self.image.entry_point);
+
+        // Compute text_start and pc_end from blocks
+        let text_start = self
+            .ir_blocks
+            .values()
+            .map(|b| X::to_u64(b.start_pc))
+            .min()
+            .unwrap_or(entry_point);
+        let pc_end = self
+            .ir_blocks
+            .values()
+            .map(|b| X::to_u64(b.end_pc))
+            .max()
+            .unwrap_or(0);
+
+        // Get absorbed_to_merged mapping from BlockTable
+        let absorbed_to_merged = block_table.absorbed_to_merged.clone();
+
+        // Build emission inputs
+        let initial_brk = X::to_u64(self.image.get_initial_program_break());
+        let mut inputs = EmitInputs::new(entry_point, pc_end)
+            .with_text_start(text_start)
+            .with_initial_brk(initial_brk);
+        inputs
+            .valid_addresses
+            .extend(self.ir_blocks.keys().copied());
+        inputs.absorbed_to_merged = absorbed_to_merged;
+
+        // Create x86 emitter
+        let mut emitter = X86Emitter::new(self.config.clone(), inputs);
+
+        // Collect blocks sorted by start PC
+        let mut blocks: Vec<(u64, BlockIR<X>)> = self
+            .ir_blocks
+            .iter()
+            .map(|(pc, b)| (*pc, b.clone()))
+            .collect();
+        blocks.sort_by_key(|(pc, _)| *pc);
+
+        // Generate assembly
+        emitter.generate(&blocks);
+
+        // Create output directory
+        std::fs::create_dir_all(output_dir)?;
+
+        // Write assembly file
+        let asm_path = output_dir.join(format!("{}.s", base_name));
+        emitter.write_asm(&asm_path)?;
+
+        info!(output = %asm_path.display(), "wrote x86 assembly");
 
         Ok(())
     }

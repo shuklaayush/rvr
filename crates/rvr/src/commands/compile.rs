@@ -3,11 +3,12 @@
 use std::path::Path;
 
 use rvr::{CompileOptions, Compiler};
+use rvr_emit::Backend;
 use tracing::{error, info};
 
 use crate::cli::{
-    AddressModeArg, EXIT_FAILURE, EXIT_SUCCESS, InstretModeArg, SyscallModeArg, TracerArgs,
-    build_tracer_config, parse_fixed_addresses,
+    AddressModeArg, AnalysisModeArg, BackendArg, EXIT_FAILURE, EXIT_SUCCESS, InstretModeArg,
+    SyscallModeArg, TracerArgs, build_tracer_config, parse_fixed_addresses,
 };
 
 /// Handle the `compile` command.
@@ -15,6 +16,8 @@ use crate::cli::{
 pub fn cmd_compile(
     input: &Path,
     output: &Path,
+    backend: BackendArg,
+    analysis: AnalysisModeArg,
     address_mode: AddressModeArg,
     htif: bool,
     instret: InstretModeArg,
@@ -35,7 +38,11 @@ pub fn cmd_compile(
         }
     };
 
+    let backend: Backend = backend.into();
+
     let mut options = CompileOptions::new()
+        .with_backend(backend)
+        .with_analysis_mode(analysis.into())
         .with_address_mode(address_mode.into())
         .with_htif(htif)
         .with_instret_mode(instret.into())
@@ -90,6 +97,8 @@ pub fn cmd_compile(
 pub fn cmd_lift(
     input: &Path,
     output: &Path,
+    backend: BackendArg,
+    analysis: AnalysisModeArg,
     address_mode: AddressModeArg,
     htif: bool,
     line_info: bool,
@@ -108,7 +117,11 @@ pub fn cmd_lift(
         }
     };
 
+    let backend: Backend = backend.into();
+
     let mut options = CompileOptions::new()
+        .with_backend(backend)
+        .with_analysis_mode(analysis.into())
         .with_address_mode(address_mode.into())
         .with_htif(htif)
         .with_line_info(line_info)

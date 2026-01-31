@@ -18,6 +18,8 @@ pub fn run_command(cli: &Cli) -> i32 {
         Commands::Compile {
             input,
             output,
+            backend,
+            analysis,
             address_mode,
             htif,
             instret,
@@ -30,6 +32,8 @@ pub fn run_command(cli: &Cli) -> i32 {
         } => compile::cmd_compile(
             input,
             output,
+            *backend,
+            *analysis,
             *address_mode,
             *htif,
             *instret,
@@ -43,6 +47,8 @@ pub fn run_command(cli: &Cli) -> i32 {
         Commands::Lift {
             input,
             output,
+            backend,
+            analysis,
             address_mode,
             htif,
             line_info,
@@ -53,6 +59,8 @@ pub fn run_command(cli: &Cli) -> i32 {
         } => compile::cmd_lift(
             input,
             output,
+            *backend,
+            *analysis,
             *address_mode,
             *htif,
             *line_info,
@@ -160,9 +168,15 @@ pub fn run_command(cli: &Cli) -> i32 {
                     timeout,
                     cc,
                     linker,
-                } => {
-                    test::riscv_tests_run(filter.clone(), *verbose, *timeout, cc, linker.as_deref())
-                }
+                    backend,
+                } => test::riscv_tests_run(
+                    filter.clone(),
+                    *verbose,
+                    *timeout,
+                    cc,
+                    linker.as_deref(),
+                    (*backend).into(),
+                ),
             },
         },
     }

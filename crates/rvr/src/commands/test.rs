@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use rvr::Compiler;
 use rvr::tests::{self, BuildConfig, TestCategory, TestConfig};
+use rvr_emit::Backend;
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 
@@ -82,6 +83,7 @@ pub fn riscv_tests_run(
     timeout: u64,
     cc: &str,
     linker: Option<&str>,
+    backend: Backend,
 ) -> i32 {
     let project_dir = std::env::current_dir().expect("failed to get current directory");
     let test_dir = project_dir.join("bin/riscv-tests");
@@ -100,11 +102,34 @@ pub fn riscv_tests_run(
         compiler = compiler.with_linker(ld);
     }
 
+    let backend_name = match backend {
+        Backend::C => "C",
+        Backend::X86Asm => "x86",
+    };
+    eprintln!("Using backend: {}", backend_name);
+
+    // Check for x86 backend on non-x86 host
+    if matches!(backend, Backend::X86Asm) {
+        let is_x86_host = cfg!(target_arch = "x86_64") || cfg!(target_arch = "x86");
+        if !is_x86_host {
+            eprintln!();
+            eprintln!("Error: x86 backend cannot be tested on non-x86 host");
+            eprintln!("The x86 backend generates x86-64 shared libraries that cannot be");
+            eprintln!("loaded on {} hosts.", std::env::consts::ARCH);
+            eprintln!();
+            eprintln!("Options:");
+            eprintln!("  - Run tests on an x86-64 machine");
+            eprintln!("  - Use the C backend (--backend c) which generates portable C code");
+            return EXIT_FAILURE;
+        }
+    }
+
     let config = TestConfig::default()
         .with_test_dir(test_dir)
         .with_verbose(verbose)
         .with_timeout(timeout)
-        .with_compiler(compiler);
+        .with_compiler(compiler)
+        .with_backend(backend);
     let config = if let Some(f) = filter {
         config.with_filter(f)
     } else {

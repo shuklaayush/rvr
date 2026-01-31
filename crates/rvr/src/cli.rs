@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use rvr::{AddressMode, FixedAddressConfig, InstretMode, SyscallMode};
-use rvr_emit::{PassedVar, TracerConfig, TracerKind};
+use rvr_emit::c::{PassedVar, TracerConfig, TracerKind};
 
 /// Exit code for success.
 pub const EXIT_SUCCESS: i32 = 0;
@@ -43,6 +43,14 @@ pub enum Commands {
         /// Output directory
         #[arg(short, long, default_value = "output")]
         output: PathBuf,
+
+        /// Code generation backend
+        #[arg(long, value_enum, default_value = "c")]
+        backend: BackendArg,
+
+        /// Analysis mode (cfg = full CFG with block merging, linear = no merging)
+        #[arg(long, value_enum, default_value = "cfg")]
+        analysis: AnalysisModeArg,
 
         /// Address translation mode
         #[arg(long, value_enum, default_value = "wrap")]
@@ -90,6 +98,14 @@ pub enum Commands {
         /// Output directory
         #[arg(short, long, default_value = "output")]
         output: PathBuf,
+
+        /// Code generation backend
+        #[arg(long, value_enum, default_value = "c")]
+        backend: BackendArg,
+
+        /// Analysis mode (cfg = full CFG with block merging, linear = no merging)
+        #[arg(long, value_enum, default_value = "cfg")]
+        analysis: AnalysisModeArg,
 
         /// Address translation mode
         #[arg(long, value_enum, default_value = "wrap")]
@@ -369,6 +385,10 @@ pub enum RiscvTestCommands {
         /// Linker to use
         #[arg(long)]
         linker: Option<String>,
+
+        /// Code generation backend
+        #[arg(long, value_enum, default_value = "c")]
+        backend: BackendArg,
     },
 }
 
@@ -459,6 +479,44 @@ impl From<AddressModeArg> for AddressMode {
             AddressModeArg::Unchecked => AddressMode::Unchecked,
             AddressModeArg::Wrap => AddressMode::Wrap,
             AddressModeArg::Bounds => AddressMode::Bounds,
+        }
+    }
+}
+
+/// Code generation backend.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+pub enum BackendArg {
+    /// Emit C code, compile with clang/gcc (default)
+    #[default]
+    C,
+    /// Emit x86-64 assembly, compile with gcc/as (experimental)
+    X86,
+}
+
+impl From<BackendArg> for rvr_emit::Backend {
+    fn from(arg: BackendArg) -> Self {
+        match arg {
+            BackendArg::C => rvr_emit::Backend::C,
+            BackendArg::X86 => rvr_emit::Backend::X86Asm,
+        }
+    }
+}
+
+/// Analysis mode for the compilation pipeline.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+pub enum AnalysisModeArg {
+    /// Full CFG analysis with block merging and optimizations (default)
+    #[default]
+    Cfg,
+    /// Linear scan: decode instructions without block merging (faster)
+    Linear,
+}
+
+impl From<AnalysisModeArg> for rvr_emit::AnalysisMode {
+    fn from(arg: AnalysisModeArg) -> Self {
+        match arg {
+            AnalysisModeArg::Cfg => rvr_emit::AnalysisMode::FullCfg,
+            AnalysisModeArg::Linear => rvr_emit::AnalysisMode::Basic,
         }
     }
 }

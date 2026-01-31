@@ -6,6 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rvr_emit::Backend;
+
 use crate::{CompileOptions, Compiler, Runner, compile_with_options};
 
 /// Tests to skip (not compatible with static recompilation).
@@ -121,6 +123,8 @@ pub struct TestConfig {
     pub timeout_secs: u64,
     /// C compiler to use.
     pub compiler: Compiler,
+    /// Code generation backend.
+    pub backend: Backend,
 }
 
 impl Default for TestConfig {
@@ -131,6 +135,7 @@ impl Default for TestConfig {
             verbose: false,
             timeout_secs: 10,
             compiler: Compiler::default(),
+            backend: Backend::C,
         }
     }
 }
@@ -163,6 +168,12 @@ impl TestConfig {
     /// Set the C compiler.
     pub fn with_compiler(mut self, compiler: Compiler) -> Self {
         self.compiler = compiler;
+        self
+    }
+
+    /// Set the code generation backend.
+    pub fn with_backend(mut self, backend: Backend) -> Self {
+        self.backend = backend;
         self
     }
 }
@@ -234,7 +245,12 @@ fn discover_tests_recursive(dir: &Path, filter: Option<&str>, tests: &mut Vec<Pa
 }
 
 /// Run a single test.
-pub fn run_test(elf_path: &Path, timeout: Duration, compiler: &Compiler) -> TestResult {
+pub fn run_test(
+    elf_path: &Path,
+    timeout: Duration,
+    compiler: &Compiler,
+    backend: Backend,
+) -> TestResult {
     let name = elf_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -258,7 +274,8 @@ pub fn run_test(elf_path: &Path, timeout: Duration, compiler: &Compiler) -> Test
     let options = CompileOptions::new()
         .with_htif(true)
         .with_quiet(true)
-        .with_compiler(compiler.clone());
+        .with_compiler(compiler.clone())
+        .with_backend(backend);
 
     if let Err(e) = compile_with_options(elf_path, &out_dir, options) {
         return TestResult::fail(name, format!("compile failed: {}", e));
@@ -401,7 +418,7 @@ pub fn run_all(config: &TestConfig) -> TestSummary {
     let mut summary = TestSummary::default();
 
     for (i, test_path) in tests.iter().enumerate() {
-        let result = run_test(test_path, timeout, &config.compiler);
+        let result = run_test(test_path, timeout, &config.compiler, config.backend);
         print_result(&result, i + 1, total, config.verbose);
         summary.add(result);
     }
