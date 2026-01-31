@@ -567,8 +567,8 @@ impl CompileOptions {
         config.compiler = self.compiler.clone();
         config.syscall_mode = self.syscall_mode;
         config.fixed_addresses = self.fixed_addresses;
-        // Re-compute hot registers since instret_mode/tracer/fixed_addresses may have changed
-        config.init_hot_regs(rvr_emit::default_total_slots());
+        // Re-compute hot registers based on backend (x86 has different slot count than C)
+        config.reinit_hot_regs_for_backend();
     }
 
     /// Check if line info is enabled.

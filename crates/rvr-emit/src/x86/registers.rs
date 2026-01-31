@@ -3,6 +3,12 @@
 //! Maps RISC-V registers to x86-64 registers based on EmitConfig::hot_regs.
 //! Hot registers are kept in x86 GPRs, cold registers are accessed via memory.
 
+/// x86_64 assembly backend: 10 GPRs available for hot registers.
+///
+/// Reserved: rbx (state ptr), r15 (memory ptr), rsp (stack), rax/rcx/rdx (temps)
+/// Available: r14, r13, r12, rbp, rdi, rsi, r11, r10, r9, r8
+pub const HOT_REG_SLOTS: usize = 10;
+
 /// Reserved x86 registers (not available for RISC-V register mapping).
 /// - rbx: RvState pointer (callee-saved)
 /// - r15: Memory base pointer (callee-saved)
@@ -16,10 +22,6 @@ pub mod reserved {
 /// Available x86 registers for hot RISC-V register mapping.
 /// Order matters - callee-saved first (fewer save/restore), then caller-saved.
 /// With 10 registers available, we can map most frequently-used RISC-V registers.
-///
-/// Comparison to PolkaVM (13 regs): They use rax/rdx as hot regs too, but that
-/// requires spilling during mul/div. We keep rax/rcx/rdx as dedicated temps
-/// for simpler codegen at the cost of 3 fewer hot registers.
 pub const AVAILABLE_REGS: [&str; 10] = [
     "r14", // callee-saved
     "r13", // callee-saved

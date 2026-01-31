@@ -20,7 +20,7 @@ mod ir;
 mod prologue;
 mod registers;
 
-pub use registers::RegMap;
+pub use registers::{HOT_REG_SLOTS, RegMap};
 
 use std::collections::HashSet;
 use std::path::Path;
