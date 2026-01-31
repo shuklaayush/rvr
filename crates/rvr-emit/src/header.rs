@@ -10,7 +10,7 @@ use std::fmt::Write;
 
 use rvr_ir::Xlen;
 
-use crate::config::{EmitConfig, FixedAddressConfig, InstretMode, SyscallMode};
+use crate::config::{AddressMode, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode};
 use crate::inputs::EmitInputs;
 use crate::signature::{FnSignature, MEMORY_FIXED_REF, STATE_FIXED_REF, reg_type};
 use crate::tracer::TracerConfig;
@@ -41,8 +41,8 @@ pub struct HeaderConfig<X: Xlen> {
     pub instret_mode: InstretMode,
     /// Enable HTIF (Host-Target Interface).
     pub htif_enabled: bool,
-    /// Enable address checking.
-    pub addr_check: bool,
+    /// Address translation mode.
+    pub address_mode: AddressMode,
     /// Entry point address (where execution starts).
     pub entry_point: u64,
     /// Text section start (lowest code address, used for dispatch table base).
@@ -74,7 +74,7 @@ impl<X: Xlen> HeaderConfig<X> {
             num_registers: config.num_regs,
             instret_mode: config.instret_mode,
             htif_enabled: config.htif_enabled,
-            addr_check: config.addr_check,
+            address_mode: config.address_mode,
             entry_point: inputs.entry_point,
             text_start: inputs.text_start,
             block_addresses,
@@ -393,13 +393,21 @@ static_assert(offsetof(RvState, memory) == {offset_memory});
 fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let addr_type = reg_type::<X>();
 
-    let addr_check = if cfg.addr_check {
-        format!(
-            "    if (unlikely((int{0}_t)(addr << ({0} - MEMORY_BITS)) >> ({0} - MEMORY_BITS) != (int{0}_t)addr)) __builtin_trap();\n",
-            X::VALUE
-        )
-    } else {
-        String::new()
+    // Address translation mode:
+    // - Unchecked: assume valid + passthrough, guard pages catch OOB
+    // - Wrap: mask to memory size, matches sv39/sv48 behavior
+    // - Bounds: trap on invalid + assume + mask, explicit errors
+    let phys_addr_body = match cfg.address_mode {
+        AddressMode::Unchecked => {
+            "    __builtin_assume(addr <= RV_MEMORY_MASK);\n    return addr;".to_string()
+        }
+        AddressMode::Wrap => "    return addr & RV_MEMORY_MASK;".to_string(),
+        AddressMode::Bounds => {
+            format!(
+                "    if (unlikely((int{0}_t)(addr << ({0} - MEMORY_BITS)) >> ({0} - MEMORY_BITS) != (int{0}_t)addr)) __builtin_trap();\n    __builtin_assume(addr <= RV_MEMORY_MASK);\n    return addr & RV_MEMORY_MASK;",
+                X::VALUE
+            )
+        }
     };
 
     // Conditional parts based on fixed address mode
@@ -410,13 +418,9 @@ fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     format!(
-        r#"/* Physical address translation with optimizer hints.
- * The __builtin_assume tells the compiler that addr < RV_MEMORY_SIZE,
- * which allows it to prove that consecutive virtual addresses map to
- * consecutive physical addresses, enabling loop vectorization. */
+        r#"/* Translate virtual address to physical. */
 static inline {addr_type} phys_addr({addr_type} addr) {{
-{addr_check}    __builtin_assume(addr <= RV_MEMORY_MASK);
-    return addr & RV_MEMORY_MASK;
+{phys_addr_body}
 }}
 
 /* Memory access: compute phys base first, then add offset. */
@@ -506,7 +510,7 @@ static inline void wr_mem_u64({mem_param}{addr_type} base, int16_t off, uint64_t
 
 "#,
         addr_type = addr_type,
-        addr_check = addr_check,
+        phys_addr_body = phys_addr_body,
         mem_param = mem_param,
         mem_ref = mem_ref,
         nonnull = nonnull,

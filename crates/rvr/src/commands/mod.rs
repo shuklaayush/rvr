@@ -18,7 +18,7 @@ pub fn run_command(cli: &Cli) -> i32 {
         Commands::Compile {
             input,
             output,
-            addr_check,
+            address_mode,
             htif,
             instret,
             syscalls,
@@ -30,7 +30,7 @@ pub fn run_command(cli: &Cli) -> i32 {
         } => compile::cmd_compile(
             input,
             output,
-            *addr_check,
+            *address_mode,
             *htif,
             *instret,
             *syscalls,
@@ -43,7 +43,7 @@ pub fn run_command(cli: &Cli) -> i32 {
         Commands::Lift {
             input,
             output,
-            addr_check,
+            address_mode,
             htif,
             line_info,
             instret,
@@ -53,7 +53,7 @@ pub fn run_command(cli: &Cli) -> i32 {
         } => compile::cmd_lift(
             input,
             output,
-            *addr_check,
+            *address_mode,
             *htif,
             *line_info,
             *instret,

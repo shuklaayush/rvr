@@ -6,8 +6,8 @@ use rvr::{CompileOptions, Compiler};
 use tracing::{error, info};
 
 use crate::cli::{
-    EXIT_FAILURE, EXIT_SUCCESS, InstretModeArg, SyscallModeArg, TracerArgs, build_tracer_config,
-    parse_fixed_addresses,
+    AddressModeArg, EXIT_FAILURE, EXIT_SUCCESS, InstretModeArg, SyscallModeArg, TracerArgs,
+    build_tracer_config, parse_fixed_addresses,
 };
 
 /// Handle the `compile` command.
@@ -15,7 +15,7 @@ use crate::cli::{
 pub fn cmd_compile(
     input: &Path,
     output: &Path,
-    addr_check: bool,
+    address_mode: AddressModeArg,
     htif: bool,
     instret: InstretModeArg,
     syscalls: SyscallModeArg,
@@ -36,7 +36,7 @@ pub fn cmd_compile(
     };
 
     let mut options = CompileOptions::new()
-        .with_addr_check(addr_check)
+        .with_address_mode(address_mode.into())
         .with_htif(htif)
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
@@ -90,7 +90,7 @@ pub fn cmd_compile(
 pub fn cmd_lift(
     input: &Path,
     output: &Path,
-    addr_check: bool,
+    address_mode: AddressModeArg,
     htif: bool,
     line_info: bool,
     instret: InstretModeArg,
@@ -109,7 +109,7 @@ pub fn cmd_lift(
     };
 
     let mut options = CompileOptions::new()
-        .with_addr_check(addr_check)
+        .with_address_mode(address_mode.into())
         .with_htif(htif)
         .with_line_info(line_info)
         .with_instret_mode(instret.into())

@@ -26,7 +26,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use rvr::{EmitConfig, InstretMode, Pipeline, Rv64};
+use rvr::{AddressMode, EmitConfig, InstretMode, Pipeline, Rv64};
 use rvr_isa::{ExtensionRegistry, syscalls::LinuxHandler, syscalls::SyscallAbi};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,8 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Enable instruction retirement counting.
     config.instret_mode = InstretMode::Count;
 
-    // Enable address bounds checking (slower but safer).
-    config.addr_check = true;
+    // Enable address bounds checking (safe + vectorized).
+    config.address_mode = AddressMode::Bounds;
 
     // Linux syscall handling for user-space workloads.
     let registry = ExtensionRegistry::<Rv64>::standard()

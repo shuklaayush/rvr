@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rvr::{FixedAddressConfig, InstretMode, SyscallMode};
+use rvr::{AddressMode, FixedAddressConfig, InstretMode, SyscallMode};
 use rvr_emit::{PassedVar, TracerConfig, TracerKind};
 
 /// Exit code for success.
@@ -44,9 +44,9 @@ pub enum Commands {
         #[arg(short, long, default_value = "output")]
         output: PathBuf,
 
-        /// Enable address checking
-        #[arg(long)]
-        addr_check: bool,
+        /// Address translation mode
+        #[arg(long, value_enum, default_value = "wrap")]
+        address_mode: AddressModeArg,
 
         /// Enable HTIF (Host-Target Interface) for riscv-tests
         #[arg(long)]
@@ -91,9 +91,9 @@ pub enum Commands {
         #[arg(short, long, default_value = "output")]
         output: PathBuf,
 
-        /// Enable address checking
-        #[arg(long)]
-        addr_check: bool,
+        /// Address translation mode
+        #[arg(long, value_enum, default_value = "wrap")]
+        address_mode: AddressModeArg,
 
         /// Enable HTIF (Host-Target Interface) for riscv-tests
         #[arg(long)]
@@ -222,6 +222,10 @@ pub struct BenchCompileArgs {
     /// Linker to use
     #[arg(long)]
     pub linker: Option<String>,
+
+    /// Address translation mode
+    #[arg(long, value_enum, default_value = "wrap")]
+    pub address_mode: AddressModeArg,
 
     /// Enable instruction counting (use --instret=false to disable)
     #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
@@ -433,6 +437,28 @@ impl From<SyscallModeArg> for SyscallMode {
         match arg {
             SyscallModeArg::Baremetal => SyscallMode::BareMetal,
             SyscallModeArg::Linux => SyscallMode::Linux,
+        }
+    }
+}
+
+/// Address translation mode for memory accesses.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+pub enum AddressModeArg {
+    /// Assume valid + passthrough (guard pages catch OOB)
+    Unchecked,
+    /// Mask to memory size (matches sv39)
+    #[default]
+    Wrap,
+    /// Bounds check + trap (explicit errors)
+    Bounds,
+}
+
+impl From<AddressModeArg> for AddressMode {
+    fn from(arg: AddressModeArg) -> Self {
+        match arg {
+            AddressModeArg::Unchecked => AddressMode::Unchecked,
+            AddressModeArg::Wrap => AddressMode::Wrap,
+            AddressModeArg::Bounds => AddressMode::Bounds,
         }
     }
 }

@@ -52,7 +52,7 @@
 //! ## Basic Compilation
 //!
 //! ```ignore
-//! use rvr::{compile, CompileOptions, InstretMode};
+//! use rvr::{compile, CompileOptions, AddressMode, InstretMode};
 //!
 //! // Simple compilation
 //! let lib = rvr::compile("prog.elf".as_ref(), "out/".as_ref())?;
@@ -60,7 +60,7 @@
 //! // With options
 //! let options = CompileOptions::new()
 //!     .with_instret_mode(InstretMode::Count)
-//!     .with_addr_check(true);
+//!     .with_address_mode(AddressMode::Bounds);
 //! let lib = rvr::compile_with_options("prog.elf".as_ref(), "out/".as_ref(), options)?;
 //! ```
 //!
@@ -199,7 +199,7 @@
 // Core types - always available
 pub use rvr_elf::{ElfImage, get_elf_xlen};
 pub use rvr_emit::{
-    Compiler, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode, TracerConfig,
+    AddressMode, Compiler, EmitConfig, FixedAddressConfig, InstretMode, SyscallMode, TracerConfig,
 };
 pub use rvr_isa::{Rv32, Rv64, Xlen};
 
@@ -387,8 +387,8 @@ impl<X: Xlen> Recompiler<X> {
 /// Options for compile/lift operations.
 #[derive(Clone, Debug)]
 pub struct CompileOptions {
-    /// Enable address bounds checking.
-    pub addr_check: bool,
+    /// Address translation mode.
+    pub address_mode: AddressMode,
     /// Enable HTIF (Host-Target Interface) for riscv-tests.
     pub htif: bool,
     /// Print HTIF stdout (guest console output).
@@ -419,7 +419,7 @@ pub struct CompileOptions {
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
-            addr_check: false,
+            address_mode: AddressMode::default(),
             htif: false,
             htif_verbose: false,
             line_info: true, // Match EmitConfig default
@@ -441,9 +441,9 @@ impl CompileOptions {
         Self::default()
     }
 
-    /// Set address checking.
-    pub fn with_addr_check(mut self, enabled: bool) -> Self {
-        self.addr_check = enabled;
+    /// Set address translation mode.
+    pub fn with_address_mode(mut self, mode: AddressMode) -> Self {
+        self.address_mode = mode;
         self
     }
 
@@ -521,7 +521,7 @@ impl CompileOptions {
 
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
-        config.addr_check = self.addr_check;
+        config.address_mode = self.address_mode;
         config.htif_enabled = self.htif;
         config.htif_verbose = self.htif_verbose;
         config.emit_line_info = self.line_info;

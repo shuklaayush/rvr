@@ -272,6 +272,22 @@ pub enum SyscallMode {
     Linux,
 }
 
+/// Address translation mode for memory accesses.
+///
+/// Controls how guest virtual addresses are translated to physical addresses
+/// in the emulator's memory buffer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AddressMode {
+    /// Assume valid + passthrough. Guard pages catch OOB at runtime.
+    Unchecked,
+    /// Mask addresses to memory size (addresses wrap at boundary).
+    /// Matches RISC-V sv39/sv48 address translation behavior.
+    #[default]
+    Wrap,
+    /// Bounds check + trap + mask. Explicit trap on invalid addresses.
+    Bounds,
+}
+
 /// Fixed address configuration for state and memory.
 ///
 /// When enabled, state and memory are accessed via compile-time constant addresses
@@ -305,8 +321,8 @@ pub struct EmitConfig<X: Xlen> {
     pub num_regs: usize,
     /// Registers passed as arguments (hot registers).
     pub hot_regs: Vec<u8>,
-    /// Enable address bounds checking.
-    pub addr_check: bool,
+    /// Address translation mode.
+    pub address_mode: AddressMode,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
     /// Emit comments in generated C code.
@@ -345,7 +361,7 @@ impl<X: Xlen> EmitConfig<X> {
         Self {
             num_regs,
             hot_regs: Vec::new(),
-            addr_check: false,
+            address_mode: AddressMode::default(),
             instret_mode: InstretMode::Count,
             emit_comments: true,
             emit_line_info: true,
@@ -430,9 +446,9 @@ impl<X: Xlen> EmitConfig<X> {
         !self.tracer_config.is_none()
     }
 
-    /// Set address checking.
-    pub fn with_addr_check(mut self, enabled: bool) -> Self {
-        self.addr_check = enabled;
+    /// Set address translation mode.
+    pub fn with_address_mode(mut self, mode: AddressMode) -> Self {
+        self.address_mode = mode;
         self
     }
 
