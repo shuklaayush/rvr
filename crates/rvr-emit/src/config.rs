@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 
 use rvr_ir::Xlen;
 
+use crate::arm64;
 use crate::c::{TracerConfig, config as c_config};
 use crate::x86;
 
@@ -23,6 +24,7 @@ pub fn default_total_slots_for_backend(backend: Backend) -> usize {
     match backend {
         Backend::C => c_config::default_total_slots(),
         Backend::X86Asm => x86::HOT_REG_SLOTS,
+        Backend::ARM64Asm => arm64::HOT_REG_SLOTS,
     }
 }
 
@@ -147,6 +149,8 @@ pub enum Backend {
     C,
     /// Emit x86-64 assembly, compile with gcc/as.
     X86Asm,
+    /// Emit ARM64 assembly, compile with gcc/as.
+    ARM64Asm,
 }
 
 /// Analysis mode for the compilation pipeline.
@@ -322,7 +326,7 @@ impl<X: Xlen> EmitConfig<X> {
     /// Re-initialize hot registers based on the current backend.
     ///
     /// For C backend: uses platform-specific argument slots minus fixed slots.
-    /// For x86 backend: uses all available GPRs (state/memory use dedicated regs).
+    /// For x86/ARM64 backends: uses all available GPRs (state/memory use dedicated regs).
     pub fn reinit_hot_regs_for_backend(&mut self) {
         match self.backend {
             Backend::C => {
@@ -333,6 +337,11 @@ impl<X: Xlen> EmitConfig<X> {
                 // x86 uses dedicated registers for state (rbx) and memory (r15),
                 // so all hot reg slots are available for RISC-V registers
                 self.init_hot_regs_count(x86::HOT_REG_SLOTS);
+            }
+            Backend::ARM64Asm => {
+                // ARM64 uses dedicated registers for state (x19) and memory (x20),
+                // so all hot reg slots are available for RISC-V registers
+                self.init_hot_regs_count(arm64::HOT_REG_SLOTS);
             }
         }
     }

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use rvr_cfg::{BlockTable, InstructionTable};
 use rvr_elf::{DebugInfo, ElfImage};
+use rvr_emit::arm64::Arm64Emitter;
 use rvr_emit::c::{CProject, MemorySegment};
 use rvr_emit::x86::X86Emitter;
 use rvr_emit::{AnalysisMode, EmitConfig, EmitInputs, NUM_REGS_E, NUM_REGS_I};
@@ -596,6 +597,75 @@ impl<X: Xlen> Pipeline<X> {
         emitter.write_asm(&asm_path)?;
 
         info!(output = %asm_path.display(), "wrote x86 assembly");
+
+        Ok(())
+    }
+
+    /// Emit ARM64 assembly to output directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
+    /// Returns `Error::Io` if file writing fails.
+    pub fn emit_arm64(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
+        let _span = info_span!("emit_arm64").entered();
+
+        let block_table = self
+            .block_table
+            .as_ref()
+            .ok_or(Error::CfgNotBuilt("emit_arm64"))?;
+
+        let entry_point = X::to_u64(self.image.entry_point);
+
+        // Compute text_start and pc_end from blocks
+        let text_start = self
+            .ir_blocks
+            .values()
+            .map(|b| X::to_u64(b.start_pc))
+            .min()
+            .unwrap_or(entry_point);
+        let pc_end = self
+            .ir_blocks
+            .values()
+            .map(|b| X::to_u64(b.end_pc))
+            .max()
+            .unwrap_or(0);
+
+        // Get absorbed_to_merged mapping from BlockTable
+        let absorbed_to_merged = block_table.absorbed_to_merged.clone();
+
+        // Build emission inputs
+        let initial_brk = X::to_u64(self.image.get_initial_program_break());
+        let mut inputs = EmitInputs::new(entry_point, pc_end)
+            .with_text_start(text_start)
+            .with_initial_brk(initial_brk);
+        inputs
+            .valid_addresses
+            .extend(self.ir_blocks.keys().copied());
+        inputs.absorbed_to_merged = absorbed_to_merged;
+
+        // Create ARM64 emitter
+        let mut emitter = Arm64Emitter::new(self.config.clone(), inputs);
+
+        // Collect blocks sorted by start PC
+        let mut blocks: Vec<(u64, BlockIR<X>)> = self
+            .ir_blocks
+            .iter()
+            .map(|(pc, b)| (*pc, b.clone()))
+            .collect();
+        blocks.sort_by_key(|(pc, _)| *pc);
+
+        // Generate assembly
+        emitter.generate(&blocks);
+
+        // Create output directory
+        std::fs::create_dir_all(output_dir)?;
+
+        // Write assembly file
+        let asm_path = output_dir.join(format!("{}.s", base_name));
+        emitter.write_asm(&asm_path)?;
+
+        info!(output = %asm_path.display(), "wrote ARM64 assembly");
 
         Ok(())
     }

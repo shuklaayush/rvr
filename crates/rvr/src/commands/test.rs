@@ -105,6 +105,7 @@ pub fn riscv_tests_run(
     let backend_name = match backend {
         Backend::C => "C",
         Backend::X86Asm => "x86",
+        Backend::ARM64Asm => "arm64",
     };
     eprintln!("Using backend: {}", backend_name);
 
@@ -119,6 +120,22 @@ pub fn riscv_tests_run(
             eprintln!();
             eprintln!("Options:");
             eprintln!("  - Run tests on an x86-64 machine");
+            eprintln!("  - Use the C backend (--backend c) which generates portable C code");
+            return EXIT_FAILURE;
+        }
+    }
+
+    // Check for ARM64 backend on non-ARM64 host
+    if matches!(backend, Backend::ARM64Asm) {
+        let is_arm64_host = cfg!(target_arch = "aarch64");
+        if !is_arm64_host {
+            eprintln!();
+            eprintln!("Error: arm64 backend cannot be tested on non-ARM64 host");
+            eprintln!("The arm64 backend generates ARM64 shared libraries that cannot be");
+            eprintln!("loaded on {} hosts.", std::env::consts::ARCH);
+            eprintln!();
+            eprintln!("Options:");
+            eprintln!("  - Run tests on an ARM64 machine");
             eprintln!("  - Use the C backend (--backend c) which generates portable C code");
             return EXIT_FAILURE;
         }

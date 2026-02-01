@@ -334,6 +334,10 @@ impl<X: Xlen> Recompiler<X> {
                 // Assemble x86 to .so
                 compile_x86_to_shared(output_dir, lib_name, &self.config.compiler, self.quiet)?;
             }
+            Backend::ARM64Asm => {
+                // Assemble ARM64 to .so
+                compile_arm64_to_shared(output_dir, lib_name, &self.config.compiler, self.quiet)?;
+            }
         }
 
         let lib_path = output_dir.join(format!("lib{}.so", lib_name));
@@ -395,6 +399,10 @@ impl<X: Xlen> Recompiler<X> {
             }
             Backend::X86Asm => {
                 pipeline.emit_x86(output_dir, base_name)?;
+                Ok(output_dir.join(format!("{}.s", base_name)))
+            }
+            Backend::ARM64Asm => {
+                pipeline.emit_arm64(output_dir, base_name)?;
                 Ok(output_dir.join(format!("{}.s", base_name)))
             }
         }
@@ -841,6 +849,117 @@ fn compile_x86_to_shared(
 
     if !quiet {
         debug!(lib = %lib_path.display(), cross = %needs_cross, "compiled x86 shared library");
+    }
+
+    Ok(())
+}
+
+/// Compile ARM64 assembly to shared library.
+///
+/// On non-ARM64 hosts, uses clang for cross-compilation with:
+/// - `--target=aarch64-unknown-linux-gnu` for ARM64 target
+/// - `-fuse-ld=lld` for cross-linking
+/// - `-nostdlib` since generated code is self-contained
+fn compile_arm64_to_shared(
+    output_dir: &Path,
+    base_name: &str,
+    compiler: &Compiler,
+    quiet: bool,
+) -> Result<()> {
+    let _span = info_span!("compile_arm64").entered();
+
+    let asm_path = output_dir.join(format!("{}.s", base_name));
+    let obj_path = output_dir.join(format!("{}.o", base_name));
+    let lib_path = output_dir.join(format!("lib{}.so", base_name));
+
+    if !asm_path.exists() {
+        return Err(Error::CompilationFailed(format!(
+            "Assembly file not found: {}",
+            asm_path.display()
+        )));
+    }
+
+    // Check if we need cross-compilation (non-ARM64 host)
+    let is_arm64_host = cfg!(target_arch = "aarch64");
+    let needs_cross = !is_arm64_host;
+
+    let cc = if needs_cross {
+        // On non-ARM64 hosts, must use clang for cross-compilation
+        "clang"
+    } else {
+        compiler.command()
+    };
+
+    debug!(asm = %asm_path.display(), compiler = %cc, cross = %needs_cross, "assembling");
+
+    // Assemble: cc -c -fPIC -o foo.o foo.s
+    let mut asm_cmd = Command::new(cc);
+
+    if needs_cross {
+        // Cross-compilation: use clang with explicit ARM64 target
+        asm_cmd.args(["--target=aarch64-unknown-linux-gnu", "-c", "-fPIC"]);
+    } else {
+        asm_cmd.args(["-c", "-fPIC"]);
+    }
+
+    asm_cmd.arg("-o").arg(&obj_path).arg(&asm_path);
+
+    let asm_output = asm_cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?;
+
+    if !asm_output.status.success() {
+        let stderr = String::from_utf8_lossy(&asm_output.stderr);
+        error!(stderr = %stderr, "assembly failed");
+        return Err(Error::CompilationFailed(format!(
+            "Assembly failed: {}",
+            stderr.lines().next().unwrap_or("unknown error")
+        )));
+    }
+
+    debug!(obj = %obj_path.display(), "linking");
+
+    // Link to shared library
+    let mut link_cmd = Command::new(cc);
+
+    if needs_cross {
+        // Cross-linking: use lld and no stdlib (our code is self-contained)
+        link_cmd.args([
+            "--target=aarch64-unknown-linux-gnu",
+            "-fuse-ld=lld",
+            "-nostdlib",
+            "-shared",
+            "-Wl,-z,noexecstack",
+        ]);
+    } else {
+        link_cmd.args(["-shared", "-Wl,-z,noexecstack"]);
+        // Use configured linker for clang (e.g., lld, lld-20)
+        if let Some(linker) = compiler.linker() {
+            link_cmd.arg(format!("-fuse-ld={}", linker));
+        }
+    }
+
+    link_cmd.arg("-o").arg(&lib_path).arg(&obj_path);
+
+    let link_output = link_cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| Error::CompilationFailed(format!("Failed to link: {}", e)))?;
+
+    if !link_output.status.success() {
+        let stderr = String::from_utf8_lossy(&link_output.stderr);
+        error!(stderr = %stderr, "linking failed");
+        return Err(Error::CompilationFailed(format!(
+            "Linking failed: {}",
+            stderr.lines().next().unwrap_or("unknown error")
+        )));
+    }
+
+    if !quiet {
+        debug!(lib = %lib_path.display(), cross = %needs_cross, "compiled ARM64 shared library");
     }
 
     Ok(())

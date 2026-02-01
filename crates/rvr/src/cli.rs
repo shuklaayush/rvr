@@ -491,6 +491,8 @@ pub enum BackendArg {
     C,
     /// Emit x86-64 assembly, compile with gcc/as (experimental)
     X86,
+    /// Emit ARM64 assembly, compile with gcc/as (experimental)
+    Arm64,
 }
 
 impl From<BackendArg> for rvr_emit::Backend {
@@ -498,6 +500,7 @@ impl From<BackendArg> for rvr_emit::Backend {
         match arg {
             BackendArg::C => rvr_emit::Backend::C,
             BackendArg::X86 => rvr_emit::Backend::X86Asm,
+            BackendArg::Arm64 => rvr_emit::Backend::ARM64Asm,
         }
     }
 }
