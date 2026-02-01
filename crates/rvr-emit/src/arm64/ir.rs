@@ -1632,8 +1632,13 @@ impl<X: Xlen> Arm64Emitter<X> {
                     // Check if val_reg is temp2 (x1/w1) - use exact match, not starts_with
                     // to avoid matching x10/w10 etc.
                     let is_temp2 = val_reg == "x1" || val_reg == "w1";
-                    if val_reg != temp2 && !is_temp2 {
+                    let is_temp1 = val_reg == "x0" || val_reg == "w0";
+                    let mut store_reg = val_reg.as_str();
+                    if val_reg != temp2 && !is_temp2 && !is_temp1 {
+                        store_reg = &val_reg;
+                    } else {
                         self.emitf(format!("mov {temp2}, {val_reg}"));
+                        store_reg = temp2;
                     }
                     // Then evaluate address
                     let base_reg = self.emit_expr_as_addr(base);
@@ -1653,13 +1658,16 @@ impl<X: Xlen> Arm64Emitter<X> {
                         };
 
                     // Store
-                    let val32 = self.reg_32(temp2);
+                    let val32 = self.reg_32(store_reg);
                     let mem = format!("{}, x0", reserved::MEMORY_PTR);
                     match width {
                         1 => self.emitf(format!("strb {val32}, [{mem}]")),
                         2 => self.emitf(format!("strh {val32}, [{mem}]")),
                         4 => self.emitf(format!("str {val32}, [{mem}]")),
-                        8 => self.emitf(format!("str {temp2}, [{mem}]")),
+                        8 => {
+                            let reg64 = self.reg_64(store_reg);
+                            self.emitf(format!("str {reg64}, [{mem}]"))
+                        }
                         _ => self.emitf(format!("str {val32}, [{mem}]")),
                     }
 
