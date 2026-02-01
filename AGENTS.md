@@ -75,10 +75,10 @@ rvr/
 ## Pipeline
 
 ```
-ELF → Lifter → IR → Emitter → C → Native (.so)
+ELF → Lifter → IR → CFG → Emitter → C/.s → Native (.so)
 ```
 
-The **lifter** decodes RISC-V instructions into a typed IR with a modular extension system (RV32/64IMAC, Zb*, Zicsr, Zicond). The **emitter** generates C (or assembly) with tail-call dispatch, passing hot registers as function arguments. The CFG stage (`rvr-cfg`) sits between IR and the emitter for block structure and analysis. Since the output is native code, you can profile with standard tools (perf, Instruments) and identify hotspots at the basic block level.
+The **lifter** decodes RISC-V instructions into a typed IR with a modular extension system (RV32/64IMAC, Zb*, Zicsr, Zicond). The **emitter** generates C or assembly with tail-call dispatch, passing hot registers as function arguments. The CFG stage (`rvr-cfg`) sits between IR and the emitter for block structure and analysis. Since the output is native code, you can profile with standard tools (perf, Instruments) and identify hotspots at the basic block level.
 
 ## Development Guidelines
 
@@ -91,6 +91,7 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **Question Before Optimizing**: Don't optimize complexity that shouldn't exist. Before adding prefixes like `rv32_`/`rv64_` or separate types, ask: can this be unified? A single generic type is better than duplicated code paths.
 - **No Bloat**: KISS principle. Only create abstractions when there's actual logic or variation.
 - **No Magic Constants**: Use `const` with descriptive names.
+- **No Constant Duplication**: For shared addresses like the HTIF `tohost` location, define a single `TOHOST_ADDR` constant in a shared location and reuse it instead of re-declaring the value across modules.
 - **No Warnings**: Code must compile without warnings. Use `#![deny(warnings)]` in crate roots.
 - **Delete Tech Debt**: Remove unused code immediately.
 - **Script Large Refactors**: For repetitive refactors, prefer writing a script over manual brute-force edits. Always commit or stash work before running scripts.
@@ -114,13 +115,6 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 4. Look at working implementations as templates
 
 **Conventional Commits**: Use conventional commit messages (e.g. `feat: ...`, `fix: ...`, `refactor: ...`) and keep commits small and logical.
-
-**Backend Smoke Tests**: For quick backend checks, run a single riscv-test file with a specific backend, e.g.:
-```bash
-./target/release/rvr test --backend arm64 bin/riscv-tests/rv64ui-p-add
-```
-
-**Avoid Constant Duplication**: For shared addresses like the HTIF `tohost` location, define a single `TOHOST_ADDR` constant in a shared location and reuse it instead of re-declaring the value across modules.
 
 ### Rust Patterns
 
@@ -159,6 +153,11 @@ cargo run -- bench run
 ```
 
 riscv-tests binaries are in `bin/riscv-tests/` (tracked with Git LFS).
+
+**Backend Smoke Tests**: For quick backend checks, run a single riscv-test file with a specific backend, e.g.:
+```bash
+./target/release/rvr test --backend arm64 bin/riscv-tests/rv64ui-p-add
+```
 
 ## Code Generation Backends
 
