@@ -24,7 +24,7 @@ pub use registers::{HOT_REG_SLOTS, RegMap};
 use std::collections::HashSet;
 use std::path::Path;
 
-use rvr_ir::{BlockIR, Xlen};
+use rvr_ir::{InstrIR, Xlen};
 
 use crate::RvStateLayout;
 use crate::config::EmitConfig;
@@ -48,6 +48,8 @@ pub struct Arm64Emitter<X: Xlen> {
     pub(self) memory_mask: u64,
     /// Counter for generating unique labels.
     pub(self) label_counter: usize,
+    /// Spill depth for nested binary ops (temp stack slots).
+    pub(self) spill_depth: usize,
 }
 
 impl<X: Xlen> Arm64Emitter<X> {
@@ -74,6 +76,7 @@ impl<X: Xlen> Arm64Emitter<X> {
             reg_map,
             memory_mask,
             label_counter: 0,
+            spill_depth: 0,
         }
     }
 
@@ -81,13 +84,13 @@ impl<X: Xlen> Arm64Emitter<X> {
     // Public API
     // ========================================================================
 
-    /// Generate complete assembly file.
-    pub fn generate(&mut self, blocks: &[(u64, BlockIR<X>)]) {
+    /// Generate complete assembly file from a linear instruction stream.
+    pub fn generate_instructions(&mut self, instrs: &[InstrIR<X>]) {
         self.emit_header();
         self.emit_text_section();
         self.emit_runtime_wrapper();
         self.emit_prologue();
-        self.emit_blocks(blocks);
+        self.emit_instructions(instrs);
         self.emit_epilogue();
         self.emit_jump_table();
         self.emit_metadata_constants();
@@ -204,7 +207,7 @@ mod tests {
     fn test_full_generation() {
         let config = EmitConfig::<Rv64>::default();
         let mut emitter = Arm64Emitter::new(config, test_inputs());
-        emitter.generate(&[]);
+        emitter.generate_instructions(&[]);
         let asm = emitter.assembly();
 
         assert!(asm.contains(".arch armv8-a"));

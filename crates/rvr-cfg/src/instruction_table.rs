@@ -64,6 +64,7 @@ impl<X: Xlen> Default for Slot<X> {
 ///
 /// Maintains instruction slots indexed by PC, with 2-byte slot size.
 /// Handles both compressed (2-byte) and full (4-byte) instructions.
+#[derive(Clone, Debug)]
 pub struct InstructionTable<X: Xlen> {
     /// Decoded instruction slots (indexed by slot).
     slots: Vec<Slot<X>>,

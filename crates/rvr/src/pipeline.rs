@@ -8,8 +8,8 @@ use rvr_elf::{DebugInfo, ElfImage};
 use rvr_emit::arm64::Arm64Emitter;
 use rvr_emit::c::{CProject, MemorySegment};
 use rvr_emit::x86::X86Emitter;
-use rvr_emit::{AnalysisMode, EmitConfig, EmitInputs, NUM_REGS_E, NUM_REGS_I};
-use rvr_ir::BlockIR;
+use rvr_emit::{AnalysisMode, Backend, EmitConfig, EmitInputs, NUM_REGS_E, NUM_REGS_I};
+use rvr_ir::{BlockIR, InstrIR};
 use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, info, info_span, trace_span, warn};
 
@@ -23,8 +23,12 @@ pub struct Pipeline<X: Xlen> {
     config: EmitConfig<X>,
     /// Block table (from CFG analysis).
     block_table: Option<BlockTable<X>>,
+    /// Instruction table (for linear emission).
+    instruction_table: Option<InstructionTable<X>>,
     /// Lifted IR blocks (keyed by start PC).
     ir_blocks: HashMap<u64, BlockIR<X>>,
+    /// Lifted IR instructions (linear order).
+    ir_instructions: Vec<InstrIR<X>>,
     /// Extension registry for decoding and lifting.
     registry: ExtensionRegistry<X>,
     /// Extra entry points (e.g., exported function addresses).
@@ -55,7 +59,9 @@ impl<X: Xlen> Pipeline<X> {
             image,
             config,
             block_table: None,
+            instruction_table: None,
             ir_blocks: HashMap::new(),
+            ir_instructions: Vec::new(),
             registry: ExtensionRegistry::standard(),
             extra_entry_points: Vec::new(),
         }
@@ -78,7 +84,9 @@ impl<X: Xlen> Pipeline<X> {
             image,
             config,
             block_table: None,
+            instruction_table: None,
             ir_blocks: HashMap::new(),
+            ir_instructions: Vec::new(),
             registry,
             extra_entry_points: Vec::new(),
         }
@@ -241,58 +249,89 @@ impl<X: Xlen> Pipeline<X> {
 
         let num_instructions = instr_table.valid_indices().count();
 
-        // Create BlockTable - mode determines whether we do CFG analysis
-        let (mut block_table, blocks_before) = match self.config.analysis_mode {
-            AnalysisMode::FullCfg => {
-                let _span = trace_span!("cfg_analysis").entered();
-                let table = BlockTable::from_instruction_table(instr_table, &self.registry);
-                let before = table.len();
-                (table, before)
-            }
-            AnalysisMode::Basic => {
-                // Linear mode: one instruction per block, no CFG analysis
-                debug!("Basic mode: using linear blocks (no CFG analysis)");
-                let table = BlockTable::linear(instr_table);
-                let before = table.len();
-                (table, before)
-            }
-        };
+        if self.config.backend == Backend::C {
+            // Create BlockTable - mode determines whether we do CFG analysis
+            let (mut block_table, blocks_before) = match self.config.analysis_mode {
+                AnalysisMode::FullCfg => {
+                    let _span = trace_span!("cfg_analysis").entered();
+                    let table = BlockTable::from_instruction_table(instr_table, &self.registry);
+                    let before = table.len();
+                    (table, before)
+                }
+                AnalysisMode::Basic => {
+                    // Linear mode: one instruction per block, no CFG analysis
+                    debug!("Basic mode: using linear blocks (no CFG analysis)");
+                    let table = BlockTable::linear(instr_table);
+                    let before = table.len();
+                    (table, before)
+                }
+            };
 
-        // Apply block transforms only in FullCfg mode
-        let (absorbed, tail_duplicated, superblocked) = match self.config.analysis_mode {
-            AnalysisMode::FullCfg => {
-                let _span = trace_span!("block_transforms").entered();
-                block_table.optimize(&self.registry)
-            }
-            AnalysisMode::Basic => (0, 0, 0),
-        };
+            // Apply block transforms only in FullCfg mode.
+            let (absorbed, tail_duplicated, superblocked) = match self.config.analysis_mode {
+                AnalysisMode::FullCfg => {
+                    let _span = trace_span!("block_transforms").entered();
+                    block_table.optimize(&self.registry)
+                }
+                AnalysisMode::Basic => (0, 0, 0),
+            };
 
-        let num_blocks = block_table.len();
-        let insns_per_block = if num_blocks > 0 {
-            num_instructions as f64 / num_blocks as f64
-        } else {
-            0.0
-        };
+            let num_blocks = block_table.len();
+            let insns_per_block = if num_blocks > 0 {
+                num_instructions as f64 / num_blocks as f64
+            } else {
+                0.0
+            };
 
-        info!(
-            instructions = num_instructions,
-            blocks = num_blocks,
-            insns_per_block = format!("{:.1}", insns_per_block),
-            analysis_mode = ?self.config.analysis_mode,
-            "built CFG"
-        );
-
-        if absorbed > 0 || tail_duplicated > 0 || superblocked > 0 {
             info!(
-                before = blocks_before,
-                absorbed = absorbed,
-                tail_duplicated = tail_duplicated,
-                superblocked = superblocked,
-                "block transforms"
+                instructions = num_instructions,
+                blocks = num_blocks,
+                insns_per_block = format!("{:.1}", insns_per_block),
+                analysis_mode = ?self.config.analysis_mode,
+                "built CFG"
             );
-        }
 
-        self.block_table = Some(block_table);
+            if absorbed > 0 || tail_duplicated > 0 || superblocked > 0 {
+                info!(
+                    before = blocks_before,
+                    absorbed = absorbed,
+                    tail_duplicated = tail_duplicated,
+                    superblocked = superblocked,
+                    "block transforms"
+                );
+            }
+
+            self.block_table = Some(block_table);
+            self.instruction_table = None;
+        } else {
+            if self.config.analysis_mode == AnalysisMode::FullCfg {
+                let _span = trace_span!("cfg_analysis").entered();
+                let block_table =
+                    BlockTable::from_instruction_table(instr_table.clone(), &self.registry);
+                let num_blocks = block_table.len();
+                let insns_per_block = if num_blocks > 0 {
+                    num_instructions as f64 / num_blocks as f64
+                } else {
+                    0.0
+                };
+                info!(
+                    instructions = num_instructions,
+                    blocks = num_blocks,
+                    insns_per_block = format!("{:.1}", insns_per_block),
+                    analysis_mode = ?self.config.analysis_mode,
+                    "built CFG (linear emission)"
+                );
+                self.block_table = Some(block_table);
+            } else {
+                info!(
+                    instructions = num_instructions,
+                    analysis_mode = ?self.config.analysis_mode,
+                    "built instruction table"
+                );
+                self.block_table = None;
+            }
+            self.instruction_table = Some(instr_table);
+        }
         Ok(())
     }
 
@@ -316,12 +355,40 @@ impl<X: Xlen> Pipeline<X> {
         // Lift each block from BlockTable, following continuations
         for (start, end) in blocks_info {
             let conts = continuations.get(&start);
+            let conts = match self.config.backend {
+                Backend::C => conts,
+                _ => None,
+            };
             if let Some(block_ir) = self.lift_block_with_continuations(start, end, conts) {
                 self.ir_blocks.insert(start, block_ir);
             }
         }
 
         debug!(blocks = self.ir_blocks.len(), "lifted to IR");
+
+        Ok(())
+    }
+
+    /// Lift all instructions to IR in linear order (no CFG).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
+    pub fn lift_to_ir_linear(&mut self) -> Result<()> {
+        let _span = info_span!("lift_to_ir_linear").entered();
+
+        let instr_table = self
+            .instruction_table
+            .as_ref()
+            .ok_or(Error::CfgNotBuilt("lift_to_ir_linear"))?;
+
+        self.ir_instructions.clear();
+        for (_, instr) in instr_table.valid_instructions() {
+            let instr_ir = self.registry.lift(instr);
+            self.ir_instructions.push(instr_ir);
+        }
+
+        debug!(instructions = self.ir_instructions.len(), "lifted to IR");
 
         Ok(())
     }
@@ -541,53 +608,42 @@ impl<X: Xlen> Pipeline<X> {
     pub fn emit_x86(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
         let _span = info_span!("emit_x86").entered();
 
-        let block_table = self
-            .block_table
-            .as_ref()
-            .ok_or(Error::CfgNotBuilt("emit_x86"))?;
+        if self.ir_instructions.is_empty() {
+            return Err(Error::CfgNotBuilt("emit_x86"));
+        }
 
         let entry_point = X::to_u64(self.image.entry_point);
 
-        // Compute text_start and pc_end from blocks
-        let text_start = self
-            .ir_blocks
-            .values()
-            .map(|b| X::to_u64(b.start_pc))
-            .min()
-            .unwrap_or(entry_point);
-        let pc_end = self
-            .ir_blocks
-            .values()
-            .map(|b| X::to_u64(b.end_pc))
-            .max()
-            .unwrap_or(0);
-
-        // Get absorbed_to_merged mapping from BlockTable
-        let absorbed_to_merged = block_table.absorbed_to_merged.clone();
-
         // Build emission inputs
+        let mut text_start = entry_point;
+        let mut pc_end = 0u64;
+        if !self.ir_instructions.is_empty() {
+            text_start = self
+                .ir_instructions
+                .iter()
+                .map(|ir| X::to_u64(ir.pc))
+                .min()
+                .unwrap_or(entry_point);
+            pc_end = self
+                .ir_instructions
+                .iter()
+                .map(|ir| X::to_u64(ir.pc) + ir.size as u64)
+                .max()
+                .unwrap_or(0);
+        }
         let initial_brk = X::to_u64(self.image.get_initial_program_break());
         let mut inputs = EmitInputs::new(entry_point, pc_end)
             .with_text_start(text_start)
             .with_initial_brk(initial_brk);
-        inputs
-            .valid_addresses
-            .extend(self.ir_blocks.keys().copied());
-        inputs.absorbed_to_merged = absorbed_to_merged;
+        for instr in &self.ir_instructions {
+            inputs.valid_addresses.insert(X::to_u64(instr.pc));
+        }
 
         // Create x86 emitter
         let mut emitter = X86Emitter::new(self.config.clone(), inputs);
 
-        // Collect blocks sorted by start PC
-        let mut blocks: Vec<(u64, BlockIR<X>)> = self
-            .ir_blocks
-            .iter()
-            .map(|(pc, b)| (*pc, b.clone()))
-            .collect();
-        blocks.sort_by_key(|(pc, _)| *pc);
-
         // Generate assembly
-        emitter.generate(&blocks);
+        emitter.generate_instructions(&self.ir_instructions);
 
         // Create output directory
         std::fs::create_dir_all(output_dir)?;
@@ -610,53 +666,42 @@ impl<X: Xlen> Pipeline<X> {
     pub fn emit_arm64(&mut self, output_dir: &Path, base_name: &str) -> Result<()> {
         let _span = info_span!("emit_arm64").entered();
 
-        let block_table = self
-            .block_table
-            .as_ref()
-            .ok_or(Error::CfgNotBuilt("emit_arm64"))?;
+        if self.ir_instructions.is_empty() {
+            return Err(Error::CfgNotBuilt("emit_arm64"));
+        }
 
         let entry_point = X::to_u64(self.image.entry_point);
 
-        // Compute text_start and pc_end from blocks
-        let text_start = self
-            .ir_blocks
-            .values()
-            .map(|b| X::to_u64(b.start_pc))
-            .min()
-            .unwrap_or(entry_point);
-        let pc_end = self
-            .ir_blocks
-            .values()
-            .map(|b| X::to_u64(b.end_pc))
-            .max()
-            .unwrap_or(0);
-
-        // Get absorbed_to_merged mapping from BlockTable
-        let absorbed_to_merged = block_table.absorbed_to_merged.clone();
-
         // Build emission inputs
+        let mut text_start = entry_point;
+        let mut pc_end = 0u64;
+        if !self.ir_instructions.is_empty() {
+            text_start = self
+                .ir_instructions
+                .iter()
+                .map(|ir| X::to_u64(ir.pc))
+                .min()
+                .unwrap_or(entry_point);
+            pc_end = self
+                .ir_instructions
+                .iter()
+                .map(|ir| X::to_u64(ir.pc) + ir.size as u64)
+                .max()
+                .unwrap_or(0);
+        }
         let initial_brk = X::to_u64(self.image.get_initial_program_break());
         let mut inputs = EmitInputs::new(entry_point, pc_end)
             .with_text_start(text_start)
             .with_initial_brk(initial_brk);
-        inputs
-            .valid_addresses
-            .extend(self.ir_blocks.keys().copied());
-        inputs.absorbed_to_merged = absorbed_to_merged;
+        for instr in &self.ir_instructions {
+            inputs.valid_addresses.insert(X::to_u64(instr.pc));
+        }
 
         // Create ARM64 emitter
         let mut emitter = Arm64Emitter::new(self.config.clone(), inputs);
 
-        // Collect blocks sorted by start PC
-        let mut blocks: Vec<(u64, BlockIR<X>)> = self
-            .ir_blocks
-            .iter()
-            .map(|(pc, b)| (*pc, b.clone()))
-            .collect();
-        blocks.sort_by_key(|(pc, _)| *pc);
-
         // Generate assembly
-        emitter.generate(&blocks);
+        emitter.generate_instructions(&self.ir_instructions);
 
         // Create output directory
         std::fs::create_dir_all(output_dir)?;

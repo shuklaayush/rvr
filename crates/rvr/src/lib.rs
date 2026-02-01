@@ -376,7 +376,10 @@ impl<X: Xlen> Recompiler<X> {
         pipeline.build_cfg()?;
 
         // Lift to IR
-        pipeline.lift_to_ir()?;
+        match self.config.backend {
+            Backend::C => pipeline.lift_to_ir()?,
+            _ => pipeline.lift_to_ir_linear()?,
+        }
 
         let base_name = output_dir
             .file_name()
