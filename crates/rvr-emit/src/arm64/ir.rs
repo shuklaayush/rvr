@@ -1662,14 +1662,13 @@ impl<X: Xlen> Arm64Emitter<X> {
                         }
                     }
 
-                    // Then evaluate address
+                    // Then evaluate address (virtual)
                     let base_reg = self.emit_expr_as_addr(base);
                     if *offset != 0 {
                         self.emit_add_offset("x0", &base_reg, (*offset).into());
                     } else if base_reg != "x0" {
                         self.emitf(format!("mov x0, {base_reg}"));
                     }
-                    self.apply_address_mode("x0");
 
                     // HTIF handling: check for tohost write
                     let htif_done_label = if htif_possible {
@@ -1677,6 +1676,9 @@ impl<X: Xlen> Arm64Emitter<X> {
                     } else {
                         None
                     };
+
+                    // Translate to physical address for the actual store
+                    self.apply_address_mode("x0");
 
                     // Store
                     let val32 = self.reg_32(&store_reg);
