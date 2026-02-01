@@ -75,6 +75,13 @@ impl<X: Xlen> Arm64Emitter<X> {
         } else if imm < 0 && -imm <= 0xFFF {
             let abs = -imm;
             self.emitf(format!("cmn {left_reg}, #{abs}"));
+        } else if let Some((imm12, shift12)) = self.addsub_imm_parts(imm) {
+            let shift = if shift12 { ", lsl #12" } else { "" };
+            if imm >= 0 {
+                self.emitf(format!("cmp {left_reg}, #{imm12}{shift}"));
+            } else {
+                self.emitf(format!("cmn {left_reg}, #{imm12}{shift}"));
+            }
         } else {
             let temp = self.temp2();
             self.load_imm(temp, imm as u64);
@@ -92,6 +99,49 @@ impl<X: Xlen> Arm64Emitter<X> {
             Expr::Binary { op, left, right } => (op, left, right),
             _ => return false,
         };
+        if matches!(op, BinaryOp::Or | BinaryOp::And) {
+            let is_cmp = |expr: &Expr<X>| match expr {
+                Expr::Binary { op, .. } => match op {
+                    BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Ge
+                    | BinaryOp::Ltu
+                    | BinaryOp::Geu => true,
+                    _ => false,
+                },
+                _ => false,
+            };
+            if is_cmp(left) && is_cmp(right) {
+                let skip_label = self.next_label("bool_skip");
+                match (op, invert) {
+                    (BinaryOp::Or, false) => {
+                        let _ = self.try_emit_compare_branch(left, label, false);
+                        let _ = self.try_emit_compare_branch(right, label, false);
+                        return true;
+                    }
+                    (BinaryOp::Or, true) => {
+                        let _ = self.try_emit_compare_branch(left, &skip_label, false);
+                        let _ = self.try_emit_compare_branch(right, &skip_label, false);
+                        self.emitf(format!("b {label}"));
+                        self.emit_label(&skip_label);
+                        return true;
+                    }
+                    (BinaryOp::And, false) => {
+                        let _ = self.try_emit_compare_branch(left, &skip_label, true);
+                        let _ = self.try_emit_compare_branch(right, label, false);
+                        self.emit_label(&skip_label);
+                        return true;
+                    }
+                    (BinaryOp::And, true) => {
+                        let _ = self.try_emit_compare_branch(left, label, true);
+                        let _ = self.try_emit_compare_branch(right, label, true);
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
         let cond_code = match (op, invert) {
             (BinaryOp::Eq, false) | (BinaryOp::Ne, true) => "eq",
             (BinaryOp::Ne, false) | (BinaryOp::Eq, true) => "ne",
@@ -158,6 +208,52 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         self.emitf(format!("b.{cond_code} {label}"));
         true
+    }
+
+    fn addsub_imm_parts(&self, imm: i64) -> Option<(u16, bool)> {
+        if imm == i64::MIN {
+            return None;
+        }
+        let abs = imm.abs() as u64;
+        if abs <= 0xFFF {
+            Some((abs as u16, false))
+        } else if abs <= 0xFFF000 && (abs & 0xFFF) == 0 {
+            Some(((abs >> 12) as u16, true))
+        } else {
+            None
+        }
+    }
+
+    fn cmp_from_temp_branch<'a>(
+        &self,
+        stmts: &'a [Stmt<X>],
+        cond: &Expr<X>,
+    ) -> Option<(&'a Expr<X>, &'a Expr<X>, BinaryOp)> {
+        let temp_idx = match cond {
+            Expr::Read(ReadExpr::Temp(idx)) => *idx,
+            _ => return None,
+        };
+        let last = stmts.last()?;
+        match last {
+            Stmt::Write { target, value } => {
+                if !matches!(target, WriteTarget::Temp(idx) if *idx == temp_idx) {
+                    return None;
+                }
+                match value {
+                    Expr::Binary { op, left, right } => match op {
+                        BinaryOp::Eq
+                        | BinaryOp::Ne
+                        | BinaryOp::Lt
+                        | BinaryOp::Ge
+                        | BinaryOp::Ltu
+                        | BinaryOp::Geu => Some((left.as_ref(), right.as_ref(), *op)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Emit an expression for use as a 64-bit address.
@@ -540,33 +636,30 @@ impl<X: Xlen> Arm64Emitter<X> {
                             BinaryOp::Add | BinaryOp::Sub => {
                                 if right_is_imm {
                                     let signed = self.signed_imm(X::from_u64(right_val));
-                                    if (signed >= 0 && signed <= 0xFFF)
-                                        || (signed < 0 && -signed <= 0xFFF)
-                                    {
+                                    if let Some((imm12, shift12)) = self.addsub_imm_parts(signed) {
+                                        let shift = if shift12 { ", lsl #12" } else { "" };
                                         match op {
                                             BinaryOp::Add if signed >= 0 => {
                                                 self.emitf(format!(
-                                                    "add {dest_reg}, {dest_reg}, #{signed}"
+                                                    "add {dest_reg}, {dest_reg}, #{imm12}{shift}"
                                                 ));
                                                 return dest.to_string();
                                             }
                                             BinaryOp::Add => {
-                                                let abs = -signed;
                                                 self.emitf(format!(
-                                                    "sub {dest_reg}, {dest_reg}, #{abs}"
+                                                    "sub {dest_reg}, {dest_reg}, #{imm12}{shift}"
                                                 ));
                                                 return dest.to_string();
                                             }
                                             BinaryOp::Sub if signed >= 0 => {
                                                 self.emitf(format!(
-                                                    "sub {dest_reg}, {dest_reg}, #{signed}"
+                                                    "sub {dest_reg}, {dest_reg}, #{imm12}{shift}"
                                                 ));
                                                 return dest.to_string();
                                             }
                                             BinaryOp::Sub => {
-                                                let abs = -signed;
                                                 self.emitf(format!(
-                                                    "add {dest_reg}, {dest_reg}, #{abs}"
+                                                    "add {dest_reg}, {dest_reg}, #{imm12}{shift}"
                                                 ));
                                                 return dest.to_string();
                                             }
@@ -664,30 +757,31 @@ impl<X: Xlen> Arm64Emitter<X> {
                         let signed = self.signed_imm(*imm);
                         match op {
                             BinaryOp::Add | BinaryOp::Sub => {
-                                if (signed >= 0 && signed <= 0xFFF)
-                                    || (signed < 0 && -signed <= 0xFFF)
-                                {
+                                if let Some((imm12, shift12)) = self.addsub_imm_parts(signed) {
+                                    let shift = if shift12 { ", lsl #12" } else { "" };
                                     match op {
                                         BinaryOp::Add if signed >= 0 => {
                                             self.emitf(format!(
-                                                "add {dest}, {left_src}, #{signed}"
+                                                "add {dest}, {left_src}, #{imm12}{shift}"
                                             ));
                                             return dest.to_string();
                                         }
                                         BinaryOp::Add => {
-                                            let abs = -signed;
-                                            self.emitf(format!("sub {dest}, {left_src}, #{abs}"));
+                                            self.emitf(format!(
+                                                "sub {dest}, {left_src}, #{imm12}{shift}"
+                                            ));
                                             return dest.to_string();
                                         }
                                         BinaryOp::Sub if signed >= 0 => {
                                             self.emitf(format!(
-                                                "sub {dest}, {left_src}, #{signed}"
+                                                "sub {dest}, {left_src}, #{imm12}{shift}"
                                             ));
                                             return dest.to_string();
                                         }
                                         BinaryOp::Sub => {
-                                            let abs = -signed;
-                                            self.emitf(format!("add {dest}, {left_src}, #{abs}"));
+                                            self.emitf(format!(
+                                                "add {dest}, {left_src}, #{imm12}{shift}"
+                                            ));
                                             return dest.to_string();
                                         }
                                         _ => {}
@@ -719,28 +813,27 @@ impl<X: Xlen> Arm64Emitter<X> {
         if matches!(op, BinaryOp::Add | BinaryOp::Sub) {
             if let Expr::Imm(imm) = right {
                 let signed = self.signed_imm(*imm);
-                if (signed >= 0 && signed <= 0xFFF) || (signed < 0 && -signed <= 0xFFF) {
+                if let Some((imm12, shift12)) = self.addsub_imm_parts(signed) {
+                    let shift = if shift12 { ", lsl #12" } else { "" };
                     let mut left_reg = self.emit_expr(left, temp1);
                     if X::VALUE == 32 && left_reg.starts_with('x') {
                         left_reg = self.reg_32(&left_reg);
                     }
                     match op {
                         BinaryOp::Add if signed >= 0 => {
-                            self.emitf(format!("add {dest}, {left_reg}, #{signed}"));
+                            self.emitf(format!("add {dest}, {left_reg}, #{imm12}{shift}"));
                             return dest.to_string();
                         }
                         BinaryOp::Add => {
-                            let abs = -signed;
-                            self.emitf(format!("sub {dest}, {left_reg}, #{abs}"));
+                            self.emitf(format!("sub {dest}, {left_reg}, #{imm12}{shift}"));
                             return dest.to_string();
                         }
                         BinaryOp::Sub if signed >= 0 => {
-                            self.emitf(format!("sub {dest}, {left_reg}, #{signed}"));
+                            self.emitf(format!("sub {dest}, {left_reg}, #{imm12}{shift}"));
                             return dest.to_string();
                         }
                         BinaryOp::Sub => {
-                            let abs = -signed;
-                            self.emitf(format!("add {dest}, {left_reg}, #{abs}"));
+                            self.emitf(format!("add {dest}, {left_reg}, #{imm12}{shift}"));
                             return dest.to_string();
                         }
                         _ => {}
@@ -1772,8 +1865,23 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         // Check if any statement might set has_exited (e.g., exit syscall)
         let might_exit = instr.statements.iter().any(stmt_writes_to_exited);
+        let mut skip_last_temp_cmp = false;
+        let mut cmp_for_branch: Option<(Expr<X>, Expr<X>, BinaryOp)> = None;
+        if is_last_in_block {
+            if let Terminator::Branch { cond, .. } = &instr.terminator {
+                if let Some((left, right, op)) = self.cmp_from_temp_branch(&instr.statements, cond)
+                {
+                    skip_last_temp_cmp = true;
+                    cmp_for_branch = Some((left.clone(), right.clone(), op));
+                }
+            }
+        }
 
-        for stmt in &instr.statements {
+        let stmt_count = instr.statements.len();
+        for (idx, stmt) in instr.statements.iter().enumerate() {
+            if skip_last_temp_cmp && idx + 1 == stmt_count {
+                continue;
+            }
             self.emit_stmt(stmt);
         }
 
@@ -1790,7 +1898,39 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         // Use fall_pc from output stream to keep inlined/absorbed ranges correct.
         if is_last_in_block {
-            self.emit_terminator(&instr.terminator, fall_pc, pc);
+            if let Some((left, right, op)) = cmp_for_branch {
+                if let Terminator::Branch { target, fall, .. } = &instr.terminator {
+                    let cond_expr = Expr::Binary {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    };
+                    let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                    let target_label = if self.inputs.is_valid_address(target_pc) {
+                        format!("asm_pc_{:x}", target_pc)
+                    } else {
+                        "asm_trap".to_string()
+                    };
+                    if !self.try_emit_compare_branch(&cond_expr, &target_label, false) {
+                        let cond_reg = self.emit_expr(&cond_expr, self.temp1());
+                        self.emitf(format!("cbnz {cond_reg}, {target_label}"));
+                    }
+                    let fall_target_pc = fall
+                        .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                        .unwrap_or(fall_pc);
+                    if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                        self.emit("b asm_trap");
+                        return;
+                    }
+                    if fall_target_pc != fall_pc {
+                        self.emitf(format!("b asm_pc_{:x}", fall_target_pc));
+                    }
+                } else {
+                    self.emit_terminator(&instr.terminator, fall_pc, pc);
+                }
+            } else {
+                self.emit_terminator(&instr.terminator, fall_pc, pc);
+            }
         } else {
             match instr.terminator {
                 Terminator::Branch { .. } => {
