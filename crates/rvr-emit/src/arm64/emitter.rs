@@ -115,7 +115,11 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     pub(super) fn cold_cache_reg(&self) -> &'static str {
-        if X::VALUE == 32 { "w17" } else { reserved::COLD_CACHE }
+        if X::VALUE == 32 {
+            "w17"
+        } else {
+            reserved::COLD_CACHE
+        }
     }
 
     pub(super) fn cold_cache_hit(&self, rv_reg: u8) -> Option<&'static str> {

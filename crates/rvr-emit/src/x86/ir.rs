@@ -13,7 +13,11 @@ use super::registers::reserved;
 fn stmt_writes_to_exited<X: Xlen>(stmt: &Stmt<X>) -> bool {
     match stmt {
         Stmt::Write { target, .. } => matches!(target, WriteTarget::Exited),
-        Stmt::If { then_stmts, else_stmts, .. } => {
+        Stmt::If {
+            then_stmts,
+            else_stmts,
+            ..
+        } => {
             then_stmts.iter().any(stmt_writes_to_exited)
                 || else_stmts.iter().any(stmt_writes_to_exited)
         }
@@ -232,11 +236,7 @@ impl<X: Xlen> X86Emitter<X> {
                         self.reg_dword(dest)
                     ));
                 } else {
-                    self.emitf(format!(
-                        "movq {}(%{}), %{dest}",
-                        off,
-                        reserved::STATE_PTR
-                    ));
+                    self.emitf(format!("movq {}(%{}), %{dest}", off, reserved::STATE_PTR));
                 }
                 dest.to_string()
             }
@@ -253,11 +253,7 @@ impl<X: Xlen> X86Emitter<X> {
             Expr::Read(ReadExpr::Temp(idx)) => {
                 if let Some(offset) = self.temp_slot_offset(*idx) {
                     if X::VALUE == 32 {
-                        self.emitf(format!(
-                            "movl {}(%rsp), %{}",
-                            offset,
-                            self.reg_dword(dest)
-                        ));
+                        self.emitf(format!("movl {}(%rsp), %{}", offset, self.reg_dword(dest)));
                     } else {
                         self.emitf(format!("movq {}(%rsp), %{dest}", offset));
                     }
@@ -360,7 +356,11 @@ impl<X: Xlen> X86Emitter<X> {
 
         if let Expr::Imm(imm) = right {
             let v = X::to_u64(*imm);
-            let full_mask = if X::VALUE == 32 { u32::MAX as u64 } else { u64::MAX };
+            let full_mask = if X::VALUE == 32 {
+                u32::MAX as u64
+            } else {
+                u64::MAX
+            };
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Or | BinaryOp::Xor if v == 0 => {
                     let left_reg = self.emit_expr(left, dest);
@@ -422,7 +422,12 @@ impl<X: Xlen> X86Emitter<X> {
         // Fast path: in-place op on hot register
         if matches!(
             op,
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor | BinaryOp::Mul
+            BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::And
+                | BinaryOp::Or
+                | BinaryOp::Xor
+                | BinaryOp::Mul
         ) {
             if let Expr::Read(ReadExpr::Reg(reg)) = left {
                 if let Some(mapped) = self.reg_map.get(*reg) {
@@ -435,7 +440,11 @@ impl<X: Xlen> X86Emitter<X> {
                         };
                         let imm_fits = right_val <= i32::MAX as u64;
                         match op {
-                            BinaryOp::Add | BinaryOp::Sub | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => {
+                            BinaryOp::Add
+                            | BinaryOp::Sub
+                            | BinaryOp::And
+                            | BinaryOp::Or
+                            | BinaryOp::Xor => {
                                 if right_is_imm && imm_fits {
                                     let op_str = match op {
                                         BinaryOp::Add => "add",
@@ -445,7 +454,10 @@ impl<X: Xlen> X86Emitter<X> {
                                         BinaryOp::Xor => "xor",
                                         _ => unreachable!(),
                                     };
-                                    self.emitf(format!("{op_str}{suffix} ${}, %{dest}", right_val as i32));
+                                    self.emitf(format!(
+                                        "{op_str}{suffix} ${}, %{dest}",
+                                        right_val as i32
+                                    ));
                                     return dest.to_string();
                                 }
                             }
@@ -454,11 +466,19 @@ impl<X: Xlen> X86Emitter<X> {
 
                         let right_reg = self.emit_expr(right, temp2);
                         match op {
-                            BinaryOp::Add => self.emitf(format!("add{suffix} %{right_reg}, %{dest}")),
-                            BinaryOp::Sub => self.emitf(format!("sub{suffix} %{right_reg}, %{dest}")),
-                            BinaryOp::And => self.emitf(format!("and{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::Add => {
+                                self.emitf(format!("add{suffix} %{right_reg}, %{dest}"))
+                            }
+                            BinaryOp::Sub => {
+                                self.emitf(format!("sub{suffix} %{right_reg}, %{dest}"))
+                            }
+                            BinaryOp::And => {
+                                self.emitf(format!("and{suffix} %{right_reg}, %{dest}"))
+                            }
                             BinaryOp::Or => self.emitf(format!("or{suffix} %{right_reg}, %{dest}")),
-                            BinaryOp::Xor => self.emitf(format!("xor{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::Xor => {
+                                self.emitf(format!("xor{suffix} %{right_reg}, %{dest}"))
+                            }
                             BinaryOp::Mul => {
                                 if X::VALUE == 32 {
                                     self.emitf(format!("imull %{right_reg}, %{dest}"));
@@ -1102,7 +1122,11 @@ impl<X: Xlen> X86Emitter<X> {
 
         self.emitf(format!("call {fn_name}"));
         self.restore_hot_regs_from_state();
-        if X::VALUE == 32 { "eax".to_string() } else { "rax".to_string() }
+        if X::VALUE == 32 {
+            "eax".to_string()
+        } else {
+            "rax".to_string()
+        }
     }
 
     /// Emit a unary operation.

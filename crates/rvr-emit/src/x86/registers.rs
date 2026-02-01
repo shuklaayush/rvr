@@ -37,9 +37,8 @@ pub const AVAILABLE_REGS: [&str; 8] = [
 ];
 
 /// 32-bit versions of available registers.
-pub const AVAILABLE_REGS_32: [&str; 8] = [
-    "r14d", "r13d", "r12d", "ebp", "edi", "esi", "r9d", "r8d",
-];
+pub const AVAILABLE_REGS_32: [&str; 8] =
+    ["r14d", "r13d", "r12d", "ebp", "edi", "esi", "r9d", "r8d"];
 
 /// Register mapping from RISC-V to x86.
 #[derive(Clone, Debug)]

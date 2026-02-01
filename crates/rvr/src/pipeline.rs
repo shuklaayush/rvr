@@ -7,11 +7,13 @@ use rvr_cfg::{BlockTable, InstructionTable};
 use rvr_elf::{DebugInfo, ElfImage};
 use rvr_emit::arm64::Arm64Emitter;
 use rvr_emit::c::{
-    CProject, HeaderConfig, HtifConfig, MemorySegment, SyscallsConfig, gen_header,
-    gen_htif_header, gen_htif_source, gen_syscalls_source, gen_tracer_header,
+    CProject, HeaderConfig, HtifConfig, MemorySegment, SyscallsConfig, gen_header, gen_htif_header,
+    gen_htif_source, gen_syscalls_source, gen_tracer_header,
 };
 use rvr_emit::x86::X86Emitter;
-use rvr_emit::{AnalysisMode, Backend, EmitConfig, EmitInputs, SyscallMode, NUM_REGS_E, NUM_REGS_I};
+use rvr_emit::{
+    AnalysisMode, Backend, EmitConfig, EmitInputs, NUM_REGS_E, NUM_REGS_I, SyscallMode,
+};
 use rvr_ir::{BlockIR, InstrIR};
 use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, info, info_span, trace_span, warn};
@@ -735,8 +737,7 @@ impl<X: Xlen> Pipeline<X> {
             let header = gen_header::<X>(&header_cfg);
             std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
 
-            let htif_cfg = HtifConfig::new(base_name, true)
-                .with_verbose(self.config.htif_verbose);
+            let htif_cfg = HtifConfig::new(base_name, true).with_verbose(self.config.htif_verbose);
             let htif_header = gen_htif_header::<X>(&htif_cfg);
             std::fs::write(
                 output_dir.join(format!("{}_htif.h", base_name)),

@@ -115,7 +115,11 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     pub(super) fn cold_cache_reg(&self) -> &'static str {
-        if X::VALUE == 32 { "r11d" } else { reserved::COLD_CACHE }
+        if X::VALUE == 32 {
+            "r11d"
+        } else {
+            reserved::COLD_CACHE
+        }
     }
 
     pub(super) fn cold_cache_hit(&self, rv_reg: u8) -> Option<&'static str> {
