@@ -19,3 +19,4 @@ programs/*/target/
 # Perf data
 perf.data
 perf.data.old
+docs/
