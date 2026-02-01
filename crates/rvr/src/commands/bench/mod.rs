@@ -100,6 +100,9 @@ fn build_compile_options(benchmark: &BenchmarkInfo, args: &BenchCompileArgs) -> 
     if !args.instret {
         options = options.with_instret_mode(InstretMode::Off);
     }
+    if args.perf {
+        options = options.with_perf_mode(true);
+    }
     if args.fixed_addresses {
         options = options.with_fixed_addresses(rvr::FixedAddressConfig::default());
     }

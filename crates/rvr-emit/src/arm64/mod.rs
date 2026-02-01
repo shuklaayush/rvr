@@ -50,6 +50,8 @@ pub struct Arm64Emitter<X: Xlen> {
     pub(self) label_counter: usize,
     /// Spill depth for nested binary ops (temp stack slots).
     pub(self) spill_depth: usize,
+    /// Cached cold register (RV reg number) stored in COLD_CACHE.
+    pub(self) cold_cache: Option<u8>,
 }
 
 impl<X: Xlen> Arm64Emitter<X> {
@@ -77,6 +79,7 @@ impl<X: Xlen> Arm64Emitter<X> {
             memory_mask,
             label_counter: 0,
             spill_depth: 0,
+            cold_cache: None,
         }
     }
 

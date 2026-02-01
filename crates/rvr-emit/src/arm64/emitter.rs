@@ -88,6 +88,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 instret_off
             ));
         }
+        self.cold_cache = None;
     }
 
     /// Restore all hot registers from state (after external calls).
@@ -109,6 +110,30 @@ impl<X: Xlen> Arm64Emitter<X> {
                 reserved::STATE_PTR,
                 instret_off
             ));
+        }
+        self.cold_cache = None;
+    }
+
+    pub(super) fn cold_cache_reg(&self) -> &'static str {
+        if X::VALUE == 32 { "w17" } else { reserved::COLD_CACHE }
+    }
+
+    pub(super) fn cold_cache_hit(&self, rv_reg: u8) -> Option<&'static str> {
+        if self.cold_cache == Some(rv_reg) {
+            Some(self.cold_cache_reg())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn cold_cache_set(&mut self, rv_reg: u8) -> &'static str {
+        self.cold_cache = Some(rv_reg);
+        self.cold_cache_reg()
+    }
+
+    pub(super) fn cold_cache_invalidate(&mut self, rv_reg: u8) {
+        if self.cold_cache == Some(rv_reg) {
+            self.cold_cache = None;
         }
     }
 
@@ -203,14 +228,18 @@ impl<X: Xlen> Arm64Emitter<X> {
             // Already in a register
             arm_reg.to_string()
         } else {
+            if let Some(cached) = self.cold_cache_hit(rv_reg) {
+                return cached.to_string();
+            }
             // Load from memory
             let offset = self.layout.reg_offset(rv_reg);
+            let cache_reg = self.cold_cache_set(rv_reg);
             self.emitf(format!(
-                "ldr {temp}, [{}, #{}]",
+                "ldr {cache_reg}, [{}, #{}]",
                 reserved::STATE_PTR,
                 offset
             ));
-            temp.to_string()
+            cache_reg.to_string()
         }
     }
 

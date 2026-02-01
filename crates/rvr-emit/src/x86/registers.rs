@@ -3,12 +3,12 @@
 //! Maps RISC-V registers to x86-64 registers based on EmitConfig::hot_regs.
 //! Hot registers are kept in x86 GPRs, cold registers are accessed via memory.
 
-/// x86_64 assembly backend: 9 GPRs available for hot registers.
+/// x86_64 assembly backend: 8 GPRs available for hot registers.
 ///
 /// Reserved: rbx (state ptr), r15 (memory ptr), rsp (stack), rax/rcx/rdx (temps)
-/// Additional reserved: r10 (instret cache)
-/// Available: r14, r13, r12, rbp, rdi, rsi, r11, r9, r8
-pub const HOT_REG_SLOTS: usize = 9;
+/// Additional reserved: r10 (instret cache), r11 (cold-reg cache)
+/// Available: r14, r13, r12, rbp, rdi, rsi, r9, r8
+pub const HOT_REG_SLOTS: usize = 8;
 
 /// Reserved x86 registers (not available for RISC-V register mapping).
 /// - rbx: RvState pointer (callee-saved)
@@ -19,26 +19,26 @@ pub mod reserved {
     pub const STATE_PTR: &str = "rbx";
     pub const MEMORY_PTR: &str = "r15";
     pub const INSTRET: &str = "r10";
+    pub const COLD_CACHE: &str = "r11";
 }
 
 /// Available x86 registers for hot RISC-V register mapping.
 /// Order matters - callee-saved first (fewer save/restore), then caller-saved.
 /// With 10 registers available, we can map most frequently-used RISC-V registers.
-pub const AVAILABLE_REGS: [&str; 9] = [
+pub const AVAILABLE_REGS: [&str; 8] = [
     "r14", // callee-saved
     "r13", // callee-saved
     "r12", // callee-saved
     "rbp", // callee-saved (we save/restore in prologue)
     "rdi", // caller-saved, free after prologue (was arg0)
     "rsi", // caller-saved, free after prologue (was arg1)
-    "r11", // caller-saved
     "r9",  // caller-saved
     "r8",  // caller-saved
 ];
 
 /// 32-bit versions of available registers.
-pub const AVAILABLE_REGS_32: [&str; 9] = [
-    "r14d", "r13d", "r12d", "ebp", "edi", "esi", "r11d", "r9d", "r8d",
+pub const AVAILABLE_REGS_32: [&str; 8] = [
+    "r14d", "r13d", "r12d", "ebp", "edi", "esi", "r9d", "r8d",
 ];
 
 /// Register mapping from RISC-V to x86.
@@ -184,8 +184,8 @@ mod tests {
 
     #[test]
     fn test_max_hot_regs() {
-        // Test all 9 available registers
-        let hot: Vec<u8> = (1..=9).collect(); // regs 1-9
+        // Test all 8 available registers
+        let hot: Vec<u8> = (1..=8).collect(); // regs 1-8
         let map = RegMap::new(&hot, false);
 
         assert_eq!(map.get(1), Some("r14"));
@@ -194,9 +194,8 @@ mod tests {
         assert_eq!(map.get(4), Some("rbp"));
         assert_eq!(map.get(5), Some("rdi")); // New: was not available before
         assert_eq!(map.get(6), Some("rsi")); // New: was not available before
-        assert_eq!(map.get(7), Some("r11"));
-        assert_eq!(map.get(8), Some("r9"));
-        assert_eq!(map.get(9), Some("r8"));
+        assert_eq!(map.get(7), Some("r9"));
+        assert_eq!(map.get(8), Some("r8"));
 
         // 11th register should not be mapped (only 10 available)
         let hot11: Vec<u8> = (1..=11).collect();

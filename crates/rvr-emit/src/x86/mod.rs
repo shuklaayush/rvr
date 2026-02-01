@@ -49,6 +49,8 @@ pub struct X86Emitter<X: Xlen> {
     pub(self) memory_mask: u64,
     /// Counter for generating unique labels.
     pub(self) label_counter: usize,
+    /// Cached cold register (RV reg number) stored in COLD_CACHE.
+    pub(self) cold_cache: Option<u8>,
 }
 
 impl<X: Xlen> X86Emitter<X> {
@@ -75,6 +77,7 @@ impl<X: Xlen> X86Emitter<X> {
             reg_map,
             memory_mask,
             label_counter: 0,
+            cold_cache: None,
         }
     }
 

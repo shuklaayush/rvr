@@ -88,6 +88,7 @@ impl<X: Xlen> X86Emitter<X> {
                 reserved::STATE_PTR
             ));
         }
+        self.cold_cache = None;
     }
 
     /// Restore all hot registers from state (after external calls).
@@ -109,6 +110,30 @@ impl<X: Xlen> X86Emitter<X> {
                 reserved::STATE_PTR,
                 reserved::INSTRET
             ));
+        }
+        self.cold_cache = None;
+    }
+
+    pub(super) fn cold_cache_reg(&self) -> &'static str {
+        if X::VALUE == 32 { "r11d" } else { reserved::COLD_CACHE }
+    }
+
+    pub(super) fn cold_cache_hit(&self, rv_reg: u8) -> Option<&'static str> {
+        if self.cold_cache == Some(rv_reg) {
+            Some(self.cold_cache_reg())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn cold_cache_set(&mut self, rv_reg: u8) -> &'static str {
+        self.cold_cache = Some(rv_reg);
+        self.cold_cache_reg()
+    }
+
+    pub(super) fn cold_cache_invalidate(&mut self, rv_reg: u8) {
+        if self.cold_cache == Some(rv_reg) {
+            self.cold_cache = None;
         }
     }
 
@@ -288,15 +313,26 @@ impl<X: Xlen> X86Emitter<X> {
             // Already in a register
             x86_reg.to_string()
         } else {
+            if let Some(cached) = self.cold_cache_hit(rv_reg) {
+                return cached.to_string();
+            }
             // Load from memory
             let offset = self.layout.reg_offset(rv_reg);
-            self.emitf(format!(
-                "mov{} {}(%{}), %{temp}",
-                self.suffix(),
-                offset,
-                reserved::STATE_PTR
-            ));
-            temp.to_string()
+            let cache_reg = self.cold_cache_set(rv_reg);
+            if X::VALUE == 32 {
+                self.emitf(format!(
+                    "movl {}(%{}), %{cache_reg}",
+                    offset,
+                    reserved::STATE_PTR
+                ));
+            } else {
+                self.emitf(format!(
+                    "movq {}(%{}), %{cache_reg}",
+                    offset,
+                    reserved::STATE_PTR
+                ));
+            }
+            cache_reg.to_string()
         }
     }
 

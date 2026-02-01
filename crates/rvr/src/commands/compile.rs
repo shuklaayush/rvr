@@ -22,6 +22,7 @@ pub fn cmd_compile(
     htif: bool,
     instret: InstretModeArg,
     syscalls: SyscallModeArg,
+    perf: bool,
     jobs: usize,
     cc: Option<&str>,
     linker: Option<&str>,
@@ -49,6 +50,9 @@ pub fn cmd_compile(
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config)
         .with_jobs(jobs);
+    if perf {
+        options = options.with_perf_mode(true);
+    }
 
     if let Some(addrs) = fixed_addresses {
         match parse_fixed_addresses(addrs) {
@@ -104,6 +108,7 @@ pub fn cmd_lift(
     line_info: bool,
     instret: InstretModeArg,
     syscalls: SyscallModeArg,
+    perf: bool,
     fixed_addresses: Option<&str>,
     tracer: &TracerArgs,
 ) -> i32 {
@@ -128,6 +133,9 @@ pub fn cmd_lift(
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config);
+    if perf {
+        options = options.with_perf_mode(true);
+    }
 
     if let Some(addrs) = fixed_addresses {
         match parse_fixed_addresses(addrs) {

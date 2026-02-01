@@ -61,6 +61,17 @@ impl<X: Xlen> X86Emitter<X> {
     /// Emit an expression, returning which x86 register holds the result.
     pub(super) fn emit_expr(&mut self, expr: &Expr<X>, dest: &str) -> String {
         let suffix = self.suffix();
+        if self.config.perf_mode {
+            if matches!(
+                expr,
+                Expr::Read(ReadExpr::Csr(_))
+                    | Expr::Read(ReadExpr::Cycle)
+                    | Expr::Read(ReadExpr::Instret)
+            ) {
+                self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
+                return dest.to_string();
+            }
+        }
         match expr {
             Expr::Imm(val) => {
                 let v = X::to_u64(*val);
@@ -1238,6 +1249,7 @@ impl<X: Xlen> X86Emitter<X> {
                     if *reg == 0 {
                         return;
                     }
+                    self.cold_cache_invalidate(*reg);
                     if let Some(x86_reg) = self.reg_map.get(*reg) {
                         let val_reg = self.emit_expr(value, x86_reg);
                         if val_reg != x86_reg {
@@ -1375,6 +1387,7 @@ impl<X: Xlen> X86Emitter<X> {
             }
             Stmt::ExternCall { fn_name, args } => {
                 self.emit_comment(&format!("extern call: {fn_name}"));
+                self.cold_cache = None;
                 let _ = self.emit_extern_call(fn_name, args);
             }
         }

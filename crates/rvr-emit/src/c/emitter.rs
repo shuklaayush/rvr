@@ -503,6 +503,9 @@ impl<X: Xlen> CEmitter<X> {
                 }
             }
             ReadExpr::Csr(csr) => {
+                if self.config.perf_mode {
+                    return "0".to_string();
+                }
                 let state = self.state_ref();
                 let state_arg = if self.uses_fixed_addresses() {
                     ""
@@ -530,8 +533,20 @@ impl<X: Xlen> CEmitter<X> {
                 }
             }
             ReadExpr::Pc => format!("{}->pc", self.state_ref()),
-            ReadExpr::Cycle => format!("{}->cycle", self.state_ref()),
-            ReadExpr::Instret => format!("{}->instret", self.state_ref()),
+            ReadExpr::Cycle => {
+                if self.config.perf_mode {
+                    "0".to_string()
+                } else {
+                    format!("{}->cycle", self.state_ref())
+                }
+            }
+            ReadExpr::Instret => {
+                if self.config.perf_mode {
+                    "0".to_string()
+                } else {
+                    format!("{}->instret", self.state_ref())
+                }
+            }
             ReadExpr::Temp(idx) => format!("_t{}", idx),
             ReadExpr::TraceIdx => format!("{}->trace_idx", self.state_ref()),
             ReadExpr::PcIdx => format!("{}->pc_idx", self.state_ref()),

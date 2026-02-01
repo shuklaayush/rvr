@@ -446,6 +446,8 @@ pub struct CompileOptions {
     /// Fixed addresses for state and memory (optional).
     /// When set, state/memory are accessed via compile-time constant addresses.
     pub fixed_addresses: Option<FixedAddressConfig>,
+    /// Perf mode (disable instret/CSR reads).
+    pub perf_mode: bool,
 }
 
 impl Default for CompileOptions {
@@ -465,6 +467,7 @@ impl Default for CompileOptions {
             compiler: Compiler::default(),
             quiet: false,
             fixed_addresses: None,
+            perf_mode: false,
         }
     }
 }
@@ -565,6 +568,15 @@ impl CompileOptions {
         self
     }
 
+    /// Enable perf mode (disable instret/CSR reads).
+    pub fn with_perf_mode(mut self, enabled: bool) -> Self {
+        self.perf_mode = enabled;
+        if enabled {
+            self.instret_mode = InstretMode::Off;
+        }
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.backend = self.backend;
@@ -578,6 +590,10 @@ impl CompileOptions {
         config.compiler = self.compiler.clone();
         config.syscall_mode = self.syscall_mode;
         config.fixed_addresses = self.fixed_addresses;
+        config.perf_mode = self.perf_mode;
+        if self.perf_mode {
+            config.instret_mode = InstretMode::Off;
+        }
         // Re-compute hot registers based on backend (x86 has different slot count than C)
         config.reinit_hot_regs_for_backend();
     }

@@ -68,6 +68,10 @@ pub enum Commands {
         #[arg(long, value_enum, default_value = "baremetal")]
         syscalls: SyscallModeArg,
 
+        /// Perf mode (disable instret and CSR reads)
+        #[arg(long)]
+        perf: bool,
+
         /// Number of parallel compile jobs (0 = auto)
         #[arg(short = 'j', long, default_value = "0")]
         jobs: usize,
@@ -126,6 +130,10 @@ pub enum Commands {
         /// Syscall handling mode
         #[arg(long, value_enum, default_value = "baremetal")]
         syscalls: SyscallModeArg,
+
+        /// Perf mode (disable instret and CSR reads)
+        #[arg(long)]
+        perf: bool,
 
         /// Use fixed addresses for state and memory (experimental).
         /// Format: "STATE_ADDR,MEMORY_ADDR" (hex) or "default" for default addresses.
@@ -250,6 +258,10 @@ pub struct BenchCompileArgs {
     /// Enable instruction counting (use --instret=false to disable)
     #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
     pub instret: bool,
+
+    /// Perf mode (disable instret and CSR reads)
+    #[arg(long)]
+    pub perf: bool,
 
     /// Use fixed addresses for state and memory (experimental)
     #[arg(long)]

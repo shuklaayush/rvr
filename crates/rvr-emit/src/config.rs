@@ -229,6 +229,8 @@ pub struct EmitConfig<X: Xlen> {
     /// Fixed addresses for state and memory (optional).
     /// When set, state/memory are not passed as arguments but accessed via constant addresses.
     pub fixed_addresses: Option<FixedAddressConfig>,
+    /// Perf mode: disable instret/CSR reads for benchmarking.
+    pub perf_mode: bool,
     _marker: PhantomData<X>,
 }
 
@@ -258,6 +260,7 @@ impl<X: Xlen> EmitConfig<X> {
             syscall_mode: SyscallMode::default(),
             export_functions: false,
             fixed_addresses: None,
+            perf_mode: false,
             _marker: PhantomData,
         }
     }
@@ -422,6 +425,15 @@ impl<X: Xlen> EmitConfig<X> {
         self.fixed_addresses = Some(config);
         // Re-compute hot registers since fixed_addresses affects the calculation
         self.init_hot_regs(c_config::default_total_slots());
+        self
+    }
+
+    /// Enable perf mode (disables instret and CSR reads).
+    pub fn with_perf_mode(mut self, enabled: bool) -> Self {
+        self.perf_mode = enabled;
+        if enabled {
+            self.instret_mode = InstretMode::Off;
+        }
         self
     }
 
