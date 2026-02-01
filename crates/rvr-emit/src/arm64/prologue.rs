@@ -69,6 +69,12 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit("stp x13, x14, [sp, #-16]!");
         self.emit("stp x15, x16, [sp, #-16]!");
         self.emit("stp x17, x18, [sp, #-16]!");
+        if Arm64Emitter::<X>::TEMP_STACK_BYTES > 0 {
+            self.emitf(format!(
+                "sub sp, sp, #{}",
+                Arm64Emitter::<X>::TEMP_STACK_BYTES
+            ));
+        }
         self.emit_blank();
 
         self.emit_comment("Setup pointers");
@@ -118,6 +124,12 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_blank();
 
         self.emit_comment("Restore callee-saved registers");
+        if Arm64Emitter::<X>::TEMP_STACK_BYTES > 0 {
+            self.emitf(format!(
+                "add sp, sp, #{}",
+                Arm64Emitter::<X>::TEMP_STACK_BYTES
+            ));
+        }
         // Restore in reverse order
         self.emit("ldp x17, x18, [sp], #16");
         self.emit("ldp x15, x16, [sp], #16");

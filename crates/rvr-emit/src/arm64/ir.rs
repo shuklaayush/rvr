@@ -3,8 +3,7 @@
 //! Translates IR expressions, statements, and terminators to ARM64 assembly.
 
 use rvr_ir::{
-    BinaryOp, BlockIR, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp, WriteTarget,
-    Xlen,
+    BinaryOp, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp, WriteTarget, Xlen,
 };
 
 use super::Arm64Emitter;
@@ -68,7 +67,10 @@ impl<X: Xlen> Arm64Emitter<X> {
                 width,
                 signed,
             }) => {
-                self.emit_expr_as_addr(addr);
+                let base_reg = self.emit_expr_as_addr(addr);
+                if base_reg != "x0" {
+                    self.emitf(format!("mov x0, {base_reg}"));
+                }
                 self.apply_address_mode("x0");
                 self.emitf(format!("add x0, x0, {}", reserved::MEMORY_PTR));
                 self.emit_load_from_mem("x0", dest, *width, *signed);
@@ -143,6 +145,43 @@ impl<X: Xlen> Arm64Emitter<X> {
                 ));
                 dest.to_string()
             }
+            Expr::Read(ReadExpr::ResAddr) => {
+                let off = self.layout.offset_reservation_addr;
+                if X::VALUE == 32 {
+                    self.emitf(format!(
+                        "ldr {}, [{}, #{}]",
+                        self.reg_32(dest),
+                        reserved::STATE_PTR,
+                        off
+                    ));
+                } else {
+                    self.emitf(format!("ldr {dest}, [{}, #{}]", reserved::STATE_PTR, off));
+                }
+                dest.to_string()
+            }
+            Expr::Read(ReadExpr::ResValid) => {
+                let off = self.layout.offset_reservation_valid;
+                self.emitf(format!(
+                    "ldrb {}, [{}, #{}]",
+                    self.reg_32(dest),
+                    reserved::STATE_PTR,
+                    off
+                ));
+                dest.to_string()
+            }
+            Expr::Read(ReadExpr::Temp(idx)) => {
+                if let Some(offset) = self.temp_slot_offset(*idx) {
+                    if X::VALUE == 32 {
+                        self.emitf(format!("ldr {}, [sp, #{}]", self.reg_32(dest), offset));
+                    } else {
+                        self.emitf(format!("ldr {dest}, [sp, #{}]", offset));
+                    }
+                } else {
+                    self.emit_comment(&format!("temp {} out of range", idx));
+                    self.emitf(format!("mov {dest}, #0"));
+                }
+                dest.to_string()
+            }
             Expr::Binary { op, left, right } => self.emit_binary_op(*op, left, right, dest),
             Expr::Unary { op, expr: inner } => self.emit_unary_op(*op, inner, dest),
             Expr::Ternary {
@@ -151,26 +190,47 @@ impl<X: Xlen> Arm64Emitter<X> {
                 second: then_val,
                 third: else_val,
             } => {
-                // Use correct register width for RV32 vs RV64
-                let (tmp1, tmp2) = if X::VALUE == 32 {
-                    ("w1", "w2")
+                // Evaluate then/else into temp slots to avoid clobber.
+                if let (Some(then_off), Some(else_off)) =
+                    (self.temp_slot_offset(0), self.temp_slot_offset(1))
+                {
+                    let then_reg = self.emit_expr(then_val, self.temp1());
+                    if X::VALUE == 32 {
+                        self.emitf(format!(
+                            "str {}, [sp, #{}]",
+                            self.reg_32(&then_reg),
+                            then_off
+                        ));
+                    } else {
+                        self.emitf(format!("str {then_reg}, [sp, #{}]", then_off));
+                    }
+
+                    let else_reg = self.emit_expr(else_val, self.temp1());
+                    if X::VALUE == 32 {
+                        self.emitf(format!(
+                            "str {}, [sp, #{}]",
+                            self.reg_32(&else_reg),
+                            else_off
+                        ));
+                    } else {
+                        self.emitf(format!("str {else_reg}, [sp, #{}]", else_off));
+                    }
+
+                    let cond_reg = self.emit_expr(cond, self.temp1());
+
+                    let (tmp1, tmp2) = if X::VALUE == 32 {
+                        ("w1", "w2")
+                    } else {
+                        ("x1", "x2")
+                    };
+                    self.emitf(format!("ldr {tmp1}, [sp, #{}]", then_off));
+                    self.emitf(format!("ldr {tmp2}, [sp, #{}]", else_off));
+                    self.emitf(format!("cmp {cond_reg}, #0"));
+                    self.emitf(format!("csel {dest}, {tmp1}, {tmp2}, ne"));
                 } else {
-                    ("x1", "x2")
-                };
-                // Evaluate condition
-                let cond_reg = self.emit_expr(cond, self.temp1());
-                // Evaluate both values
-                let then_reg = self.emit_expr(then_val, tmp1);
-                if then_reg != tmp1 {
-                    self.emitf(format!("mov {tmp1}, {then_reg}"));
+                    self.emit_comment("select: temp slots unavailable");
+                    self.emitf(format!("mov {dest}, #0"));
                 }
-                let else_reg = self.emit_expr(else_val, tmp2);
-                if else_reg != tmp2 {
-                    self.emitf(format!("mov {tmp2}, {else_reg}"));
-                }
-                // Compare condition and select
-                self.emitf(format!("cmp {cond_reg}, #0"));
-                self.emitf(format!("csel {dest}, {tmp1}, {tmp2}, ne"));
                 dest.to_string()
             }
             _ => {
@@ -211,11 +271,13 @@ impl<X: Xlen> Arm64Emitter<X> {
         let temp2 = self.temp2();
 
         // Load left operand
-        let left_reg = self.emit_expr(left, temp1);
+        let mut left_reg = self.emit_expr(left, temp1);
+        if X::VALUE == 32 && left_reg.starts_with('x') {
+            left_reg = self.reg_32(&left_reg);
+        }
         if left_reg != temp1 {
             self.emitf(format!("mov {temp1}, {left_reg}"));
         }
-
         // Handle special cases
         match op {
             // Shifts
@@ -227,27 +289,36 @@ impl<X: Xlen> Arm64Emitter<X> {
             }
             // Word operations (RV64 only)
             BinaryOp::AddW => {
+                let left_spill = self.maybe_spill_left(right, temp1);
                 let right_reg = self.emit_expr(right, temp2);
                 let t1_32 = self.reg_32(temp1);
                 let r_32 = self.reg_32(&right_reg);
+                self.restore_spilled_left(left_spill, temp1);
                 self.emitf(format!("add {t1_32}, {t1_32}, {r_32}"));
-                self.emitf(format!("sxtw {dest}, {t1_32}"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, {t1_32}"));
                 return dest.to_string();
             }
             BinaryOp::SubW => {
+                let left_spill = self.maybe_spill_left(right, temp1);
                 let right_reg = self.emit_expr(right, temp2);
                 let t1_32 = self.reg_32(temp1);
                 let r_32 = self.reg_32(&right_reg);
+                self.restore_spilled_left(left_spill, temp1);
                 self.emitf(format!("sub {t1_32}, {t1_32}, {r_32}"));
-                self.emitf(format!("sxtw {dest}, {t1_32}"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, {t1_32}"));
                 return dest.to_string();
             }
             BinaryOp::MulW => {
+                let left_spill = self.maybe_spill_left(right, temp1);
                 let right_reg = self.emit_expr(right, temp2);
                 let t1_32 = self.reg_32(temp1);
                 let r_32 = self.reg_32(&right_reg);
+                self.restore_spilled_left(left_spill, temp1);
                 self.emitf(format!("mul {t1_32}, {t1_32}, {r_32}"));
-                self.emitf(format!("sxtw {dest}, {t1_32}"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, {t1_32}"));
                 return dest.to_string();
             }
             // Division
@@ -264,8 +335,10 @@ impl<X: Xlen> Arm64Emitter<X> {
             _ => {}
         }
 
+        let left_spill = self.maybe_spill_left(right, temp1);
+
         // Load right operand or use immediate
-        let (right_is_imm, right_val) = if let Expr::Imm(imm) = right {
+        let (right_is_imm, mut right_val) = if let Expr::Imm(imm) = right {
             let v = X::to_u64(*imm);
             if v <= 0xFFF {
                 (true, format!("#{v}"))
@@ -277,6 +350,10 @@ impl<X: Xlen> Arm64Emitter<X> {
             let right_reg = self.emit_expr(right, temp2);
             (false, right_reg)
         };
+        if X::VALUE == 32 && right_val.starts_with('x') {
+            right_val = self.reg_32(&right_val);
+        }
+        self.restore_spilled_left(left_spill, temp1);
 
         match op {
             BinaryOp::Add => {
@@ -351,6 +428,32 @@ impl<X: Xlen> Arm64Emitter<X> {
         dest.to_string()
     }
 
+    fn maybe_spill_left(&mut self, right: &Expr<X>, left_reg: &str) -> Option<usize> {
+        if matches!(right, Expr::Imm(_)) {
+            return None;
+        }
+        let offset = self.alloc_spill_slot();
+        if let Some(off) = offset {
+            if X::VALUE == 32 {
+                self.emitf(format!("str {}, [sp, #{}]", self.reg_32(left_reg), off));
+            } else {
+                self.emitf(format!("str {left_reg}, [sp, #{}]", off));
+            }
+        }
+        offset
+    }
+
+    fn restore_spilled_left(&mut self, spill: Option<usize>, left_reg: &str) {
+        if let Some(off) = spill {
+            if X::VALUE == 32 {
+                self.emitf(format!("ldr {}, [sp, #{}]", self.reg_32(left_reg), off));
+            } else {
+                self.emitf(format!("ldr {left_reg}, [sp, #{}]", off));
+            }
+            self.release_spill_slot();
+        }
+    }
+
     fn emit_shift_op(&mut self, op: BinaryOp, right: &Expr<X>, src: &str, dest: &str) -> String {
         let shift_op = match op {
             BinaryOp::Sll => "lsl",
@@ -364,7 +467,23 @@ impl<X: Xlen> Arm64Emitter<X> {
             let shift = (X::to_u64(*imm) & mask) as u8;
             self.emitf(format!("{shift_op} {dest}, {src}, #{shift}"));
         } else {
+            let spill = self.alloc_spill_slot();
+            if let Some(offset) = spill {
+                if X::VALUE == 32 {
+                    self.emitf(format!("str {}, [sp, #{}]", self.reg_32(src), offset));
+                } else {
+                    self.emitf(format!("str {src}, [sp, #{}]", offset));
+                }
+            }
             let shift_reg = self.emit_expr(right, self.temp2());
+            if let Some(offset) = spill {
+                if X::VALUE == 32 {
+                    self.emitf(format!("ldr {}, [sp, #{}]", self.reg_32(src), offset));
+                } else {
+                    self.emitf(format!("ldr {src}, [sp, #{}]", offset));
+                }
+                self.release_spill_slot();
+            }
             self.emitf(format!("{shift_op} {dest}, {src}, {shift_reg}"));
         }
         dest.to_string()
@@ -390,12 +509,21 @@ impl<X: Xlen> Arm64Emitter<X> {
             let shift = (X::to_u64(*imm) & 0x1f) as u8;
             self.emitf(format!("{shift_op} {src32}, {src32}, #{shift}"));
         } else {
+            let spill = self.alloc_spill_slot();
+            if let Some(offset) = spill {
+                self.emitf(format!("str {src32}, [sp, #{}]", offset));
+            }
             let shift_reg = self.emit_expr(right, self.temp2());
             let shift32 = self.reg_32(&shift_reg);
+            if let Some(offset) = spill {
+                self.emitf(format!("ldr {src32}, [sp, #{}]", offset));
+                self.release_spill_slot();
+            }
             self.emitf(format!("{shift_op} {src32}, {src32}, {shift32}"));
         }
         // Sign extend result
-        self.emitf(format!("sxtw {dest}, {src32}"));
+        let dest64 = self.reg_64(dest);
+        self.emitf(format!("sxtw {dest64}, {src32}"));
         dest.to_string()
     }
 
@@ -407,7 +535,9 @@ impl<X: Xlen> Arm64Emitter<X> {
         temp2: &str,
         dest: &str,
     ) -> String {
+        let left_spill = self.maybe_spill_left(right, left_reg);
         let right_reg = self.emit_expr(right, temp2);
+        self.restore_spilled_left(left_spill, left_reg);
 
         // Check for division by zero
         let skip_label = self.next_label("div_ok");
@@ -442,7 +572,11 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emitf(format!("cmn {right_reg}, #1")); // compare with -1
                 self.emitf(format!("b.ne {no_ov_label}"));
                 // Overflow: return INT_MIN
-                self.emitf(format!("mov {dest}, x2"));
+                if X::VALUE == 32 {
+                    self.emitf(format!("mov {dest}, w2"));
+                } else {
+                    self.emitf(format!("mov {dest}, x2"));
+                }
                 self.emitf(format!("b {done_label}"));
                 self.emit_label(&no_ov_label);
                 self.emitf(format!("sdiv {dest}, {left_reg}, {right_reg}"));
@@ -501,7 +635,9 @@ impl<X: Xlen> Arm64Emitter<X> {
         temp2: &str,
         dest: &str,
     ) -> String {
+        let left_spill = self.maybe_spill_left(right, left_reg);
         let right_reg = self.emit_expr(right, temp2);
+        self.restore_spilled_left(left_spill, left_reg);
         let left32 = self.reg_32(left_reg);
         let right32 = self.reg_32(&right_reg);
 
@@ -514,7 +650,8 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emitf(format!("mov {dest}, #-1"));
             }
             BinaryOp::RemW | BinaryOp::RemUW => {
-                self.emitf(format!("sxtw {dest}, {left32}"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, {left32}"));
             }
             _ => unreachable!(),
         }
@@ -524,21 +661,25 @@ impl<X: Xlen> Arm64Emitter<X> {
         match op {
             BinaryOp::DivW => {
                 self.emitf(format!("sdiv w2, {left32}, {right32}"));
-                self.emitf(format!("sxtw {dest}, w2"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, w2"));
             }
             BinaryOp::DivUW => {
                 self.emitf(format!("udiv w2, {left32}, {right32}"));
-                self.emitf(format!("sxtw {dest}, w2"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, w2"));
             }
             BinaryOp::RemW => {
                 self.emitf(format!("sdiv w2, {left32}, {right32}"));
                 self.emitf(format!("msub w2, w2, {right32}, {left32}"));
-                self.emitf(format!("sxtw {dest}, w2"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, w2"));
             }
             BinaryOp::RemUW => {
                 self.emitf(format!("udiv w2, {left32}, {right32}"));
                 self.emitf(format!("msub w2, w2, {right32}, {left32}"));
-                self.emitf(format!("sxtw {dest}, w2"));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, w2"));
             }
             _ => unreachable!(),
         }
@@ -555,7 +696,9 @@ impl<X: Xlen> Arm64Emitter<X> {
         temp2: &str,
         dest: &str,
     ) -> String {
+        let left_spill = self.maybe_spill_left(right, left_reg);
         let right_reg = self.emit_expr(right, temp2);
+        self.restore_spilled_left(left_spill, left_reg);
 
         if X::VALUE == 32 {
             // RV32: use smull/umull (32x32 -> 64) then extract high 32 bits
@@ -576,13 +719,16 @@ impl<X: Xlen> Arm64Emitter<X> {
                 BinaryOp::MulHSU => {
                     // Signed * Unsigned: sign-extend left, zero-extend right, multiply
                     // smull sign-extends both, so we need to correct
+                    let tmp = self.temp3();
+                    let tmp32 = self.reg_32(tmp);
+                    self.emitf(format!("mov {tmp32}, {left32}"));
                     self.emitf(format!("smull {dest64}, {left32}, {right32}"));
                     self.emitf(format!("asr {dest64}, {dest64}, #32"));
                     // If right was negative (as signed), we added 2^32 * left to the result
                     // Need to add it back: if right32 < 0, add left32 to high word
                     self.emitf(format!("cmp {right32}, #0"));
-                    self.emitf(format!("csel w2, {left32}, wzr, lt"));
-                    self.emitf(format!("add {dest}, {dest}, w2, sxtw"));
+                    self.emitf(format!("csel {tmp32}, {tmp32}, wzr, lt"));
+                    self.emitf(format!("add {dest64}, {dest64}, {tmp32}, sxtw"));
                 }
                 _ => unreachable!(),
             }
@@ -614,75 +760,167 @@ impl<X: Xlen> Arm64Emitter<X> {
 
     /// Emit a unary operation.
     pub(super) fn emit_unary_op(&mut self, op: UnaryOp, inner: &Expr<X>, dest: &str) -> String {
-        let temp1 = self.temp1();
-        let inner_reg = self.emit_expr(inner, temp1);
-        if inner_reg != temp1 {
-            self.emitf(format!("mov {temp1}, {inner_reg}"));
+        let mut inner_reg = self.emit_expr(inner, dest);
+        if X::VALUE == 32 && dest.starts_with('w') && inner_reg.starts_with('x') {
+            inner_reg = self.reg_32(&inner_reg);
+        }
+        if inner_reg != dest {
+            self.emitf(format!("mov {dest}, {inner_reg}"));
         }
 
         match op {
             UnaryOp::Neg => {
-                self.emitf(format!("neg {dest}, {temp1}"));
+                self.emitf(format!("neg {dest}, {dest}"));
             }
             UnaryOp::Not => {
-                self.emitf(format!("mvn {dest}, {temp1}"));
+                self.emitf(format!("mvn {dest}, {dest}"));
             }
             UnaryOp::Sext8 => {
-                self.emitf(format!("sxtb {dest}, {}", self.reg_32(temp1)));
+                self.emitf(format!("sxtb {dest}, {}", self.reg_32(dest)));
             }
             UnaryOp::Sext16 => {
-                self.emitf(format!("sxth {dest}, {}", self.reg_32(temp1)));
+                self.emitf(format!("sxth {dest}, {}", self.reg_32(dest)));
             }
             UnaryOp::Sext32 => {
-                self.emitf(format!("sxtw {dest}, {}", self.reg_32(temp1)));
+                let dest64 = self.reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, {}", self.reg_32(dest)));
             }
             UnaryOp::Zext8 => {
                 self.emitf(format!(
                     "uxtb {}, {}",
                     self.reg_32(dest),
-                    self.reg_32(temp1)
+                    self.reg_32(dest)
                 ));
             }
             UnaryOp::Zext16 => {
                 self.emitf(format!(
                     "uxth {}, {}",
                     self.reg_32(dest),
-                    self.reg_32(temp1)
+                    self.reg_32(dest)
                 ));
             }
             UnaryOp::Zext32 => {
                 // Moving w to x zero-extends automatically
-                let src32 = self.reg_32(temp1);
+                let src32 = self.reg_32(dest);
                 let dest32 = self.reg_32(dest);
                 self.emitf(format!("mov {dest32}, {src32}"));
             }
             UnaryOp::Clz => {
-                self.emitf(format!("clz {dest}, {temp1}"));
+                self.emitf(format!("clz {dest}, {dest}"));
             }
             UnaryOp::Ctz => {
                 // ctz = clz(rbit(x))
-                self.emitf(format!("rbit {dest}, {temp1}"));
+                self.emitf(format!("rbit {dest}, {dest}"));
                 self.emitf(format!("clz {dest}, {dest}"));
             }
             UnaryOp::Cpop => {
-                // Population count - needs NEON or loop
-                // For now use a simple approach with NEON if available
-                self.emit_comment("cpop requires NEON; using fallback");
-                // Fallback: store to stack, use fmov, cnt, then reduce
-                // Simplified: just return 0 as placeholder
-                self.emitf(format!("mov {dest}, #0"));
+                if X::VALUE == 32 {
+                    let dest32 = self.reg_32(dest);
+                    self.emit_cpop32(&dest32);
+                } else {
+                    self.emit_cpop64(dest);
+                }
+            }
+            UnaryOp::Clz32 => {
+                let dest32 = self.reg_32(dest);
+                self.emitf(format!("clz {dest32}, {dest32}"));
+            }
+            UnaryOp::Ctz32 => {
+                let dest32 = self.reg_32(dest);
+                self.emitf(format!("rbit {dest32}, {dest32}"));
+                self.emitf(format!("clz {dest32}, {dest32}"));
+            }
+            UnaryOp::Cpop32 => {
+                let dest32 = self.reg_32(dest);
+                self.emit_cpop32(&dest32);
+            }
+            UnaryOp::Orc8 => {
+                if X::VALUE == 32 {
+                    let dest32 = self.reg_32(dest);
+                    self.emit_orc8_32(&dest32);
+                } else {
+                    self.emit_orc8_64(dest);
+                }
             }
             UnaryOp::Rev8 => {
                 // Byte reverse
-                self.emitf(format!("rev {dest}, {temp1}"));
+                self.emitf(format!("rev {dest}, {dest}"));
             }
             _ => {
                 self.emit_comment(&format!("unary op {:?} not implemented", op));
-                self.emitf(format!("mov {dest}, {temp1}"));
+                self.emitf(format!("mov {dest}, {dest}"));
             }
         }
 
         dest.to_string()
+    }
+
+    fn emit_cpop64(&mut self, dest: &str) {
+        let tmp = self.temp3();
+        self.emitf(format!("lsr {tmp}, {dest}, #1"));
+        self.emitf(format!("and {tmp}, {tmp}, #0x5555555555555555"));
+        self.emitf(format!("sub {dest}, {dest}, {tmp}"));
+        self.emitf(format!("lsr {tmp}, {dest}, #2"));
+        self.emitf(format!("and {tmp}, {tmp}, #0x3333333333333333"));
+        self.emitf(format!("and {dest}, {dest}, #0x3333333333333333"));
+        self.emitf(format!("add {dest}, {dest}, {tmp}"));
+        self.emitf(format!("lsr {tmp}, {dest}, #4"));
+        self.emitf(format!("add {dest}, {dest}, {tmp}"));
+        self.emitf(format!("and {dest}, {dest}, #0x0f0f0f0f0f0f0f0f"));
+        self.emitf(format!("lsr {tmp}, {dest}, #8"));
+        self.emitf(format!("add {dest}, {dest}, {tmp}"));
+        self.emitf(format!("lsr {tmp}, {dest}, #16"));
+        self.emitf(format!("add {dest}, {dest}, {tmp}"));
+        self.emitf(format!("lsr {tmp}, {dest}, #32"));
+        self.emitf(format!("add {dest}, {dest}, {tmp}"));
+        self.emitf(format!("and {dest}, {dest}, #0x7f"));
+    }
+
+    fn emit_cpop32(&mut self, dest32: &str) {
+        let tmp = self.temp3();
+        let tmp32 = self.reg_32(tmp);
+        self.emitf(format!("lsr {tmp32}, {dest32}, #1"));
+        self.emitf(format!("and {tmp32}, {tmp32}, #0x55555555"));
+        self.emitf(format!("sub {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("lsr {tmp32}, {dest32}, #2"));
+        self.emitf(format!("and {tmp32}, {tmp32}, #0x33333333"));
+        self.emitf(format!("and {dest32}, {dest32}, #0x33333333"));
+        self.emitf(format!("add {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("lsr {tmp32}, {dest32}, #4"));
+        self.emitf(format!("add {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("and {dest32}, {dest32}, #0x0f0f0f0f"));
+        self.emitf(format!("lsr {tmp32}, {dest32}, #8"));
+        self.emitf(format!("add {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("lsr {tmp32}, {dest32}, #16"));
+        self.emitf(format!("add {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("and {dest32}, {dest32}, #0x3f"));
+    }
+
+    fn emit_orc8_64(&mut self, dest: &str) {
+        let tmp = self.temp3();
+        self.emitf(format!("lsr {tmp}, {dest}, #1"));
+        self.emitf(format!("orr {dest}, {dest}, {tmp}"));
+        self.emitf(format!("lsr {tmp}, {dest}, #2"));
+        self.emitf(format!("orr {dest}, {dest}, {tmp}"));
+        self.emitf(format!("lsr {tmp}, {dest}, #4"));
+        self.emitf(format!("orr {dest}, {dest}, {tmp}"));
+        self.emitf(format!("and {dest}, {dest}, #0x0101010101010101"));
+        self.emitf(format!("mov {tmp}, #0xff"));
+        self.emitf(format!("mul {dest}, {dest}, {tmp}"));
+    }
+
+    fn emit_orc8_32(&mut self, dest32: &str) {
+        let tmp = self.temp3();
+        let tmp32 = self.reg_32(tmp);
+        self.emitf(format!("lsr {tmp32}, {dest32}, #1"));
+        self.emitf(format!("orr {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("lsr {tmp32}, {dest32}, #2"));
+        self.emitf(format!("orr {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("lsr {tmp32}, {dest32}, #4"));
+        self.emitf(format!("orr {dest32}, {dest32}, {tmp32}"));
+        self.emitf(format!("and {dest32}, {dest32}, #0x01010101"));
+        self.emitf(format!("mov {tmp32}, #0xff"));
+        self.emitf(format!("mul {dest32}, {dest32}, {tmp32}"));
     }
 
     /// Emit a statement.
@@ -713,9 +951,11 @@ impl<X: Xlen> Arm64Emitter<X> {
                         self.emitf(format!("mov {temp2}, {val_reg}"));
                     }
                     // Then evaluate address
-                    self.emit_expr_as_addr(base);
+                    let base_reg = self.emit_expr_as_addr(base);
                     if *offset != 0 {
-                        self.emit_add_offset("x0", "x0", (*offset).into());
+                        self.emit_add_offset("x0", &base_reg, (*offset).into());
+                    } else if base_reg != "x0" {
+                        self.emitf(format!("mov x0, {base_reg}"));
                     }
                     self.apply_address_mode("x0");
 
@@ -759,6 +999,50 @@ impl<X: Xlen> Arm64Emitter<X> {
                         off
                     ));
                 }
+                WriteTarget::Temp(idx) => {
+                    let val_reg = self.emit_expr(value, temp1);
+                    if let Some(offset) = self.temp_slot_offset(*idx) {
+                        if X::VALUE == 32 {
+                            self.emitf(format!(
+                                "str {}, [sp, #{}]",
+                                self.reg_32(&val_reg),
+                                offset
+                            ));
+                        } else {
+                            self.emitf(format!("str {val_reg}, [sp, #{}]", offset));
+                        }
+                    } else {
+                        self.emit_comment(&format!("temp {} out of range", idx));
+                    }
+                }
+                WriteTarget::ResAddr => {
+                    let val_reg = self.emit_expr(value, temp1);
+                    let off = self.layout.offset_reservation_addr;
+                    if X::VALUE == 32 {
+                        self.emitf(format!(
+                            "str {}, [{}, #{}]",
+                            self.reg_32(&val_reg),
+                            reserved::STATE_PTR,
+                            off
+                        ));
+                    } else {
+                        self.emitf(format!(
+                            "str {val_reg}, [{}, #{}]",
+                            reserved::STATE_PTR,
+                            off
+                        ));
+                    }
+                }
+                WriteTarget::ResValid => {
+                    let val_reg = self.emit_expr(value, temp1);
+                    let off = self.layout.offset_reservation_valid;
+                    self.emitf(format!(
+                        "strb {}, [{}, #{}]",
+                        self.reg_32(&val_reg),
+                        reserved::STATE_PTR,
+                        off
+                    ));
+                }
                 _ => self.emit_comment(&format!("unsupported write: {:?}", target)),
             },
             Stmt::If {
@@ -790,39 +1074,30 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
     }
 
-    /// Resolve a target PC, handling absorbed blocks.
-    /// Returns the PC to branch to (either the original or the merged block).
-    fn resolve_target_pc(&self, pc: u64) -> u64 {
-        self.inputs
-            .absorbed_to_merged
-            .get(&pc)
-            .copied()
-            .unwrap_or(pc)
-    }
-
-    /// Emit a terminator.
-    pub(super) fn emit_terminator(&mut self, term: &Terminator<X>, next_pc: u64, current_pc: u64) {
+    /// Emit a terminator, using the actual fall-through PC from the output stream.
+    pub(super) fn emit_terminator(&mut self, term: &Terminator<X>, fall_pc: u64, current_pc: u64) {
         let temp1 = self.temp1();
 
         match term {
             Terminator::Fall { target } => {
-                if let Some(t) = target {
-                    let target_pc = self.resolve_target_pc(X::to_u64(*t));
-                    // Don't emit branch if target is the next instruction or current instruction
-                    if target_pc != next_pc && target_pc != current_pc {
-                        self.emitf(format!("b asm_pc_{:x}", target_pc));
-                    }
+                let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                // Don't emit branch if target is the next emitted instruction or current instruction
+                if target_pc != fall_pc && target_pc != current_pc {
+                    self.emitf(format!("b asm_pc_{:x}", target_pc));
                 }
             }
             Terminator::Jump { target } => {
-                let target_pc = self.resolve_target_pc(X::to_u64(*target));
+                let target_pc = X::to_u64(*target);
                 // Don't emit a self-loop (would be a bug in IR)
                 if target_pc != current_pc {
                     self.emitf(format!("b asm_pc_{:x}", target_pc));
                 }
             }
             Terminator::JumpDyn { addr, .. } => {
-                self.emit_expr_as_addr(addr);
+                let base_reg = self.emit_expr_as_addr(addr);
+                if base_reg != "x0" {
+                    self.emitf(format!("mov x0, {base_reg}"));
+                }
                 self.emit("and x0, x0, #-2"); // Clear lowest bit
                 self.emit_dispatch_jump();
             }
@@ -830,13 +1105,12 @@ impl<X: Xlen> Arm64Emitter<X> {
                 cond, target, fall, ..
             } => {
                 let cond_reg = self.emit_expr(cond, temp1);
-                let target_pc = self.resolve_target_pc(X::to_u64(*target));
+                let target_pc = X::to_u64(*target);
                 self.emitf(format!("cbnz {cond_reg}, asm_pc_{:x}", target_pc));
-                if let Some(f) = fall {
-                    let fall_pc = self.resolve_target_pc(X::to_u64(*f));
-                    if fall_pc != next_pc {
-                        self.emitf(format!("b asm_pc_{:x}", fall_pc));
-                    }
+                let fall_target_pc =
+                    fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
+                if fall_target_pc != fall_pc {
+                    self.emitf(format!("b asm_pc_{:x}", fall_target_pc));
                 }
             }
             Terminator::Exit { code } => {
@@ -865,37 +1139,51 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Emit a single instruction from IR.
-    pub(super) fn emit_instruction(&mut self, instr: &InstrIR<X>, is_last_in_block: bool) {
+    pub(super) fn emit_instruction(
+        &mut self,
+        instr: &InstrIR<X>,
+        is_last_in_block: bool,
+        fall_pc: u64,
+    ) {
         let pc = X::to_u64(instr.pc);
-        let next_pc = pc + instr.size as u64;
         self.emit_instret_increment(1, pc);
         for stmt in &instr.statements {
             self.emit_stmt(stmt);
         }
-        // Only emit terminator control flow for the last instruction in a block.
-        // Non-last instructions with Fall terminators should just fall through naturally.
-        if is_last_in_block || instr.terminator.is_control_flow() {
-            self.emit_terminator(&instr.terminator, next_pc, pc);
+        // Use fall_pc from output stream to keep inlined/absorbed ranges correct.
+        if is_last_in_block {
+            self.emit_terminator(&instr.terminator, fall_pc, pc);
+        } else {
+            match instr.terminator {
+                Terminator::Branch { .. } => {
+                    self.emit_terminator(&instr.terminator, fall_pc, pc);
+                }
+                Terminator::Fall { target } => {
+                    let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                    if target_pc != fall_pc {
+                        self.emit_terminator(&instr.terminator, fall_pc, pc);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
-    /// Emit code for all blocks.
-    pub fn emit_blocks(&mut self, blocks: &[(u64, BlockIR<X>)]) {
-        self.emit_raw("// Generated code blocks");
+    /// Emit code for a linear instruction stream.
+    pub fn emit_instructions(&mut self, instrs: &[InstrIR<X>]) {
+        self.emit_raw("// Generated code instructions");
         self.emit_blank();
-        for (pc, block) in blocks {
-            if self.label_pcs.contains(pc) {
-                self.emit_pc_label(*pc);
+        for (i, instr) in instrs.iter().enumerate() {
+            let pc = X::to_u64(instr.pc);
+            if self.label_pcs.contains(&pc) {
+                self.emit_pc_label(pc);
             }
-            let num_instructions = block.instructions.len();
-            for (i, instr) in block.instructions.iter().enumerate() {
-                let instr_pc = X::to_u64(instr.pc);
-                if instr_pc != *pc && self.label_pcs.contains(&instr_pc) {
-                    self.emit_pc_label(instr_pc);
-                }
-                let is_last = i == num_instructions - 1;
-                self.emit_instruction(instr, is_last);
-            }
+            let fall_pc = if i + 1 < instrs.len() {
+                X::to_u64(instrs[i + 1].pc)
+            } else {
+                pc + instr.size as u64
+            };
+            self.emit_instruction(instr, true, fall_pc);
         }
     }
 }

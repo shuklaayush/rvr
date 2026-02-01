@@ -8,6 +8,13 @@ use super::Arm64Emitter;
 use super::registers::reserved;
 
 impl<X: Xlen> Arm64Emitter<X> {
+    /// Number of temp slots for IR Temp values.
+    pub const TEMP_SLOTS: usize = 8;
+    /// Bytes per temp slot (use 8 for alignment even in RV32).
+    pub const TEMP_SLOT_BYTES: usize = 8;
+    /// Total temp stack bytes.
+    pub const TEMP_STACK_BYTES: usize = Self::TEMP_SLOTS * Self::TEMP_SLOT_BYTES;
+
     /// Generate a unique label.
     pub(super) fn next_label(&mut self, prefix: &str) -> String {
         self.label_counter += 1;
@@ -78,6 +85,34 @@ impl<X: Xlen> Arm64Emitter<X> {
     #[allow(dead_code)]
     pub(super) fn temp3(&self) -> &'static str {
         if X::VALUE == 32 { "w2" } else { "x2" }
+    }
+
+    /// Get stack offset for a temp slot (relative to current SP).
+    pub(super) fn temp_slot_offset(&self, idx: u8) -> Option<usize> {
+        let idx = idx as usize;
+        if idx < Self::TEMP_SLOTS {
+            Some(idx * Self::TEMP_SLOT_BYTES)
+        } else {
+            None
+        }
+    }
+
+    /// Allocate a spill slot (starting at slot 4) for nested binary ops.
+    pub(super) fn alloc_spill_slot(&mut self) -> Option<usize> {
+        let idx = 4 + self.spill_depth;
+        if idx < Self::TEMP_SLOTS {
+            self.spill_depth += 1;
+            Some(idx * Self::TEMP_SLOT_BYTES)
+        } else {
+            None
+        }
+    }
+
+    /// Release the most recently allocated spill slot.
+    pub(super) fn release_spill_slot(&mut self) {
+        if self.spill_depth > 0 {
+            self.spill_depth -= 1;
+        }
     }
 
     /// Get the 32-bit version of any ARM64 register.
