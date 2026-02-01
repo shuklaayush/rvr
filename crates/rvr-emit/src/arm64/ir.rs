@@ -13,7 +13,11 @@ use super::registers::reserved;
 fn stmt_writes_to_exited<X: Xlen>(stmt: &Stmt<X>) -> bool {
     match stmt {
         Stmt::Write { target, .. } => matches!(target, WriteTarget::Exited),
-        Stmt::If { then_stmts, else_stmts, .. } => {
+        Stmt::If {
+            then_stmts,
+            else_stmts,
+            ..
+        } => {
             then_stmts.iter().any(stmt_writes_to_exited)
                 || else_stmts.iter().any(stmt_writes_to_exited)
         }
@@ -22,6 +26,140 @@ fn stmt_writes_to_exited<X: Xlen>(stmt: &Stmt<X>) -> bool {
 }
 
 impl<X: Xlen> Arm64Emitter<X> {
+    fn signed_imm(&self, val: X::Reg) -> i64 {
+        let v = X::to_u64(val);
+        if X::VALUE == 64 {
+            v as i64
+        } else {
+            let shift = 64 - X::VALUE as u32;
+            ((v << shift) as i64) >> shift
+        }
+    }
+
+    fn expr_needs_temp1(&self, expr: &Expr<X>) -> bool {
+        match expr {
+            Expr::Imm(_) => false,
+            Expr::PcConst(_) => false,
+            Expr::Var(_) => false,
+            Expr::Read(ReadExpr::Reg(_))
+            | Expr::Read(ReadExpr::Temp(_))
+            | Expr::Read(ReadExpr::Csr(_))
+            | Expr::Read(ReadExpr::Cycle)
+            | Expr::Read(ReadExpr::Instret)
+            | Expr::Read(ReadExpr::Pc)
+            | Expr::Read(ReadExpr::TraceIdx)
+            | Expr::Read(ReadExpr::PcIdx)
+            | Expr::Read(ReadExpr::ResAddr)
+            | Expr::Read(ReadExpr::ResValid)
+            | Expr::Read(ReadExpr::Exited)
+            | Expr::Read(ReadExpr::ExitCode) => false,
+            Expr::Read(ReadExpr::Mem { .. }) | Expr::Read(ReadExpr::MemAddr { .. }) => true,
+            Expr::Unary { .. }
+            | Expr::Binary { .. }
+            | Expr::Ternary { .. }
+            | Expr::ExternCall { .. } => true,
+        }
+    }
+
+    fn is_zero_expr(&self, expr: &Expr<X>) -> bool {
+        match expr {
+            Expr::Imm(v) => X::to_u64(*v) == 0,
+            Expr::Read(ReadExpr::Reg(0)) => true,
+            _ => false,
+        }
+    }
+
+    fn emit_cmp_with_imm(&mut self, left_reg: &str, imm: i64) {
+        if imm >= 0 && imm <= 0xFFF {
+            self.emitf(format!("cmp {left_reg}, #{imm}"));
+        } else if imm < 0 && -imm <= 0xFFF {
+            let abs = -imm;
+            self.emitf(format!("cmn {left_reg}, #{abs}"));
+        } else {
+            let temp = self.temp2();
+            self.load_imm(temp, imm as u64);
+            let right_reg = if X::VALUE == 32 {
+                self.reg_32(temp)
+            } else {
+                temp.to_string()
+            };
+            self.emitf(format!("cmp {left_reg}, {right_reg}"));
+        }
+    }
+
+    fn try_emit_compare_branch(&mut self, cond: &Expr<X>, label: &str, invert: bool) -> bool {
+        let (op, left, right) = match cond {
+            Expr::Binary { op, left, right } => (op, left, right),
+            _ => return false,
+        };
+        let cond_code = match (op, invert) {
+            (BinaryOp::Eq, false) | (BinaryOp::Ne, true) => "eq",
+            (BinaryOp::Ne, false) | (BinaryOp::Eq, true) => "ne",
+            (BinaryOp::Lt, false) | (BinaryOp::Ge, true) => "lt",
+            (BinaryOp::Ge, false) | (BinaryOp::Lt, true) => "ge",
+            (BinaryOp::Ltu, false) | (BinaryOp::Geu, true) => "lo",
+            (BinaryOp::Geu, false) | (BinaryOp::Ltu, true) => "hs",
+            _ => return false,
+        };
+
+        let temp1 = self.temp1();
+        let temp2 = self.temp2();
+        let left_reg = self.emit_expr(left, temp1);
+        let left_reg = if X::VALUE == 32 {
+            self.reg_32(&left_reg)
+        } else {
+            left_reg
+        };
+
+        if matches!(op, BinaryOp::Eq | BinaryOp::Ne) && self.is_zero_expr(right) {
+            let branch = if cond_code == "eq" { "cbz" } else { "cbnz" };
+            self.emitf(format!("{branch} {left_reg}, {label}"));
+            return true;
+        }
+
+        let left_is_temp1 = left_reg == temp1 || left_reg == self.reg_32(temp1);
+        let needs_spill = left_is_temp1 && self.expr_needs_temp1(right);
+        let spill = if needs_spill {
+            self.alloc_spill_slot()
+        } else {
+            None
+        };
+        if let Some(off) = spill {
+            if X::VALUE == 32 {
+                self.emitf(format!("str {}, [sp, #{}]", self.reg_32(&left_reg), off));
+            } else {
+                self.emitf(format!("str {left_reg}, [sp, #{}]", off));
+            }
+        }
+
+        if self.is_zero_expr(right) {
+            self.emit_cmp_with_imm(&left_reg, 0);
+        } else if let Expr::Imm(v) = right.as_ref() {
+            let imm = self.signed_imm(*v);
+            self.emit_cmp_with_imm(&left_reg, imm);
+        } else {
+            let right_reg = self.emit_expr(right, temp2);
+            let right_reg = if X::VALUE == 32 {
+                self.reg_32(&right_reg)
+            } else {
+                right_reg
+            };
+            self.emitf(format!("cmp {left_reg}, {right_reg}"));
+        }
+
+        if let Some(off) = spill {
+            if X::VALUE == 32 {
+                self.emitf(format!("ldr {}, [sp, #{}]", self.reg_32(&left_reg), off));
+            } else {
+                self.emitf(format!("ldr {left_reg}, [sp, #{}]", off));
+            }
+            self.release_spill_slot();
+        }
+
+        self.emitf(format!("b.{cond_code} {label}"));
+        true
+    }
+
     /// Emit an expression for use as a 64-bit address.
     /// For RV32, ensures the result is zero-extended to 64-bit.
     pub(super) fn emit_expr_as_addr(&mut self, expr: &Expr<X>) -> String {
@@ -339,7 +477,11 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         if let Expr::Imm(imm) = right {
             let v = X::to_u64(*imm);
-            let full_mask = if X::VALUE == 32 { u32::MAX as u64 } else { u64::MAX };
+            let full_mask = if X::VALUE == 32 {
+                u32::MAX as u64
+            } else {
+                u64::MAX
+            };
             match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Or | BinaryOp::Xor if v == 0 => {
                     let left_reg = self.emit_expr(left, dest);
@@ -377,7 +519,12 @@ impl<X: Xlen> Arm64Emitter<X> {
         // Fast path: in-place op on hot register
         if matches!(
             op,
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor | BinaryOp::Mul
+            BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::And
+                | BinaryOp::Or
+                | BinaryOp::Xor
+                | BinaryOp::Mul
         ) {
             if let Expr::Read(ReadExpr::Reg(reg)) = left {
                 if let Some(mapped) = self.reg_map.get(*reg) {
@@ -391,23 +538,54 @@ impl<X: Xlen> Arm64Emitter<X> {
                         };
                         match op {
                             BinaryOp::Add | BinaryOp::Sub => {
-                                if right_is_imm && right_val <= 0xFFF {
-                                    let op_str = if matches!(op, BinaryOp::Add) { "add" } else { "sub" };
-                                    self.emitf(format!("{op_str} {dest_reg}, {dest_reg}, #{right_val}"));
-                                    return dest.to_string();
+                                if right_is_imm {
+                                    let signed = self.signed_imm(X::from_u64(right_val));
+                                    if (signed >= 0 && signed <= 0xFFF)
+                                        || (signed < 0 && -signed <= 0xFFF)
+                                    {
+                                        match op {
+                                            BinaryOp::Add if signed >= 0 => {
+                                                self.emitf(format!(
+                                                    "add {dest_reg}, {dest_reg}, #{signed}"
+                                                ));
+                                                return dest.to_string();
+                                            }
+                                            BinaryOp::Add => {
+                                                let abs = -signed;
+                                                self.emitf(format!(
+                                                    "sub {dest_reg}, {dest_reg}, #{abs}"
+                                                ));
+                                                return dest.to_string();
+                                            }
+                                            BinaryOp::Sub if signed >= 0 => {
+                                                self.emitf(format!(
+                                                    "sub {dest_reg}, {dest_reg}, #{signed}"
+                                                ));
+                                                return dest.to_string();
+                                            }
+                                            BinaryOp::Sub => {
+                                                let abs = -signed;
+                                                self.emitf(format!(
+                                                    "add {dest_reg}, {dest_reg}, #{abs}"
+                                                ));
+                                                return dest.to_string();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                 }
                             }
                             BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => {
-                                if right_is_imm
-                                    && self.is_logical_imm(right_val, X::VALUE == 32)
-                                {
+                                if right_is_imm && self.is_logical_imm(right_val, X::VALUE == 32) {
                                     let op_str = match op {
                                         BinaryOp::And => "and",
                                         BinaryOp::Or => "orr",
                                         BinaryOp::Xor => "eor",
                                         _ => unreachable!(),
                                     };
-                                    self.emitf(format!("{op_str} {dest_reg}, {dest_reg}, #{right_val}"));
+                                    self.emitf(format!(
+                                        "{op_str} {dest_reg}, {dest_reg}, #{right_val}"
+                                    ));
                                     return dest.to_string();
                                 }
                             }
@@ -419,15 +597,153 @@ impl<X: Xlen> Arm64Emitter<X> {
                             right_reg = self.reg_32(&right_reg);
                         }
                         match op {
-                            BinaryOp::Add => self.emitf(format!("add {dest_reg}, {dest_reg}, {right_reg}")),
-                            BinaryOp::Sub => self.emitf(format!("sub {dest_reg}, {dest_reg}, {right_reg}")),
-                            BinaryOp::And => self.emitf(format!("and {dest_reg}, {dest_reg}, {right_reg}")),
-                            BinaryOp::Or => self.emitf(format!("orr {dest_reg}, {dest_reg}, {right_reg}")),
-                            BinaryOp::Xor => self.emitf(format!("eor {dest_reg}, {dest_reg}, {right_reg}")),
-                            BinaryOp::Mul => self.emitf(format!("mul {dest_reg}, {dest_reg}, {right_reg}")),
+                            BinaryOp::Add => {
+                                self.emitf(format!("add {dest_reg}, {dest_reg}, {right_reg}"))
+                            }
+                            BinaryOp::Sub => {
+                                self.emitf(format!("sub {dest_reg}, {dest_reg}, {right_reg}"))
+                            }
+                            BinaryOp::And => {
+                                self.emitf(format!("and {dest_reg}, {dest_reg}, {right_reg}"))
+                            }
+                            BinaryOp::Or => {
+                                self.emitf(format!("orr {dest_reg}, {dest_reg}, {right_reg}"))
+                            }
+                            BinaryOp::Xor => {
+                                self.emitf(format!("eor {dest_reg}, {dest_reg}, {right_reg}"))
+                            }
+                            BinaryOp::Mul => {
+                                self.emitf(format!("mul {dest_reg}, {dest_reg}, {right_reg}"))
+                            }
                             _ => {}
                         }
                         return dest.to_string();
+                    }
+                }
+            }
+        }
+
+        if matches!(
+            op,
+            BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::And
+                | BinaryOp::Or
+                | BinaryOp::Xor
+                | BinaryOp::Mul
+        ) {
+            if let Expr::Read(ReadExpr::Reg(left_reg)) = left {
+                if let Some(left_mapped) = self.reg_map.get(*left_reg) {
+                    let left_src = if X::VALUE == 32 {
+                        self.reg_32(left_mapped)
+                    } else {
+                        left_mapped.to_string()
+                    };
+                    if let Expr::Read(ReadExpr::Reg(right_reg)) = right {
+                        if let Some(right_mapped) = self.reg_map.get(*right_reg) {
+                            let right_src = if X::VALUE == 32 {
+                                self.reg_32(right_mapped)
+                            } else {
+                                right_mapped.to_string()
+                            };
+                            let op_str = match op {
+                                BinaryOp::Add => "add",
+                                BinaryOp::Sub => "sub",
+                                BinaryOp::And => "and",
+                                BinaryOp::Or => "orr",
+                                BinaryOp::Xor => "eor",
+                                BinaryOp::Mul => "mul",
+                                _ => "",
+                            };
+                            if !op_str.is_empty() {
+                                self.emitf(format!("{op_str} {dest}, {left_src}, {right_src}"));
+                                return dest.to_string();
+                            }
+                        }
+                    } else if let Expr::Imm(imm) = right {
+                        let signed = self.signed_imm(*imm);
+                        match op {
+                            BinaryOp::Add | BinaryOp::Sub => {
+                                if (signed >= 0 && signed <= 0xFFF)
+                                    || (signed < 0 && -signed <= 0xFFF)
+                                {
+                                    match op {
+                                        BinaryOp::Add if signed >= 0 => {
+                                            self.emitf(format!(
+                                                "add {dest}, {left_src}, #{signed}"
+                                            ));
+                                            return dest.to_string();
+                                        }
+                                        BinaryOp::Add => {
+                                            let abs = -signed;
+                                            self.emitf(format!("sub {dest}, {left_src}, #{abs}"));
+                                            return dest.to_string();
+                                        }
+                                        BinaryOp::Sub if signed >= 0 => {
+                                            self.emitf(format!(
+                                                "sub {dest}, {left_src}, #{signed}"
+                                            ));
+                                            return dest.to_string();
+                                        }
+                                        BinaryOp::Sub => {
+                                            let abs = -signed;
+                                            self.emitf(format!("add {dest}, {left_src}, #{abs}"));
+                                            return dest.to_string();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => {
+                                let v = X::to_u64(*imm);
+                                if self.is_logical_imm(v, X::VALUE == 32) {
+                                    let op_str = match op {
+                                        BinaryOp::And => "and",
+                                        BinaryOp::Or => "orr",
+                                        BinaryOp::Xor => "eor",
+                                        _ => "",
+                                    };
+                                    if !op_str.is_empty() {
+                                        self.emitf(format!("{op_str} {dest}, {left_src}, #{v}"));
+                                        return dest.to_string();
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+            if let Expr::Imm(imm) = right {
+                let signed = self.signed_imm(*imm);
+                if (signed >= 0 && signed <= 0xFFF) || (signed < 0 && -signed <= 0xFFF) {
+                    let mut left_reg = self.emit_expr(left, temp1);
+                    if X::VALUE == 32 && left_reg.starts_with('x') {
+                        left_reg = self.reg_32(&left_reg);
+                    }
+                    match op {
+                        BinaryOp::Add if signed >= 0 => {
+                            self.emitf(format!("add {dest}, {left_reg}, #{signed}"));
+                            return dest.to_string();
+                        }
+                        BinaryOp::Add => {
+                            let abs = -signed;
+                            self.emitf(format!("sub {dest}, {left_reg}, #{abs}"));
+                            return dest.to_string();
+                        }
+                        BinaryOp::Sub if signed >= 0 => {
+                            self.emitf(format!("sub {dest}, {left_reg}, #{signed}"));
+                            return dest.to_string();
+                        }
+                        BinaryOp::Sub => {
+                            let abs = -signed;
+                            self.emitf(format!("add {dest}, {left_reg}, #{abs}"));
+                            return dest.to_string();
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -692,11 +1008,20 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         self.emitf(format!("bl {fn_name}"));
         self.restore_hot_regs_from_state();
-        if X::VALUE == 32 { "w0".to_string() } else { "x0".to_string() }
+        if X::VALUE == 32 {
+            "w0".to_string()
+        } else {
+            "x0".to_string()
+        }
     }
 
     fn maybe_spill_left(&mut self, right: &Expr<X>, left_reg: &str) -> Option<usize> {
-        if matches!(right, Expr::Imm(_)) {
+        if !self.expr_needs_temp1(right) {
+            return None;
+        }
+        let temp1 = self.temp1();
+        let left_is_temp1 = left_reg == temp1 || left_reg == self.reg_32(temp1);
+        if !left_is_temp1 {
             return None;
         }
         let offset = self.alloc_spill_slot();
@@ -1053,18 +1378,10 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emitf(format!("sxtw {dest64}, {}", self.reg_32(dest)));
             }
             UnaryOp::Zext8 => {
-                self.emitf(format!(
-                    "uxtb {}, {}",
-                    self.reg_32(dest),
-                    self.reg_32(dest)
-                ));
+                self.emitf(format!("uxtb {}, {}", self.reg_32(dest), self.reg_32(dest)));
             }
             UnaryOp::Zext16 => {
-                self.emitf(format!(
-                    "uxth {}, {}",
-                    self.reg_32(dest),
-                    self.reg_32(dest)
-                ));
+                self.emitf(format!("uxth {}, {}", self.reg_32(dest), self.reg_32(dest)));
             }
             UnaryOp::Zext32 => {
                 // Moving w to x zero-extends automatically
@@ -1235,12 +1552,12 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.apply_address_mode("x0");
 
                     // HTIF handling: check for tohost write
-                    let htif_done_label = if self.config.htif_enabled && (*width == 4 || *width == 8)
-                    {
-                        Some(self.emit_htif_check())
-                    } else {
-                        None
-                    };
+                    let htif_done_label =
+                        if self.config.htif_enabled && (*width == 4 || *width == 8) {
+                            Some(self.emit_htif_check())
+                        } else {
+                            None
+                        };
 
                     // Store
                     let val32 = self.reg_32(temp2);
@@ -1286,11 +1603,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                     let val_reg = self.emit_expr(value, temp1);
                     if let Some(offset) = self.temp_slot_offset(*idx) {
                         if X::VALUE == 32 {
-                            self.emitf(format!(
-                                "str {}, [sp, #{}]",
-                                self.reg_32(&val_reg),
-                                offset
-                            ));
+                            self.emitf(format!("str {}, [sp, #{}]", self.reg_32(&val_reg), offset));
                         } else {
                             self.emitf(format!("str {val_reg}, [sp, #{}]", offset));
                         }
@@ -1333,10 +1646,12 @@ impl<X: Xlen> Arm64Emitter<X> {
                 then_stmts,
                 else_stmts,
             } => {
-                let cond_reg = self.emit_expr(cond, temp1);
                 let else_label = self.next_label("if_else");
                 let end_label = self.next_label("if_end");
-                self.emitf(format!("cbz {cond_reg}, {else_label}"));
+                if !self.try_emit_compare_branch(cond, &else_label, true) {
+                    let cond_reg = self.emit_expr(cond, temp1);
+                    self.emitf(format!("cbz {cond_reg}, {else_label}"));
+                }
                 for s in then_stmts {
                     self.emit_stmt(s);
                 }
@@ -1399,15 +1714,19 @@ impl<X: Xlen> Arm64Emitter<X> {
             Terminator::Branch {
                 cond, target, fall, ..
             } => {
-                let cond_reg = self.emit_expr(cond, temp1);
                 let target_pc = self.inputs.resolve_address(X::to_u64(*target));
-                if self.inputs.is_valid_address(target_pc) {
-                    self.emitf(format!("cbnz {cond_reg}, asm_pc_{:x}", target_pc));
+                let target_label = if self.inputs.is_valid_address(target_pc) {
+                    format!("asm_pc_{:x}", target_pc)
                 } else {
-                    self.emitf(format!("cbnz {cond_reg}, asm_trap"));
+                    "asm_trap".to_string()
+                };
+                if !self.try_emit_compare_branch(cond, &target_label, false) {
+                    let cond_reg = self.emit_expr(cond, temp1);
+                    self.emitf(format!("cbnz {cond_reg}, {target_label}"));
                 }
-                let fall_target_pc =
-                    fall.map(|f| self.inputs.resolve_address(X::to_u64(f))).unwrap_or(fall_pc);
+                let fall_target_pc = fall
+                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                    .unwrap_or(fall_pc);
                 if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
                     self.emit("b asm_trap");
                     return;
