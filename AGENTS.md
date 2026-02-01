@@ -220,6 +220,6 @@ git lfs ls-files        # List LFS-tracked files
 **Workflow for adding new binaries**:
 ```bash
 git add bin/rv64i/new-binary
-git commit -m "Add new binary"
+git commit -m "chore(bin): add new binary"
 # Files matching bin/** patterns are automatically tracked via .gitattributes
 ```
