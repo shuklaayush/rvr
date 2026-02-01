@@ -9,22 +9,43 @@ impl<X: Xlen> Arm64Emitter<X> {
     /// Emit a jump via the dispatch table.
     /// Assumes the target address is already in x0 (properly masked/cleared).
     pub(super) fn emit_dispatch_jump(&mut self) {
+        let text_start = self.inputs.text_start;
+        let text_size = self.inputs.pc_end - text_start;
+
+        // Range check: trap if target < text_start or target >= pc_end
+        // This prevents out-of-bounds jump table access (e.g., ra=0 on return)
+        // Use local label pattern because b.hs has limited range
+        let valid_label = self.next_label("valid_pc");
+
+        if X::VALUE == 32 {
+            // RV32: check 32-bit range
+            self.load_imm("w2", text_start);
+            self.emit("sub w0, w0, w2"); // w0 = target - text_start
+            self.load_imm("w2", text_size);
+            self.emit("cmp w0, w2");
+            self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
+            self.emit("b asm_trap");
+            self.emit_label(&valid_label);
+        } else {
+            // RV64: check 64-bit range
+            self.load_imm("x2", text_start);
+            self.emit("sub x0, x0, x2"); // x0 = target - text_start
+            self.load_imm("x2", text_size);
+            self.emit("cmp x0, x2");
+            self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
+            self.emit("b asm_trap");
+            self.emit_label(&valid_label);
+        }
+
         // Load jump table base address
         self.emit("adrp x1, jump_table");
         self.emit("add x1, x1, :lo12:jump_table");
 
-        let text_start = self.inputs.text_start;
-
+        // Convert byte offset to table index (2-byte slots for compressed support)
         if X::VALUE == 32 {
-            // RV32: PC is 32-bit
-            self.load_imm("w2", text_start);
-            self.emit("sub w0, w0, w2");
-            self.emit("lsr w0, w0, #1"); // 2-byte slots for compressed support
+            self.emit("lsr w0, w0, #1");
         } else {
-            // RV64: PC is 64-bit, compute index in 64-bit then truncate
-            self.load_imm("x2", text_start);
-            self.emit("sub x0, x0, x2");
-            self.emit("lsr x0, x0, #1"); // Keep 64-bit until table lookup
+            self.emit("lsr x0, x0, #1");
         }
 
         // Load offset from jump table (32-bit relative offset)

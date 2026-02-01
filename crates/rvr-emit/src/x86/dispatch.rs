@@ -9,19 +9,30 @@ impl<X: Xlen> X86Emitter<X> {
     /// Emit a jump via the dispatch table.
     /// Assumes the target address is already in rax (properly masked/cleared).
     pub(super) fn emit_dispatch_jump(&mut self) {
-        self.emit("leaq jump_table(%rip), %rcx");
         let text_start = self.inputs.text_start;
+        let text_size = self.inputs.pc_end - text_start;
+
+        // Range check: trap if target < text_start or target >= pc_end
+        // This prevents out-of-bounds jump table access (e.g., ra=0 on return)
         if X::VALUE == 32 {
-            // RV32: PC is 32-bit, use eax for math
+            // RV32: check 32-bit range
             self.emitf(format!("subl $0x{:x}, %eax", text_start as u32));
+            self.emitf(format!("cmpl $0x{:x}, %eax", text_size as u32));
+            self.emit("jae asm_trap"); // unsigned >= text_size means out of range
             self.emit("shrl $1, %eax");
         } else {
-            // RV64: PC is 64-bit, use rax for math
-            // Load TEXT_START into edx (zero-extends to rdx)
+            // RV64: check 64-bit range
             self.emitf(format!("movl $0x{:x}, %edx", text_start as u32));
             self.emit("subq %rdx, %rax");
+            self.emitf(format!("movl $0x{:x}, %edx", text_size as u32));
+            self.emit("cmpq %rdx, %rax");
+            self.emit("jae asm_trap"); // unsigned >= text_size means out of range
             self.emit("shrq $1, %rax");
         }
+
+        // Load jump table base
+        self.emit("leaq jump_table(%rip), %rcx");
+
         // Load offset from jump table and add base
         self.emit("movslq (%rcx,%rax,4), %rax");
         self.emit("addq %rcx, %rax");
