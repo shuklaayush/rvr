@@ -1,12 +1,12 @@
 # rvr
 
-**rvr** (RISC-V Recompiler) is a static recompiler that translates RISC-V ELF binaries to native code via C.
+**rvr** (RISC-V Recompiler) is a static recompiler that translates RISC-V ELF binaries to native code via C or direct assembly.
 
 ```
-ELF → Lifter → IR → Emitter → C → Native (.so)
+ELF → Lifter → IR → CFG → Emitter → C/.s → Native (.so)
 ```
 
-The **lifter** decodes RISC-V instructions into a typed IR with a modular extension system (RV32/64IMAC, Zb*, Zicsr, Zicond). The **emitter** generates C with tail-call dispatch, passing hot registers as function arguments. Since the output is native code, you can profile with standard tools (perf, Instruments) and identify hotspots at the basic block level.
+The **lifter** decodes RISC-V instructions into a typed IR with a modular extension system (RV32/64IMAC, Zb*, Zicsr, Zicond). The **emitter** generates C or assembly with tail-call dispatch, passing hot registers as function arguments. The CFG stage sits between IR and the emitter for block structure and analysis. Since the output is native code, you can profile with standard tools (perf, Instruments) and identify hotspots at the basic block level.
 
 The **tracer** is a pluggable instrumentation layer that hooks into execution. Provide a C header implementing the interface, and rvr inlines your callbacks at each state access:
 
@@ -57,6 +57,11 @@ rvr bench run                        # Run all benchmarks
 rvr bench build reth                 # Build reth ELF + host binary
 rvr bench compile reth               # Compile to native
 rvr bench run reth --compare-host    # Run with host comparison
+
+# Backend selection
+cargo run -- compile program.elf --backend c      # C (default)
+cargo run -- compile program.elf --backend x86    # x86-64 assembly
+cargo run -- compile program.elf --backend arm64  # ARM64 assembly
 ```
 
 ## Syscalls
@@ -77,14 +82,19 @@ let registry = ExtensionRegistry::<Rv64>::standard()
 
 ```
 bin/
+├── host/           # Host binaries for comparisons
+├── rv32e/          # RV32E binaries
 ├── rv32i/          # RV32I binaries
 │   └── reth
+├── rv64e/          # RV64E binaries
 ├── rv64i/          # RV64I binaries
+│   ├── coremark
+│   ├── dhrystone
 │   ├── minimal
 │   ├── pinky
 │   ├── prime-sieve
-│   ├── memset
-│   └── reth
+│   ├── reth
+│   └── ...
 └── riscv-tests/    # riscv-tests suite
     ├── rv32ui-p-add
     ├── rv64ui-p-add
@@ -96,8 +106,10 @@ bin/
 | Crate | Description |
 |-------|-------------|
 | `rvr` | CLI and high-level API |
+| `rvr-cfg` | Control flow graph |
 | `rvr-ir` | Intermediate representation |
 | `rvr-isa` | Decoder, lifter, extensions |
-| `rvr-cfg` | Control flow graph |
-| `rvr-emit` | C code generation |
+| `rvr-emit` | Code generation (C, x86-64, ARM64) |
 | `rvr-elf` | ELF parsing |
+| `rvr-state` | Runtime state definitions |
+| `rvr-rt` | Runtime support |
