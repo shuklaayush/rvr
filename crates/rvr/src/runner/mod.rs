@@ -23,6 +23,7 @@ use rvr_elf::{ElfImage, get_elf_xlen};
 use rvr_ir::{Rv32, Rv64};
 use rvr_state::{DEFAULT_MEMORY_SIZE, GuardedMemory, NUM_REGS_E, NUM_REGS_I};
 use tracing::{debug, error, trace};
+use rvr_isa::{REG_GP, REG_RA, REG_SP};
 
 pub use api::{FixedAddresses, InstretMode, RvApi, TracerKind};
 pub use error::RunError;
@@ -277,6 +278,16 @@ pub struct Runner {
 }
 
 impl Runner {
+    fn setup_initial_regs(&mut self) {
+        if let Some(gp) = self.inner.lookup_symbol("__global_pointer$") {
+            self.inner.set_register(REG_GP as usize, gp);
+        }
+        if let Some(sp) = self.inner.lookup_symbol("__stack_top") {
+            self.inner.set_register(REG_SP as usize, sp);
+        }
+        // Trap on unexpected returns from entry points.
+        self.inner.set_register(REG_RA as usize, 0);
+    }
     /// Load a compiled shared library and its corresponding ELF with default memory size.
     pub fn load(lib_dir: impl AsRef<Path>, elf_path: impl AsRef<Path>) -> Result<Self, RunError> {
         Self::load_with_memory(lib_dir, elf_path, DEFAULT_MEMORY_SIZE)
@@ -497,6 +508,7 @@ impl Runner {
     pub fn run(&mut self) -> Result<RunResult, RunError> {
         self.inner.load_segments();
         self.inner.reset();
+        self.setup_initial_regs();
 
         let entry_point = self.inner.entry_point();
         trace!(entry_point = format!("{:#x}", entry_point), "executing");
@@ -558,6 +570,7 @@ impl Runner {
     pub fn run_with_counters(&mut self) -> Result<RunResultWithPerf, RunError> {
         self.inner.load_segments();
         self.inner.reset();
+        self.setup_initial_regs();
 
         let entry_point = self.inner.entry_point();
         trace!(
@@ -767,6 +780,7 @@ impl Runner {
         for _ in 0..count {
             self.inner.load_segments();
             self.inner.reset();
+            self.setup_initial_regs();
 
             if let Some(ref mut group) = perf_group {
                 let _ = group.reset();
