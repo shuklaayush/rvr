@@ -13,11 +13,9 @@ use rvr_ir::{
 };
 use rvr_isa::op_mnemonic;
 
-/// HTIF tohost address (matches riscv-tests expectation).
-const TOHOST_ADDR: u64 = 0x80001000;
-
 use super::signature::{FnSignature, state_ref};
 use crate::config::EmitConfig;
+use crate::htif::TOHOST_ADDR;
 use crate::inputs::EmitInputs;
 
 /// C code emitter.

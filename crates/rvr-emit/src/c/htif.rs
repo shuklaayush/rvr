@@ -6,12 +6,7 @@
 
 use rvr_ir::Xlen;
 
-// HTIF constants matching riscv-tests expectations
-// tohost at 0x80001000, fromhost at 0x80001008 (sequential in .tohost section)
-const TOHOST_ADDR: u64 = 0x80001000;
-const FROMHOST_ADDR: u64 = 0x80001008;
-const SYS_WRITE: u64 = 64;
-const STDOUT_FD: u64 = 1;
+use crate::htif::{FROMHOST_ADDR, STDOUT_FD, SYS_WRITE, TOHOST_ADDR};
 
 /// Configuration for HTIF code generation.
 pub struct HtifConfig {
