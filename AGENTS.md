@@ -108,6 +108,8 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 
 **Test Small First**: Before running full test suites or benchmarks that take minutes, verify with small quick tests. A single riscv-test file runs in seconds vs minutes for full suites.
 
+**Run Benchmarks Individually**: When testing benchmark functionality (especially with new backends), run benchmarks one at a time with short timeouts (30-60s). Never run `bench run` without a specific benchmark name when debugging - a single hanging benchmark will block indefinitely. HTIF-using benchmarks (towers, median, dhrystone, coremark) are particularly prone to hanging when the HTIF handler isn't working correctly.
+
 **Small Closed Feedback Loops**: When working on bugs:
 1. Use test cases that fail fast and give clear error messages
 2. Decode error signals: riscv-tests exit code = `(test_case << 1) | 1`, so exit code 11 means test case 5

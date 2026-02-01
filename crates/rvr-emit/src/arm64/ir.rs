@@ -1611,7 +1611,10 @@ impl<X: Xlen> Arm64Emitter<X> {
                     if *reg == 0 {
                         return;
                     }
-                    self.cold_cache_invalidate(*reg);
+                    // Note: cold_cache_invalidate must be called AFTER emit_expr, not before.
+                    // emit_expr may populate the cold cache when evaluating Read(Reg) in the
+                    // expression. If we invalidate before, the cache gets re-populated with
+                    // the old value being read, and remains stale after the write completes.
                     if let Some(arm_reg) = self.reg_map.get(*reg) {
                         let val_reg = self.emit_expr(value, arm_reg);
                         if val_reg != arm_reg {
@@ -1621,6 +1624,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                         let val_reg = self.emit_expr(value, temp1);
                         self.store_to_rv(*reg, &val_reg);
                     }
+                    self.cold_cache_invalidate(*reg);
                 }
                 WriteTarget::Mem {
                     base,
