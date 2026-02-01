@@ -125,11 +125,9 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_blank();
 
         self.emit_label("asm_trap");
-        self.emit_comment("Trap handler - set exit flag and exit");
+        self.emit_comment("Trap handler - set exit flag and exit (exit_code stays 0)");
         let has_exited = self.layout.offset_has_exited;
-        let exit_code = self.layout.offset_exit_code;
         self.emitf(format!("movb $1, {}(%{})", has_exited, reserved::STATE_PTR));
-        self.emitf(format!("movb $1, {}(%{})", exit_code, reserved::STATE_PTR));
         self.emit("jmp asm_exit");
         self.emit_blank();
     }

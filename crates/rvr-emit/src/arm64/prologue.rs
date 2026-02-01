@@ -149,19 +149,13 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_blank();
 
         self.emit_label("asm_trap");
-        self.emit_comment("Trap handler - set exit flag and exit");
+        self.emit_comment("Trap handler - set exit flag and exit (exit_code stays 0)");
         let has_exited = self.layout.offset_has_exited;
-        let exit_code = self.layout.offset_exit_code;
         self.emit("mov w0, #1");
         self.emitf(format!(
             "strb w0, [{}, #{}]",
             reserved::STATE_PTR,
             has_exited
-        ));
-        self.emitf(format!(
-            "strb w0, [{}, #{}]",
-            reserved::STATE_PTR,
-            exit_code
         ));
         self.emit("b asm_exit");
         self.emit_blank();
