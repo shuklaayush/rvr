@@ -1627,19 +1627,37 @@ impl<X: Xlen> Arm64Emitter<X> {
                     offset,
                     width,
                 } => {
-                    // First evaluate value to temp2
+                    // Check if HTIF handling might be needed for this store
+                    let htif_possible =
+                        self.config.htif_enabled && (*width == 4 || *width == 8);
+
+                    // First evaluate value to temp2 (x1)
                     let val_reg = self.emit_expr(value, temp2);
-                    // Check if val_reg is temp2 (x1/w1) - use exact match, not starts_with
-                    // to avoid matching x10/w10 etc.
+                    // Check if val_reg is temp2 (x1/w1) - use exact match
                     let is_temp2 = val_reg == "x1" || val_reg == "w1";
                     let is_temp1 = val_reg == "x0" || val_reg == "w0";
-                    let mut store_reg = val_reg.as_str();
-                    if val_reg != temp2 && !is_temp2 && !is_temp1 {
-                        store_reg = &val_reg;
-                    } else {
+                    let store_reg: String;
+
+                    if is_temp2 {
+                        // Value is already in x1
+                        store_reg = temp2.to_string();
+                    } else if is_temp1 {
+                        // Value is in x0, need to save it before address calc
                         self.emitf(format!("mov {temp2}, {val_reg}"));
-                        store_reg = temp2;
+                        store_reg = temp2.to_string();
+                    } else {
+                        // Value is in a hot register
+                        if htif_possible {
+                            // For HTIF check, we need the value in x1
+                            let reg64 = self.reg_64(&val_reg);
+                            self.emitf(format!("mov x1, {reg64}"));
+                            store_reg = "x1".to_string();
+                        } else {
+                            // No HTIF, can store directly from hot register
+                            store_reg = val_reg.clone();
+                        }
                     }
+
                     // Then evaluate address
                     let base_reg = self.emit_expr_as_addr(base);
                     if *offset != 0 {
@@ -1650,22 +1668,21 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.apply_address_mode("x0");
 
                     // HTIF handling: check for tohost write
-                    let htif_done_label =
-                        if self.config.htif_enabled && (*width == 4 || *width == 8) {
-                            Some(self.emit_htif_check())
-                        } else {
-                            None
-                        };
+                    let htif_done_label = if htif_possible {
+                        Some(self.emit_htif_check())
+                    } else {
+                        None
+                    };
 
                     // Store
-                    let val32 = self.reg_32(store_reg);
+                    let val32 = self.reg_32(&store_reg);
                     let mem = format!("{}, x0", reserved::MEMORY_PTR);
                     match width {
                         1 => self.emitf(format!("strb {val32}, [{mem}]")),
                         2 => self.emitf(format!("strh {val32}, [{mem}]")),
                         4 => self.emitf(format!("str {val32}, [{mem}]")),
                         8 => {
-                            let reg64 = self.reg_64(store_reg);
+                            let reg64 = self.reg_64(&store_reg);
                             self.emitf(format!("str {reg64}, [{mem}]"))
                         }
                         _ => self.emitf(format!("str {val32}, [{mem}]")),

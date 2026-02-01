@@ -61,6 +61,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_label(&not_exit_label);
         // Syscall request: call handle_tohost_write(state, value)
         // x1 contains the value, need to preserve it for the call
+        self.apply_address_mode("x1");
 
         // Save hot regs to state before calling out
         self.save_hot_regs_to_state();
