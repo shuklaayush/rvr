@@ -10,3 +10,6 @@
 [submodule "programs/coremark"]
 	path = programs/coremark
 	url = https://github.com/eembc/coremark.git
+[submodule "programs/riscv-arch-test"]
+	path = programs/riscv-arch-test
+	url = https://github.com/riscv-non-isa/riscv-arch-test.git
