@@ -173,6 +173,14 @@ Direct assembly emission targeting x86-64 with AT&T syntax. Uses aggressive regi
 
 Direct assembly emission targeting AArch64. Optimized for ARM64's larger register file.
 
+### Assembly Backend Notes (x86/ARM64)
+
+- **Linear emission**: asm backends emit a single instruction stream with labels. CFG analysis can still be used for metadata (valid PCs, absorbed blocks), but emission is per-instruction.
+- **IR Temps**: IR temp registers (`ReadExpr::Temp` / `WriteTarget::Temp`) are backed by fixed stack slots in asm backends. Keep spill slots separate from IR temp slots to avoid clobbering AMO/LRSC/JALR temps.
+- **Reservation state**: `ResAddr`/`ResValid` reads/writes must be implemented for LR/SC and AMO correctness.
+- **Address evaluation**: When an address expression is not already in the canonical address register, explicitly move it before applying address masking. This is required for `MemAddr`, `Mem` writes, and `JumpDyn`.
+- **Shift lowering**: For variable shifts, evaluate the shift amount without clobbering the left operand. In ARM64 this means spilling left before evaluating right; x86 uses CL for shifts.
+
 ### Backend Selection
 
 ```bash
