@@ -316,6 +316,12 @@ impl<X: Xlen> Recompiler<X> {
         output_dir: &Path,
         jobs: usize,
     ) -> Result<std::path::PathBuf> {
+        let _span = info_span!(
+            "compile",
+            backend = ?self.config.backend,
+            output = %output_dir.display()
+        )
+        .entered();
         // First lift to source (C or x86 assembly)
         let _source_path = self.lift(elf_path, output_dir)?;
 
@@ -346,9 +352,22 @@ impl<X: Xlen> Recompiler<X> {
 
     /// Lift an ELF file to source code (C or x86 assembly, depending on backend).
     pub fn lift(&self, elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
+        let _span = info_span!(
+            "lift",
+            backend = ?self.config.backend,
+            input = %elf_path.display(),
+            output = %output_dir.display()
+        )
+        .entered();
         // Load ELF
-        let data = std::fs::read(elf_path)?;
-        let image = ElfImage::<X>::parse(&data)?;
+        let data = {
+            let _span = info_span!("load_elf").entered();
+            std::fs::read(elf_path)?
+        };
+        let image = {
+            let _span = info_span!("parse_elf").entered();
+            ElfImage::<X>::parse(&data)?
+        };
 
         // Create output directory if it doesn't exist
         std::fs::create_dir_all(output_dir)?;
@@ -365,7 +384,10 @@ impl<X: Xlen> Recompiler<X> {
                 ExtensionRegistry::standard().with_syscall_handler(LinuxHandler::new(abi))
             }
         };
-        let mut pipeline = Pipeline::<X>::with_registry(image, self.config.clone(), registry);
+        let mut pipeline = {
+            let _span = info_span!("pipeline_init").entered();
+            Pipeline::<X>::with_registry(image, self.config.clone(), registry)
+        };
 
         // Add function symbols as extra entry points if requested
         if self.export_functions {
@@ -419,6 +441,8 @@ pub struct CompileOptions {
     pub backend: Backend,
     /// Analysis mode (full CFG or linear scan).
     pub analysis_mode: AnalysisMode,
+    /// Use backend defaults for analysis mode (CFG for C, linear for asm).
+    pub analysis_mode_auto: bool,
     /// Address translation mode.
     pub address_mode: AddressMode,
     /// Enable HTIF (Host-Target Interface) for riscv-tests.
@@ -455,6 +479,7 @@ impl Default for CompileOptions {
         Self {
             backend: Backend::default(),
             analysis_mode: AnalysisMode::default(),
+            analysis_mode_auto: true,
             address_mode: AddressMode::default(),
             htif: false,
             htif_verbose: false,
@@ -487,6 +512,13 @@ impl CompileOptions {
     /// Set analysis mode.
     pub fn with_analysis_mode(mut self, mode: AnalysisMode) -> Self {
         self.analysis_mode = mode;
+        self.analysis_mode_auto = false;
+        self
+    }
+
+    /// Use backend defaults for analysis mode (CFG for C, linear for asm).
+    pub fn with_analysis_mode_auto(mut self, enabled: bool) -> Self {
+        self.analysis_mode_auto = enabled;
         self
     }
 
@@ -580,7 +612,14 @@ impl CompileOptions {
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.backend = self.backend;
-        config.analysis_mode = self.analysis_mode;
+        config.analysis_mode = if self.analysis_mode_auto {
+            match self.backend {
+                Backend::C => AnalysisMode::FullCfg,
+                _ => AnalysisMode::Basic,
+            }
+        } else {
+            self.analysis_mode
+        };
         config.address_mode = self.address_mode;
         config.htif_enabled = self.htif;
         config.htif_verbose = self.htif_verbose;
@@ -812,11 +851,14 @@ fn compile_x86_to_shared(
 
     asm_cmd.arg("-o").arg(&obj_path).arg(&asm_path);
 
-    let asm_output = asm_cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?;
+    let asm_output = {
+        let _span = info_span!("assemble").entered();
+        asm_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?
+    };
 
     if !asm_output.status.success() {
         let stderr = String::from_utf8_lossy(&asm_output.stderr);
@@ -857,11 +899,16 @@ fn compile_x86_to_shared(
             .arg(&syscalls_obj_path)
             .arg(&syscalls_c_path);
 
-        let syscalls_output = syscalls_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to compile syscalls: {}", e)))?;
+        let syscalls_output = {
+            let _span = info_span!("compile_syscalls").entered();
+            syscalls_cmd
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| {
+                    Error::CompilationFailed(format!("Failed to compile syscalls: {}", e))
+                })?
+        };
 
         if !syscalls_output.status.success() {
             let stderr = String::from_utf8_lossy(&syscalls_output.stderr);
@@ -900,11 +947,14 @@ fn compile_x86_to_shared(
             .arg(&htif_obj_path)
             .arg(&htif_c_path);
 
-        let htif_output = htif_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to compile htif: {}", e)))?;
+        let htif_output = {
+            let _span = info_span!("compile_htif").entered();
+            htif_cmd
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| Error::CompilationFailed(format!("Failed to compile htif: {}", e)))?
+        };
 
         if !htif_output.status.success() {
             let stderr = String::from_utf8_lossy(&htif_output.stderr);
@@ -943,11 +993,14 @@ fn compile_x86_to_shared(
         link_cmd.arg(obj);
     }
 
-    let link_output = link_cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| Error::CompilationFailed(format!("Failed to link: {}", e)))?;
+    let link_output = {
+        let _span = info_span!("link_shared").entered();
+        link_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to link: {}", e)))?
+    };
 
     if !link_output.status.success() {
         let stderr = String::from_utf8_lossy(&link_output.stderr);
@@ -1015,11 +1068,14 @@ fn compile_arm64_to_shared(
 
     asm_cmd.arg("-o").arg(&obj_path).arg(&asm_path);
 
-    let asm_output = asm_cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?;
+    let asm_output = {
+        let _span = info_span!("assemble").entered();
+        asm_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?
+    };
 
     if !asm_output.status.success() {
         let stderr = String::from_utf8_lossy(&asm_output.stderr);

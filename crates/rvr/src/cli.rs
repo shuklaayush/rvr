@@ -48,8 +48,8 @@ pub enum Commands {
         #[arg(long, value_enum, default_value = "c")]
         backend: BackendArg,
 
-        /// Analysis mode (cfg = full CFG with block merging, linear = no merging)
-        #[arg(long, value_enum, default_value = "cfg")]
+        /// Analysis mode (auto = CFG for C, linear for asm)
+        #[arg(long, value_enum, default_value = "auto")]
         analysis: AnalysisModeArg,
 
         /// Address translation mode
@@ -107,8 +107,8 @@ pub enum Commands {
         #[arg(long, value_enum, default_value = "c")]
         backend: BackendArg,
 
-        /// Analysis mode (cfg = full CFG with block merging, linear = no merging)
-        #[arg(long, value_enum, default_value = "cfg")]
+        /// Analysis mode (auto = CFG for C, linear for asm)
+        #[arg(long, value_enum, default_value = "auto")]
         analysis: AnalysisModeArg,
 
         /// Address translation mode
@@ -524,20 +524,13 @@ impl From<BackendArg> for rvr_emit::Backend {
 /// Analysis mode for the compilation pipeline.
 #[derive(Clone, Copy, Debug, ValueEnum, Default)]
 pub enum AnalysisModeArg {
-    /// Full CFG analysis with block merging and optimizations (default)
+    /// Auto: CFG for C backend, linear scan for asm backends (default)
     #[default]
+    Auto,
+    /// Full CFG analysis with block merging and optimizations
     Cfg,
     /// Linear scan: decode instructions without block merging (faster)
     Linear,
-}
-
-impl From<AnalysisModeArg> for rvr_emit::AnalysisMode {
-    fn from(arg: AnalysisModeArg) -> Self {
-        match arg {
-            AnalysisModeArg::Cfg => rvr_emit::AnalysisMode::FullCfg,
-            AnalysisModeArg::Linear => rvr_emit::AnalysisMode::Basic,
-        }
-    }
 }
 
 /// Tracer configuration arguments.

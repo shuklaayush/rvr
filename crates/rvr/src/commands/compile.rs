@@ -43,13 +43,23 @@ pub fn cmd_compile(
 
     let mut options = CompileOptions::new()
         .with_backend(backend)
-        .with_analysis_mode(analysis.into())
         .with_address_mode(address_mode.into())
         .with_htif(htif)
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config)
         .with_jobs(jobs);
+    match analysis {
+        AnalysisModeArg::Auto => {
+            options = options.with_analysis_mode_auto(true);
+        }
+        AnalysisModeArg::Cfg => {
+            options = options.with_analysis_mode(rvr_emit::AnalysisMode::FullCfg);
+        }
+        AnalysisModeArg::Linear => {
+            options = options.with_analysis_mode(rvr_emit::AnalysisMode::Basic);
+        }
+    }
     if perf {
         options = options.with_perf_mode(true);
     }
@@ -126,13 +136,23 @@ pub fn cmd_lift(
 
     let mut options = CompileOptions::new()
         .with_backend(backend)
-        .with_analysis_mode(analysis.into())
         .with_address_mode(address_mode.into())
         .with_htif(htif)
         .with_line_info(line_info)
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config);
+    match analysis {
+        AnalysisModeArg::Auto => {
+            options = options.with_analysis_mode_auto(true);
+        }
+        AnalysisModeArg::Cfg => {
+            options = options.with_analysis_mode(rvr_emit::AnalysisMode::FullCfg);
+        }
+        AnalysisModeArg::Linear => {
+            options = options.with_analysis_mode(rvr_emit::AnalysisMode::Basic);
+        }
+    }
     if perf {
         options = options.with_perf_mode(true);
     }
