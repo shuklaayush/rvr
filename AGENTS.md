@@ -157,6 +157,8 @@ This pattern keeps harness files with the code that uses them, making it clear w
 3. Disassemble test binaries to understand what instruction is being tested
 4. Look at working implementations as templates
 
+**Optimization Discipline**: For performance work, keep changes small, commit each logical improvement, and run a fast validation step (single riscv-test or one benchmark) after every change before moving on.
+
 **Conventional Commits**: Use conventional commit messages (e.g. `feat: ...`, `fix: ...`, `refactor: ...`) and keep commits small and logical.
 
 ### Rust Patterns
