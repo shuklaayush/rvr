@@ -115,6 +115,13 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 
 **Conventional Commits**: Use conventional commit messages (e.g. `feat: ...`, `fix: ...`, `refactor: ...`) and keep commits small and logical.
 
+**Backend Smoke Tests**: For quick backend checks, run a single riscv-test file with a specific backend, e.g.:
+```bash
+./target/release/rvr test --backend arm64 bin/riscv-tests/rv64ui-p-add
+```
+
+**Avoid Constant Duplication**: For shared addresses like the HTIF `tohost` location, define a single `TOHOST_ADDR` constant in a shared location and reuse it instead of re-declaring the value across modules.
+
 ### Rust Patterns
 
 - **Generics Over Duplication**: Use generics and const generics to avoid duplicating code for RV32/RV64. A single `RvState<const XLEN: usize>` is better than separate `Rv32State` and `Rv64State`. But don't over-abstract - if code becomes harder to read than simple duplication, skip the generic.
