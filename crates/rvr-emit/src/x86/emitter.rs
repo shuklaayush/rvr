@@ -8,6 +8,13 @@ use super::X86Emitter;
 use super::registers::reserved;
 
 impl<X: Xlen> X86Emitter<X> {
+    /// Number of temp slots for IR Temp values.
+    pub const TEMP_SLOTS: usize = 8;
+    /// Bytes per temp slot (use 8 for alignment even in RV32).
+    pub const TEMP_SLOT_BYTES: usize = 8;
+    /// Total temp stack bytes.
+    pub const TEMP_STACK_BYTES: usize = Self::TEMP_SLOTS * Self::TEMP_SLOT_BYTES;
+
     /// Generate a unique label.
     pub(super) fn next_label(&mut self, prefix: &str) -> String {
         self.label_counter += 1;
@@ -59,6 +66,16 @@ impl<X: Xlen> X86Emitter<X> {
     /// Emit an empty line.
     pub(super) fn emit_blank(&mut self) {
         self.asm.push('\n');
+    }
+
+    /// Get stack offset for a temp slot (relative to current %rsp).
+    pub(super) fn temp_slot_offset(&self, idx: u8) -> Option<usize> {
+        let idx = idx as usize;
+        if idx < Self::TEMP_SLOTS {
+            Some(idx * Self::TEMP_SLOT_BYTES)
+        } else {
+            None
+        }
     }
 
     // ========================================================================

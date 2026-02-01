@@ -3,8 +3,7 @@
 //! Translates IR expressions, statements, and terminators to x86-64 assembly.
 
 use rvr_ir::{
-    BinaryOp, BlockIR, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp, WriteTarget,
-    Xlen,
+    BinaryOp, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp, WriteTarget, Xlen,
 };
 
 use super::X86Emitter;
@@ -168,6 +167,51 @@ impl<X: Xlen> X86Emitter<X> {
                     reserved::STATE_PTR,
                     self.reg_dword(dest)
                 ));
+                dest.to_string()
+            }
+            Expr::Read(ReadExpr::ResAddr) => {
+                let off = self.layout.offset_reservation_addr;
+                if X::VALUE == 32 {
+                    self.emitf(format!(
+                        "movl {}(%{}), %{}",
+                        off,
+                        reserved::STATE_PTR,
+                        self.reg_dword(dest)
+                    ));
+                } else {
+                    self.emitf(format!(
+                        "movq {}(%{}), %{dest}",
+                        off,
+                        reserved::STATE_PTR
+                    ));
+                }
+                dest.to_string()
+            }
+            Expr::Read(ReadExpr::ResValid) => {
+                let off = self.layout.offset_reservation_valid;
+                self.emitf(format!(
+                    "movzbl {}(%{}), %{}",
+                    off,
+                    reserved::STATE_PTR,
+                    self.reg_dword(dest)
+                ));
+                dest.to_string()
+            }
+            Expr::Read(ReadExpr::Temp(idx)) => {
+                if let Some(offset) = self.temp_slot_offset(*idx) {
+                    if X::VALUE == 32 {
+                        self.emitf(format!(
+                            "movl {}(%rsp), %{}",
+                            offset,
+                            self.reg_dword(dest)
+                        ));
+                    } else {
+                        self.emitf(format!("movq {}(%rsp), %{dest}", offset));
+                    }
+                } else {
+                    self.emit_comment(&format!("temp {} out of range", idx));
+                    self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
+                }
                 dest.to_string()
             }
             Expr::Binary { op, left, right } => self.emit_binary_op(*op, left, right, dest),
@@ -1002,6 +1046,50 @@ impl<X: Xlen> X86Emitter<X> {
                         reserved::STATE_PTR
                     ));
                 }
+                WriteTarget::Temp(idx) => {
+                    let val_reg = self.emit_expr(value, temp1);
+                    if let Some(offset) = self.temp_slot_offset(*idx) {
+                        if X::VALUE == 32 {
+                            self.emitf(format!(
+                                "movl %{}, {}(%rsp)",
+                                self.reg_dword(&val_reg),
+                                offset
+                            ));
+                        } else {
+                            self.emitf(format!("movq %{val_reg}, {}(%rsp)", offset));
+                        }
+                    } else {
+                        self.emit_comment(&format!("temp {} out of range", idx));
+                    }
+                }
+                WriteTarget::ResAddr => {
+                    let val_reg = self.emit_expr(value, temp1);
+                    let off = self.layout.offset_reservation_addr;
+                    if X::VALUE == 32 {
+                        self.emitf(format!(
+                            "movl %{}, {}(%{})",
+                            self.reg_dword(&val_reg),
+                            off,
+                            reserved::STATE_PTR
+                        ));
+                    } else {
+                        self.emitf(format!(
+                            "movq %{val_reg}, {}(%{})",
+                            off,
+                            reserved::STATE_PTR
+                        ));
+                    }
+                }
+                WriteTarget::ResValid => {
+                    let val_reg = self.emit_expr(value, temp1);
+                    let off = self.layout.offset_reservation_valid;
+                    self.emitf(format!(
+                        "movb %{}, {}(%{})",
+                        self.reg_byte(&val_reg),
+                        off,
+                        reserved::STATE_PTR
+                    ));
+                }
                 _ => self.emit_comment(&format!("unsupported write: {:?}", target)),
             },
             Stmt::If {
@@ -1035,17 +1123,15 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a terminator.
-    pub(super) fn emit_terminator(&mut self, term: &Terminator<X>, next_pc: u64) {
+    pub(super) fn emit_terminator(&mut self, term: &Terminator<X>, fall_pc: u64) {
         let temp1 = self.temp1();
         let suffix = self.suffix();
 
         match term {
             Terminator::Fall { target } => {
-                if let Some(t) = target {
-                    let pc = X::to_u64(*t);
-                    if pc != next_pc {
-                        self.emitf(format!("jmp asm_pc_{:x}", pc));
-                    }
+                let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                if target_pc != fall_pc {
+                    self.emitf(format!("jmp asm_pc_{:x}", target_pc));
                 }
             }
             Terminator::Jump { target } => {
@@ -1062,11 +1148,9 @@ impl<X: Xlen> X86Emitter<X> {
                 let cond_reg = self.emit_expr(cond, temp1);
                 self.emitf(format!("test{suffix} %{cond_reg}, %{cond_reg}"));
                 self.emitf(format!("jnz asm_pc_{:x}", X::to_u64(*target)));
-                if let Some(f) = fall {
-                    let fall_pc = X::to_u64(*f);
-                    if fall_pc != next_pc {
-                        self.emitf(format!("jmp asm_pc_{:x}", fall_pc));
-                    }
+                let fall_target_pc = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
+                if fall_target_pc != fall_pc {
+                    self.emitf(format!("jmp asm_pc_{:x}", fall_target_pc));
                 }
             }
             Terminator::Exit { code } => {
@@ -1090,31 +1174,43 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a single instruction from IR.
-    pub(super) fn emit_instruction(&mut self, instr: &InstrIR<X>) {
+    pub(super) fn emit_instruction(&mut self, instr: &InstrIR<X>, is_last: bool, fall_pc: u64) {
         let pc = X::to_u64(instr.pc);
-        let next_pc = pc + instr.size as u64;
         self.emit_instret_increment(1, pc);
         for stmt in &instr.statements {
             self.emit_stmt(stmt);
         }
-        self.emit_terminator(&instr.terminator, next_pc);
+        if is_last {
+            self.emit_terminator(&instr.terminator, fall_pc);
+        } else {
+            match instr.terminator {
+                Terminator::Branch { .. } => self.emit_terminator(&instr.terminator, fall_pc),
+                Terminator::Fall { target } => {
+                    let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                    if target_pc != fall_pc {
+                        self.emit_terminator(&instr.terminator, fall_pc);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
-    /// Emit code for all blocks.
-    pub fn emit_blocks(&mut self, blocks: &[(u64, BlockIR<X>)]) {
-        self.emit_raw("# Generated code blocks");
+    /// Emit code for a linear instruction stream.
+    pub fn emit_instructions(&mut self, instrs: &[InstrIR<X>]) {
+        self.emit_raw("# Generated code instructions");
         self.emit_blank();
-        for (pc, block) in blocks {
-            if self.label_pcs.contains(pc) {
-                self.emit_pc_label(*pc);
+        for (i, instr) in instrs.iter().enumerate() {
+            let pc = X::to_u64(instr.pc);
+            if self.label_pcs.contains(&pc) {
+                self.emit_pc_label(pc);
             }
-            for instr in &block.instructions {
-                let instr_pc = X::to_u64(instr.pc);
-                if instr_pc != *pc && self.label_pcs.contains(&instr_pc) {
-                    self.emit_pc_label(instr_pc);
-                }
-                self.emit_instruction(instr);
-            }
+            let fall_pc = if i + 1 < instrs.len() {
+                X::to_u64(instrs[i + 1].pc)
+            } else {
+                pc + instr.size as u64
+            };
+            self.emit_instruction(instr, true, fall_pc);
         }
     }
 }

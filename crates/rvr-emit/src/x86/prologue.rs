@@ -59,8 +59,9 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit("pushq %r13");
         self.emit("pushq %r14");
         self.emit("pushq %r15");
-        self.emit_comment("Align stack to 16 bytes (6 pushes = 48 bytes, need 8 more)");
-        self.emit("subq $8, %rsp");
+        let stack_bytes = 8 + X86Emitter::<X>::TEMP_STACK_BYTES;
+        self.emit_comment("Align stack to 16 bytes and reserve temp slots");
+        self.emitf(format!("subq ${}, %rsp", stack_bytes));
         self.emit_blank();
 
         self.emit_comment("Setup pointers");
@@ -112,7 +113,8 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_blank();
 
         self.emit_comment("Restore stack and callee-saved registers");
-        self.emit("addq $8, %rsp");
+        let stack_bytes = 8 + X86Emitter::<X>::TEMP_STACK_BYTES;
+        self.emitf(format!("addq ${}, %rsp", stack_bytes));
         self.emit("popq %r15");
         self.emit("popq %r14");
         self.emit("popq %r13");
