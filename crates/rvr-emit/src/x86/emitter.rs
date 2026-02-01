@@ -68,6 +68,32 @@ impl<X: Xlen> X86Emitter<X> {
         self.asm.push('\n');
     }
 
+    /// Save all hot registers to state (before external calls).
+    pub(super) fn save_hot_regs_to_state(&mut self) {
+        let suffix = self.suffix();
+        let hot_regs: Vec<_> = self.reg_map.hot_regs().collect();
+        for (rv_reg, x86_reg) in hot_regs {
+            let offset = self.layout.reg_offset(rv_reg);
+            self.emitf(format!(
+                "mov{suffix} %{x86_reg}, {offset}(%{})",
+                reserved::STATE_PTR
+            ));
+        }
+    }
+
+    /// Restore all hot registers from state (after external calls).
+    pub(super) fn restore_hot_regs_from_state(&mut self) {
+        let suffix = self.suffix();
+        let hot_regs: Vec<_> = self.reg_map.hot_regs().collect();
+        for (rv_reg, x86_reg) in hot_regs {
+            let offset = self.layout.reg_offset(rv_reg);
+            self.emitf(format!(
+                "mov{suffix} {offset}(%{}), %{x86_reg}",
+                reserved::STATE_PTR
+            ));
+        }
+    }
+
     /// Get stack offset for a temp slot (relative to current %rsp).
     pub(super) fn temp_slot_offset(&self, idx: u8) -> Option<usize> {
         let idx = idx as usize;

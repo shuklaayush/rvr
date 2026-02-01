@@ -239,6 +239,10 @@ pub struct BenchCompileArgs {
     #[arg(long)]
     pub linker: Option<String>,
 
+    /// Code generation backend
+    #[arg(long, value_enum, default_value = "c")]
+    pub backend: BackendArg,
+
     /// Address translation mode
     #[arg(long, value_enum, default_value = "wrap")]
     pub address_mode: AddressModeArg,

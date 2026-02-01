@@ -68,6 +68,32 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.asm.push('\n');
     }
 
+    /// Save all hot registers to state (before external calls).
+    pub(super) fn save_hot_regs_to_state(&mut self) {
+        let hot_regs: Vec<_> = self.reg_map.hot_regs().collect();
+        for (rv_reg, arm_reg) in hot_regs {
+            let offset = self.layout.reg_offset(rv_reg);
+            self.emitf(format!(
+                "str {arm_reg}, [{}, #{}]",
+                reserved::STATE_PTR,
+                offset
+            ));
+        }
+    }
+
+    /// Restore all hot registers from state (after external calls).
+    pub(super) fn restore_hot_regs_from_state(&mut self) {
+        let hot_regs: Vec<_> = self.reg_map.hot_regs().collect();
+        for (rv_reg, arm_reg) in hot_regs {
+            let offset = self.layout.reg_offset(rv_reg);
+            self.emitf(format!(
+                "ldr {arm_reg}, [{}, #{}]",
+                reserved::STATE_PTR,
+                offset
+            ));
+        }
+    }
+
     // ========================================================================
     // Register size helpers
     // ========================================================================

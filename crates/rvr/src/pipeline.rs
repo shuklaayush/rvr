@@ -6,9 +6,12 @@ use std::path::Path;
 use rvr_cfg::{BlockTable, InstructionTable};
 use rvr_elf::{DebugInfo, ElfImage};
 use rvr_emit::arm64::Arm64Emitter;
-use rvr_emit::c::{CProject, MemorySegment};
+use rvr_emit::c::{
+    CProject, HeaderConfig, HtifConfig, MemorySegment, SyscallsConfig, gen_header,
+    gen_htif_header, gen_syscalls_source, gen_tracer_header,
+};
 use rvr_emit::x86::X86Emitter;
-use rvr_emit::{AnalysisMode, Backend, EmitConfig, EmitInputs, NUM_REGS_E, NUM_REGS_I};
+use rvr_emit::{AnalysisMode, Backend, EmitConfig, EmitInputs, SyscallMode, NUM_REGS_E, NUM_REGS_I};
 use rvr_ir::{BlockIR, InstrIR};
 use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, info, info_span, trace_span, warn};
@@ -640,7 +643,7 @@ impl<X: Xlen> Pipeline<X> {
         }
 
         // Create x86 emitter
-        let mut emitter = X86Emitter::new(self.config.clone(), inputs);
+        let mut emitter = X86Emitter::new(self.config.clone(), inputs.clone());
 
         // Generate assembly
         emitter.generate_instructions(&self.ir_instructions);
@@ -651,6 +654,8 @@ impl<X: Xlen> Pipeline<X> {
         // Write assembly file
         let asm_path = output_dir.join(format!("{}.s", base_name));
         emitter.write_asm(&asm_path)?;
+
+        self.write_asm_syscalls_support(output_dir, base_name, &inputs)?;
 
         info!(output = %asm_path.display(), "wrote x86 assembly");
 
@@ -698,7 +703,7 @@ impl<X: Xlen> Pipeline<X> {
         }
 
         // Create ARM64 emitter
-        let mut emitter = Arm64Emitter::new(self.config.clone(), inputs);
+        let mut emitter = Arm64Emitter::new(self.config.clone(), inputs.clone());
 
         // Generate assembly
         emitter.generate_instructions(&self.ir_instructions);
@@ -710,7 +715,47 @@ impl<X: Xlen> Pipeline<X> {
         let asm_path = output_dir.join(format!("{}.s", base_name));
         emitter.write_asm(&asm_path)?;
 
+        self.write_asm_syscalls_support(output_dir, base_name, &inputs)?;
+
         info!(output = %asm_path.display(), "wrote ARM64 assembly");
+
+        Ok(())
+    }
+
+    fn write_asm_syscalls_support(
+        &self,
+        output_dir: &Path,
+        base_name: &str,
+        inputs: &EmitInputs,
+    ) -> Result<()> {
+        if self.config.syscall_mode != SyscallMode::Linux {
+            return Ok(());
+        }
+
+        let header_cfg = HeaderConfig::new(base_name, &self.config, inputs, Vec::new());
+        let header = gen_header::<X>(&header_cfg);
+        std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
+
+        if self.config.htif_enabled {
+            let htif_cfg = HtifConfig::new(base_name, true);
+            let htif_header = gen_htif_header::<X>(&htif_cfg);
+            std::fs::write(
+                output_dir.join(format!("{}_htif.h", base_name)),
+                htif_header,
+            )?;
+        }
+
+        if !self.config.tracer_config.is_none() {
+            let tracer_header = gen_tracer_header::<X>(&self.config.tracer_config)?;
+            std::fs::write(output_dir.join("rv_tracer.h"), tracer_header)?;
+        }
+
+        let syscalls_cfg = SyscallsConfig::new(base_name, self.config.fixed_addresses.is_some());
+        let syscalls_src = gen_syscalls_source::<X>(&syscalls_cfg);
+        std::fs::write(
+            output_dir.join(format!("{}_syscalls.c", base_name)),
+            syscalls_src,
+        )?;
 
         Ok(())
     }

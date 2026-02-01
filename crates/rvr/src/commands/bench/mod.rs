@@ -44,6 +44,13 @@ pub(crate) fn host_lib_ext() -> &'static str {
 fn compile_suffix(args: &BenchCompileArgs) -> String {
     let mut parts = Vec::new();
 
+    // Backend (only add suffix when non-default)
+    match args.backend {
+        crate::cli::BackendArg::C => {}
+        crate::cli::BackendArg::X86 => parts.push("x86"),
+        crate::cli::BackendArg::Arm64 => parts.push("arm64"),
+    }
+
     // Address mode (wrap is default/base)
     match args.address_mode {
         AddressModeArg::Wrap => {} // default, use "base"
@@ -85,6 +92,7 @@ fn build_compile_options(benchmark: &BenchmarkInfo, args: &BenchCompileArgs) -> 
     let compiler = create_compiler(args);
     let mut options = CompileOptions::new()
         .with_compiler(compiler)
+        .with_backend(args.backend.into())
         .with_export_functions(benchmark.uses_exports)
         .with_address_mode(args.address_mode.into())
         .with_quiet(true);

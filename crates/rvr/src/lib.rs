@@ -813,6 +813,52 @@ fn compile_x86_to_shared(
 
     debug!(obj = %obj_path.display(), "linking");
 
+    // Collect object files to link
+    let mut obj_files = vec![obj_path.clone()];
+
+    // Check for syscalls.c and compile it if present
+    let syscalls_c_path = output_dir.join(format!("{}_syscalls.c", base_name));
+    if syscalls_c_path.exists() {
+        let syscalls_obj_path = output_dir.join(format!("{}_syscalls.o", base_name));
+        let mut syscalls_cmd = Command::new(cc);
+
+        if needs_cross {
+            syscalls_cmd.args([
+                "--target=x86_64-unknown-linux-gnu",
+                "-c",
+                "-fPIC",
+                "-O2",
+                "-std=c23",
+            ]);
+        } else {
+            syscalls_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
+        }
+
+        syscalls_cmd
+            .arg("-I")
+            .arg(output_dir)
+            .arg("-o")
+            .arg(&syscalls_obj_path)
+            .arg(&syscalls_c_path);
+
+        let syscalls_output = syscalls_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to compile syscalls: {}", e)))?;
+
+        if !syscalls_output.status.success() {
+            let stderr = String::from_utf8_lossy(&syscalls_output.stderr);
+            error!(stderr = %stderr, "syscalls compilation failed");
+            return Err(Error::CompilationFailed(format!(
+                "Syscalls compilation failed: {}",
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
+
+        obj_files.push(syscalls_obj_path);
+    }
+
     // Link to shared library
     let mut link_cmd = Command::new(cc);
 
@@ -833,7 +879,10 @@ fn compile_x86_to_shared(
         }
     }
 
-    link_cmd.arg("-o").arg(&lib_path).arg(&obj_path);
+    link_cmd.arg("-o").arg(&lib_path);
+    for obj in &obj_files {
+        link_cmd.arg(obj);
+    }
 
     let link_output = link_cmd
         .stdout(Stdio::piped())
@@ -924,6 +973,52 @@ fn compile_arm64_to_shared(
 
     debug!(obj = %obj_path.display(), "linking");
 
+    // Collect object files to link
+    let mut obj_files = vec![obj_path.clone()];
+
+    // Check for syscalls.c and compile it if present
+    let syscalls_c_path = output_dir.join(format!("{}_syscalls.c", base_name));
+    if syscalls_c_path.exists() {
+        let syscalls_obj_path = output_dir.join(format!("{}_syscalls.o", base_name));
+        let mut syscalls_cmd = Command::new(cc);
+
+        if needs_cross {
+            syscalls_cmd.args([
+                "--target=aarch64-unknown-linux-gnu",
+                "-c",
+                "-fPIC",
+                "-O2",
+                "-std=c23",
+            ]);
+        } else {
+            syscalls_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
+        }
+
+        syscalls_cmd
+            .arg("-I")
+            .arg(output_dir)
+            .arg("-o")
+            .arg(&syscalls_obj_path)
+            .arg(&syscalls_c_path);
+
+        let syscalls_output = syscalls_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to compile syscalls: {}", e)))?;
+
+        if !syscalls_output.status.success() {
+            let stderr = String::from_utf8_lossy(&syscalls_output.stderr);
+            error!(stderr = %stderr, "syscalls compilation failed");
+            return Err(Error::CompilationFailed(format!(
+                "Syscalls compilation failed: {}",
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
+
+        obj_files.push(syscalls_obj_path);
+    }
+
     // Link to shared library
     let mut link_cmd = Command::new(cc);
 
@@ -944,7 +1039,10 @@ fn compile_arm64_to_shared(
         }
     }
 
-    link_cmd.arg("-o").arg(&lib_path).arg(&obj_path);
+    link_cmd.arg("-o").arg(&lib_path);
+    for obj in &obj_files {
+        link_cmd.arg(obj);
+    }
 
     let link_output = link_cmd
         .stdout(Stdio::piped())
