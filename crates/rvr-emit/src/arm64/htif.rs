@@ -31,7 +31,8 @@ impl<X: Xlen> Arm64Emitter<X> {
         let done_store_label = self.next_label("done_store");
 
         // Compare address with TOHOST_ADDR
-        self.load_imm("x2", TOHOST_ADDR);
+        // TOHOST_ADDR fits in 32 bits; load into w2 (zero-extended) to reduce instruction count.
+        self.load_imm("w2", TOHOST_ADDR as u32 as u64);
         self.emit("cmp x0, x2");
         self.emitf(format!("b.ne {not_tohost_label}"));
 
