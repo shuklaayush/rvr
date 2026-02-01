@@ -20,7 +20,7 @@ pub fn build_benchmark(
     name: &str,
     arch: &Arch,
 ) -> Result<PathBuf, String> {
-    let toolchain = rvr::tests::find_toolchain()
+    let toolchain = rvr::build_utils::find_toolchain()
         .ok_or_else(|| "RISC-V toolchain not found (need riscv64-unknown-elf-gcc)".to_string())?;
 
     let gcc = format!("{}gcc", toolchain);

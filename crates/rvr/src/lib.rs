@@ -216,9 +216,9 @@ mod runner;
 pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
 
 pub mod bench;
+pub mod build_utils;
 pub mod gdb;
 pub mod metrics;
-pub mod tests;
 
 use std::marker::PhantomData;
 use std::path::Path;
