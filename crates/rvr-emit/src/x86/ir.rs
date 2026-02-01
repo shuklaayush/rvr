@@ -9,6 +9,18 @@ use rvr_ir::{
 use super::X86Emitter;
 use super::registers::reserved;
 
+/// Check if a statement (recursively) writes to Exited.
+fn stmt_writes_to_exited<X: Xlen>(stmt: &Stmt<X>) -> bool {
+    match stmt {
+        Stmt::Write { target, .. } => matches!(target, WriteTarget::Exited),
+        Stmt::If { then_stmts, else_stmts, .. } => {
+            then_stmts.iter().any(stmt_writes_to_exited)
+                || else_stmts.iter().any(stmt_writes_to_exited)
+        }
+        Stmt::ExternCall { .. } => false,
+    }
+}
+
 impl<X: Xlen> X86Emitter<X> {
     /// Emit an expression for use as a 64-bit address.
     /// For RV32, ensures the result is zero-extended to 64-bit.
@@ -214,8 +226,30 @@ impl<X: Xlen> X86Emitter<X> {
                 }
                 dest.to_string()
             }
+            Expr::Var(name) => {
+                if name == "state" {
+                    let dest64 = self.reg_qword(dest);
+                    self.emitf(format!("movq %{}, %{dest64}", reserved::STATE_PTR));
+                    dest64.to_string()
+                } else {
+                    self.emit_comment(&format!("unsupported var: {name}"));
+                    self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
+                    dest.to_string()
+                }
+            }
             Expr::Binary { op, left, right } => self.emit_binary_op(*op, left, right, dest),
             Expr::Unary { op, expr: inner } => self.emit_unary_op(*op, inner, dest),
+            Expr::ExternCall { name, args, .. } => {
+                let ret = self.emit_extern_call(name, args);
+                if ret != dest {
+                    if X::VALUE == 32 {
+                        self.emitf(format!("movl %{ret}, %{}", self.reg_dword(dest)));
+                    } else {
+                        self.emitf(format!("movq %{ret}, %{dest}"));
+                    }
+                }
+                dest.to_string()
+            }
             Expr::Ternary {
                 op: TernaryOp::Select,
                 first: cond,
@@ -852,6 +886,68 @@ impl<X: Xlen> X86Emitter<X> {
         dest.to_string()
     }
 
+    fn emit_extern_call(&mut self, fn_name: &str, args: &[Expr<X>]) -> String {
+        self.save_hot_regs_to_state();
+
+        let arg_regs_64 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+        let arg_regs_32 = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+
+        let max_args = arg_regs_64.len();
+        for (idx, arg) in args.iter().enumerate().take(max_args).rev() {
+            let arg_reg = if X::VALUE == 32 {
+                if matches!(arg, Expr::Var(name) if name == "state") {
+                    arg_regs_64[idx]
+                } else {
+                    arg_regs_32[idx]
+                }
+            } else {
+                arg_regs_64[idx]
+            };
+
+            match arg {
+                Expr::Var(name) if name == "state" => {
+                    self.emitf(format!("movq %{}, %{arg_reg}", reserved::STATE_PTR));
+                }
+                Expr::Read(ReadExpr::Reg(reg)) => {
+                    let src = self.load_rv_to_temp(*reg, arg_reg);
+                    if src != arg_reg {
+                        if X::VALUE == 32 {
+                            self.emitf(format!("movl %{src}, %{arg_reg}"));
+                        } else {
+                            self.emitf(format!("movq %{src}, %{arg_reg}"));
+                        }
+                    }
+                }
+                Expr::Imm(val) => {
+                    let v = X::to_u64(*val);
+                    if X::VALUE == 32 {
+                        self.emitf(format!("movl ${}, %{arg_reg}", v as i32));
+                    } else {
+                        if v > 0x7fffffff {
+                            self.emitf(format!("movabsq $0x{:x}, %{arg_reg}", v));
+                        } else {
+                            self.emitf(format!("movq $0x{:x}, %{arg_reg}", v));
+                        }
+                    }
+                }
+                _ => {
+                    let tmp = self.emit_expr(arg, self.temp1());
+                    if tmp != arg_reg {
+                        if X::VALUE == 32 {
+                            self.emitf(format!("movl %{tmp}, %{arg_reg}"));
+                        } else {
+                            self.emitf(format!("movq %{tmp}, %{arg_reg}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        self.emitf(format!("call {fn_name}"));
+        self.restore_hot_regs_from_state();
+        if X::VALUE == 32 { "eax".to_string() } else { "rax".to_string() }
+    }
+
     /// Emit a unary operation.
     pub(super) fn emit_unary_op(&mut self, op: UnaryOp, inner: &Expr<X>, dest: &str) -> String {
         let temp1 = self.temp1();
@@ -1116,8 +1212,9 @@ impl<X: Xlen> X86Emitter<X> {
                     self.emit_label(&end_label);
                 }
             }
-            Stmt::ExternCall { fn_name, .. } => {
+            Stmt::ExternCall { fn_name, args } => {
                 self.emit_comment(&format!("extern call: {fn_name}"));
+                let _ = self.emit_extern_call(fn_name, args);
             }
         }
     }
@@ -1129,13 +1226,24 @@ impl<X: Xlen> X86Emitter<X> {
 
         match term {
             Terminator::Fall { target } => {
-                let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                let target_pc = target
+                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
+                    .unwrap_or(fall_pc);
+                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    return;
+                }
                 if target_pc != fall_pc {
                     self.emitf(format!("jmp asm_pc_{:x}", target_pc));
                 }
             }
             Terminator::Jump { target } => {
-                self.emitf(format!("jmp asm_pc_{:x}", X::to_u64(*target)));
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    return;
+                }
+                self.emitf(format!("jmp asm_pc_{:x}", target_pc));
             }
             Terminator::JumpDyn { addr, .. } => {
                 self.emit_expr_as_addr(addr);
@@ -1147,8 +1255,19 @@ impl<X: Xlen> X86Emitter<X> {
             } => {
                 let cond_reg = self.emit_expr(cond, temp1);
                 self.emitf(format!("test{suffix} %{cond_reg}, %{cond_reg}"));
-                self.emitf(format!("jnz asm_pc_{:x}", X::to_u64(*target)));
-                let fall_target_pc = fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if self.inputs.is_valid_address(target_pc) {
+                    self.emitf(format!("jnz asm_pc_{:x}", target_pc));
+                } else {
+                    self.emit("jnz asm_trap");
+                }
+                let fall_target_pc = fall
+                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                    .unwrap_or(fall_pc);
+                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                    self.emit("jmp asm_trap");
+                    return;
+                }
                 if fall_target_pc != fall_pc {
                     self.emitf(format!("jmp asm_pc_{:x}", fall_target_pc));
                 }
@@ -1177,9 +1296,26 @@ impl<X: Xlen> X86Emitter<X> {
     pub(super) fn emit_instruction(&mut self, instr: &InstrIR<X>, is_last: bool, fall_pc: u64) {
         let pc = X::to_u64(instr.pc);
         self.emit_instret_increment(1, pc);
+
+        // Check if any statement might set has_exited (e.g., exit syscall)
+        let might_exit = instr.statements.iter().any(stmt_writes_to_exited);
+
         for stmt in &instr.statements {
             self.emit_stmt(stmt);
         }
+
+        // If the instruction might set has_exited, check and branch to asm_exit
+        if might_exit {
+            let has_exited_off = self.layout.offset_has_exited;
+            let suffix = self.suffix();
+            self.emitf(format!(
+                "cmpb $0, {}({})",
+                has_exited_off,
+                reserved::STATE_PTR
+            ));
+            self.emit(&format!("jne{suffix} asm_exit"));
+        }
+
         if is_last {
             self.emit_terminator(&instr.terminator, fall_pc);
         } else {

@@ -9,6 +9,18 @@ use rvr_ir::{
 use super::Arm64Emitter;
 use super::registers::reserved;
 
+/// Check if a statement (recursively) writes to Exited.
+fn stmt_writes_to_exited<X: Xlen>(stmt: &Stmt<X>) -> bool {
+    match stmt {
+        Stmt::Write { target, .. } => matches!(target, WriteTarget::Exited),
+        Stmt::If { then_stmts, else_stmts, .. } => {
+            then_stmts.iter().any(stmt_writes_to_exited)
+                || else_stmts.iter().any(stmt_writes_to_exited)
+        }
+        Stmt::ExternCall { .. } => false,
+    }
+}
+
 impl<X: Xlen> Arm64Emitter<X> {
     /// Emit an expression for use as a 64-bit address.
     /// For RV32, ensures the result is zero-extended to 64-bit.
@@ -182,8 +194,30 @@ impl<X: Xlen> Arm64Emitter<X> {
                 }
                 dest.to_string()
             }
+            Expr::Var(name) => {
+                if name == "state" {
+                    let state = reserved::STATE_PTR;
+                    if X::VALUE == 32 {
+                        let dest32 = self.reg_32(dest);
+                        self.emitf(format!("mov {dest32}, {}", self.reg_32(state)));
+                    } else {
+                        self.emitf(format!("mov {dest}, {state}"));
+                    }
+                } else {
+                    self.emit_comment(&format!("unsupported var: {name}"));
+                    self.emitf(format!("mov {dest}, #0"));
+                }
+                dest.to_string()
+            }
             Expr::Binary { op, left, right } => self.emit_binary_op(*op, left, right, dest),
             Expr::Unary { op, expr: inner } => self.emit_unary_op(*op, inner, dest),
+            Expr::ExternCall { name, args, .. } => {
+                let ret = self.emit_extern_call(name, args);
+                if ret != dest {
+                    self.emitf(format!("mov {dest}, {ret}"));
+                }
+                dest.to_string()
+            }
             Expr::Ternary {
                 op: TernaryOp::Select,
                 first: cond,
@@ -426,6 +460,81 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
 
         dest.to_string()
+    }
+
+    fn emit_extern_call(&mut self, fn_name: &str, args: &[Expr<X>]) -> String {
+        // Save hot regs to state before calling out.
+        self.save_hot_regs_to_state();
+
+        // Load arguments in reverse order to avoid clobbering temp registers.
+        let max_args = 8usize;
+        for (idx, arg) in args.iter().enumerate().take(max_args).rev() {
+            let arg_reg = if X::VALUE == 32 {
+                if matches!(arg, Expr::Var(name) if name == "state") {
+                    match idx {
+                        0 => "x0",
+                        1 => "x1",
+                        2 => "x2",
+                        3 => "x3",
+                        4 => "x4",
+                        5 => "x5",
+                        6 => "x6",
+                        7 => "x7",
+                        _ => unreachable!(),
+                    }
+                } else {
+                    match idx {
+                        0 => "w0",
+                        1 => "w1",
+                        2 => "w2",
+                        3 => "w3",
+                        4 => "w4",
+                        5 => "w5",
+                        6 => "w6",
+                        7 => "w7",
+                        _ => unreachable!(),
+                    }
+                }
+            } else {
+                match idx {
+                    0 => "x0",
+                    1 => "x1",
+                    2 => "x2",
+                    3 => "x3",
+                    4 => "x4",
+                    5 => "x5",
+                    6 => "x6",
+                    7 => "x7",
+                    _ => unreachable!(),
+                }
+            };
+
+            match arg {
+                Expr::Var(name) if name == "state" => {
+                    self.emitf(format!("mov {arg_reg}, {}", reserved::STATE_PTR));
+                }
+                Expr::Read(ReadExpr::Reg(reg)) => {
+                    let src = self.load_rv_to_temp(*reg, arg_reg);
+                    if src != arg_reg {
+                        self.emitf(format!("mov {arg_reg}, {src}"));
+                    }
+                }
+                Expr::Imm(val) => {
+                    let v = X::to_u64(*val);
+                    self.load_imm(arg_reg, v);
+                }
+                _ => {
+                    let tmp = self.emit_expr(arg, self.temp1());
+                    if tmp != arg_reg {
+                        self.emitf(format!("mov {arg_reg}, {tmp}"));
+                    }
+                }
+            }
+        }
+
+        self.emitf(format!("bl {fn_name}"));
+        self.restore_hot_regs_from_state();
+        if X::VALUE == 32 { "w0".to_string() } else { "x0".to_string() }
     }
 
     fn maybe_spill_left(&mut self, right: &Expr<X>, left_reg: &str) -> Option<usize> {
@@ -1068,8 +1177,9 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.emit_label(&end_label);
                 }
             }
-            Stmt::ExternCall { fn_name, .. } => {
+            Stmt::ExternCall { fn_name, args } => {
                 self.emit_comment(&format!("extern call: {fn_name}"));
+                let _ = self.emit_extern_call(fn_name, args);
             }
         }
     }
@@ -1080,14 +1190,24 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         match term {
             Terminator::Fall { target } => {
-                let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                let target_pc = target
+                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
+                    .unwrap_or(fall_pc);
+                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    return;
+                }
                 // Don't emit branch if target is the next emitted instruction or current instruction
                 if target_pc != fall_pc && target_pc != current_pc {
                     self.emitf(format!("b asm_pc_{:x}", target_pc));
                 }
             }
             Terminator::Jump { target } => {
-                let target_pc = X::to_u64(*target);
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    return;
+                }
                 // Don't emit a self-loop (would be a bug in IR)
                 if target_pc != current_pc {
                     self.emitf(format!("b asm_pc_{:x}", target_pc));
@@ -1105,10 +1225,18 @@ impl<X: Xlen> Arm64Emitter<X> {
                 cond, target, fall, ..
             } => {
                 let cond_reg = self.emit_expr(cond, temp1);
-                let target_pc = X::to_u64(*target);
-                self.emitf(format!("cbnz {cond_reg}, asm_pc_{:x}", target_pc));
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if self.inputs.is_valid_address(target_pc) {
+                    self.emitf(format!("cbnz {cond_reg}, asm_pc_{:x}", target_pc));
+                } else {
+                    self.emitf(format!("cbnz {cond_reg}, asm_trap"));
+                }
                 let fall_target_pc =
-                    fall.map(|f| X::to_u64(f)).unwrap_or(fall_pc);
+                    fall.map(|f| self.inputs.resolve_address(X::to_u64(f))).unwrap_or(fall_pc);
+                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                    self.emit("b asm_trap");
+                    return;
+                }
                 if fall_target_pc != fall_pc {
                     self.emitf(format!("b asm_pc_{:x}", fall_target_pc));
                 }
@@ -1147,9 +1275,25 @@ impl<X: Xlen> Arm64Emitter<X> {
     ) {
         let pc = X::to_u64(instr.pc);
         self.emit_instret_increment(1, pc);
+
+        // Check if any statement might set has_exited (e.g., exit syscall)
+        let might_exit = instr.statements.iter().any(stmt_writes_to_exited);
+
         for stmt in &instr.statements {
             self.emit_stmt(stmt);
         }
+
+        // If the instruction might set has_exited, check and branch to asm_exit
+        if might_exit {
+            let has_exited_off = self.layout.offset_has_exited;
+            self.emitf(format!(
+                "ldrb w0, [{}, #{}]",
+                reserved::STATE_PTR,
+                has_exited_off
+            ));
+            self.emit("cbnz w0, asm_exit");
+        }
+
         // Use fall_pc from output stream to keep inlined/absorbed ranges correct.
         if is_last_in_block {
             self.emit_terminator(&instr.terminator, fall_pc, pc);
