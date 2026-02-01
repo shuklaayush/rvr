@@ -79,6 +79,15 @@ impl<X: Xlen> Arm64Emitter<X> {
                 offset
             ));
         }
+        if self.config.instret_mode.counts() {
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "str {}, [{}, #{}]",
+                reserved::INSTRET,
+                reserved::STATE_PTR,
+                instret_off
+            ));
+        }
     }
 
     /// Restore all hot registers from state (after external calls).
@@ -90,6 +99,15 @@ impl<X: Xlen> Arm64Emitter<X> {
                 "ldr {arm_reg}, [{}, #{}]",
                 reserved::STATE_PTR,
                 offset
+            ));
+        }
+        if self.config.instret_mode.counts() {
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "ldr {}, [{}, #{}]",
+                reserved::INSTRET,
+                reserved::STATE_PTR,
+                instret_off
             ));
         }
     }
@@ -400,19 +418,21 @@ impl<X: Xlen> Arm64Emitter<X> {
             return;
         }
 
-        // Increment instret counter (always 64-bit)
-        let instret_offset = self.layout.offset_instret;
-        self.emitf(format!(
-            "ldr x2, [{}, #{}]",
-            reserved::STATE_PTR,
-            instret_offset
-        ));
-        self.emitf(format!("add x2, x2, #{count}"));
-        self.emitf(format!(
-            "str x2, [{}, #{}]",
-            reserved::STATE_PTR,
-            instret_offset
-        ));
+        // Increment instret counter (always 64-bit) in the cached register.
+        if count <= 0xFFF {
+            self.emitf(format!(
+                "add {}, {}, #{count}",
+                reserved::INSTRET,
+                reserved::INSTRET
+            ));
+        } else {
+            self.load_imm("x2", count);
+            self.emitf(format!(
+                "add {}, {}, x2",
+                reserved::INSTRET,
+                reserved::INSTRET
+            ));
+        }
 
         // For suspend mode, check if we hit the limit
         if self.config.instret_mode.suspends() {
@@ -424,7 +444,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 reserved::STATE_PTR,
                 target_offset
             ));
-            self.emit("cmp x2, x1");
+            self.emitf(format!("cmp {}, x1", reserved::INSTRET));
             self.emitf(format!("b.lo {continue_label}"));
 
             // Suspend: save current PC

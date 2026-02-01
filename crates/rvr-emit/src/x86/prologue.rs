@@ -89,6 +89,16 @@ impl<X: Xlen> X86Emitter<X> {
                 reserved::STATE_PTR
             ));
         }
+        if self.config.instret_mode.counts() {
+            self.emit_comment("Load instret from state");
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "movq {}(%{}), %{}",
+                instret_off,
+                reserved::STATE_PTR,
+                reserved::INSTRET
+            ));
+        }
         self.emit_blank();
 
         self.emit_comment("Jump to starting PC via dispatch table");
@@ -107,6 +117,16 @@ impl<X: Xlen> X86Emitter<X> {
             let offset = self.layout.reg_offset(rv_reg);
             self.emitf(format!(
                 "mov{suffix} %{x86_reg}, {offset}(%{})",
+                reserved::STATE_PTR
+            ));
+        }
+        if self.config.instret_mode.counts() {
+            self.emit_comment("Save instret back to state");
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "movq %{}, {}(%{})",
+                reserved::INSTRET,
+                instret_off,
                 reserved::STATE_PTR
             ));
         }

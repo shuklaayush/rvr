@@ -79,6 +79,15 @@ impl<X: Xlen> X86Emitter<X> {
                 reserved::STATE_PTR
             ));
         }
+        if self.config.instret_mode.counts() {
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "movq %{}, {}(%{})",
+                reserved::INSTRET,
+                instret_off,
+                reserved::STATE_PTR
+            ));
+        }
     }
 
     /// Restore all hot registers from state (after external calls).
@@ -90,6 +99,15 @@ impl<X: Xlen> X86Emitter<X> {
             self.emitf(format!(
                 "mov{suffix} {offset}(%{}), %{x86_reg}",
                 reserved::STATE_PTR
+            ));
+        }
+        if self.config.instret_mode.counts() {
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "movq {}(%{}), %{}",
+                instret_off,
+                reserved::STATE_PTR,
+                reserved::INSTRET
             ));
         }
     }
@@ -400,14 +418,13 @@ impl<X: Xlen> X86Emitter<X> {
         if !self.config.instret_mode.counts() {
             return;
         }
-        // Increment instret counter (always 64-bit)
-        let instret_offset = self.layout.offset_instret;
-        self.emitf(format!(
-            "addq ${}, {}(%{})",
-            count,
-            instret_offset,
-            reserved::STATE_PTR
-        ));
+        // Increment instret counter (always 64-bit) in the cached register.
+        if count <= 0x7fffffff {
+            self.emitf(format!("addq ${}, %{}", count, reserved::INSTRET));
+        } else {
+            self.emitf(format!("movabsq $0x{:x}, %rdx", count));
+            self.emitf(format!("addq %rdx, %{}", reserved::INSTRET));
+        }
 
         // For suspend mode, check if we hit the limit
         if self.config.instret_mode.suspends() {
@@ -418,11 +435,7 @@ impl<X: Xlen> X86Emitter<X> {
                 target_offset,
                 reserved::STATE_PTR
             ));
-            self.emitf(format!(
-                "cmpq %rdx, {}(%{})",
-                instret_offset,
-                reserved::STATE_PTR
-            ));
+            self.emitf(format!("cmpq %rdx, %{}", reserved::INSTRET));
             self.emitf(format!("jb {continue_label}"));
             // Suspend: save current PC
             let pc_offset = self.layout.offset_pc;

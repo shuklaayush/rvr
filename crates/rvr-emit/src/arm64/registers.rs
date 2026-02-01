@@ -3,16 +3,17 @@
 //! Maps RISC-V registers to ARM64 registers based on EmitConfig::hot_regs.
 //! Hot registers are kept in ARM64 GPRs, cold registers are accessed via memory.
 
-/// ARM64 assembly backend: 24 GPRs available for hot registers.
+/// ARM64 assembly backend: 23 GPRs available for hot registers.
 ///
 /// Reserved:
 /// - x19: state pointer (callee-saved)
 /// - x20: memory pointer (callee-saved)
 /// - x0-x2: temporaries for complex operations
+/// - x18: instret cache (reserved)
 /// - x29 (fp), x30 (lr), sp: frame/link/stack
 ///
-/// Available: x3-x18 (16) + x21-x28 (8) = 24 registers
-pub const HOT_REG_SLOTS: usize = 24;
+/// Available: x3-x17 (15) + x21-x28 (8) = 23 registers
+pub const HOT_REG_SLOTS: usize = 23;
 
 /// Reserved ARM64 registers (not available for RISC-V register mapping).
 pub mod reserved {
@@ -20,23 +21,25 @@ pub mod reserved {
     pub const STATE_PTR: &str = "x19";
     /// Memory base pointer (callee-saved)
     pub const MEMORY_PTR: &str = "x20";
+    /// Instret cache register (reserved)
+    pub const INSTRET: &str = "x18";
 }
 
 /// Available ARM64 registers for hot RISC-V register mapping.
-/// Callee-saved first (x21-x28), then caller-saved (x3-x18).
+/// Callee-saved first (x21-x28), then caller-saved (x3-x17).
 /// Since we're the entry point, we save all in prologue anyway.
-pub const AVAILABLE_REGS: [&str; 24] = [
+pub const AVAILABLE_REGS: [&str; 23] = [
     // Callee-saved (fewer instructions if we call out)
     "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28",
     // Caller-saved (we save in prologue, free to use)
     "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16",
-    "x17", "x18",
+    "x17",
 ];
 
 /// 32-bit versions of available registers (w-registers for RV32).
-pub const AVAILABLE_REGS_32: [&str; 24] = [
+pub const AVAILABLE_REGS_32: [&str; 23] = [
     "w21", "w22", "w23", "w24", "w25", "w26", "w27", "w28", "w3", "w4", "w5", "w6", "w7", "w8",
-    "w9", "w10", "w11", "w12", "w13", "w14", "w15", "w16", "w17", "w18",
+    "w9", "w10", "w11", "w12", "w13", "w14", "w15", "w16", "w17",
 ];
 
 /// Register mapping from RISC-V to ARM64.
@@ -158,8 +161,8 @@ mod tests {
 
     #[test]
     fn test_max_hot_regs() {
-        // All 24 available registers
-        let hot: Vec<u8> = (1..=24).collect();
+        // All 23 available registers
+        let hot: Vec<u8> = (1..=23).collect();
         let map = RegMap::new(&hot, false);
 
         // First 8 go to callee-saved
@@ -167,12 +170,12 @@ mod tests {
         assert_eq!(map.get(8), Some("x28"));
         // Next go to caller-saved
         assert_eq!(map.get(9), Some("x3"));
-        assert_eq!(map.get(24), Some("x18"));
+        assert_eq!(map.get(23), Some("x17"));
 
-        // 25th register should not be mapped
-        let hot25: Vec<u8> = (1..=25).collect();
-        let map25 = RegMap::new(&hot25, false);
-        assert!(map25.get(25).is_none());
+        // 24th register should not be mapped
+        let hot24: Vec<u8> = (1..=24).collect();
+        let map24 = RegMap::new(&hot24, false);
+        assert!(map24.get(24).is_none());
     }
 
     #[test]

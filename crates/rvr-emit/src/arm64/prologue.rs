@@ -100,6 +100,16 @@ impl<X: Xlen> Arm64Emitter<X> {
                 offset
             ));
         }
+        if self.config.instret_mode.counts() {
+            self.emit_comment("Load instret from state");
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "ldr {}, [{}, #{}]",
+                reserved::INSTRET,
+                reserved::STATE_PTR,
+                instret_off
+            ));
+        }
         self.emit_blank();
 
         self.emit_comment("Jump to starting PC via dispatch table");
@@ -119,6 +129,16 @@ impl<X: Xlen> Arm64Emitter<X> {
                 "str {arm_reg}, [{}, #{}]",
                 reserved::STATE_PTR,
                 offset
+            ));
+        }
+        if self.config.instret_mode.counts() {
+            self.emit_comment("Save instret back to state");
+            let instret_off = self.layout.offset_instret;
+            self.emitf(format!(
+                "str {}, [{}, #{}]",
+                reserved::INSTRET,
+                reserved::STATE_PTR,
+                instret_off
             ));
         }
         self.emit_blank();
