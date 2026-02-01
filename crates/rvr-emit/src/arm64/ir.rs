@@ -69,9 +69,8 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.emitf(format!("mov x0, {base_reg}"));
                 }
                 self.apply_address_mode("x0");
-                // Add memory base
-                self.emitf(format!("add x0, x0, {}", reserved::MEMORY_PTR));
-                self.emit_load_from_mem("x0", dest, *width, *signed);
+                let mem = format!("{}, x0", reserved::MEMORY_PTR);
+                self.emit_load_from_mem(&mem, dest, *width, *signed);
                 dest.to_string()
             }
             Expr::Read(ReadExpr::MemAddr {
@@ -84,8 +83,8 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.emitf(format!("mov x0, {base_reg}"));
                 }
                 self.apply_address_mode("x0");
-                self.emitf(format!("add x0, x0, {}", reserved::MEMORY_PTR));
-                self.emit_load_from_mem("x0", dest, *width, *signed);
+                let mem = format!("{}, x0", reserved::MEMORY_PTR);
+                self.emit_load_from_mem(&mem, dest, *width, *signed);
                 dest.to_string()
             }
             Expr::PcConst(val) => {
@@ -98,19 +97,33 @@ impl<X: Xlen> Arm64Emitter<X> {
                 match *csr {
                     // cycle/instret (user) and mcycle/minstret (machine)
                     0xC00 | 0xC02 | 0xB00 | 0xB02 => {
-                        self.emitf(format!(
-                            "ldr {dest}, [{}, #{}]",
-                            reserved::STATE_PTR,
-                            instret_off
-                        ));
+                        if self.config.instret_mode.counts() {
+                            if X::VALUE == 32 {
+                                let instret32 = self.reg_32(reserved::INSTRET);
+                                self.emitf(format!("mov {dest}, {instret32}"));
+                            } else {
+                                self.emitf(format!("mov {dest}, {}", reserved::INSTRET));
+                            }
+                        } else {
+                            self.emitf(format!(
+                                "ldr {dest}, [{}, #{}]",
+                                reserved::STATE_PTR,
+                                instret_off
+                            ));
+                        }
                     }
                     // cycleh/instreth/mcycleh/minstreth (upper 32 bits for RV32)
                     0xC80 | 0xC82 | 0xB80 | 0xB82 if X::VALUE == 32 => {
-                        self.emitf(format!(
-                            "ldr {dest}, [{}, #{}]",
-                            reserved::STATE_PTR,
-                            instret_off + 4
-                        ));
+                        if self.config.instret_mode.counts() {
+                            let dest64 = self.reg_64(dest);
+                            self.emitf(format!("lsr {dest64}, {}, #32", reserved::INSTRET));
+                        } else {
+                            self.emitf(format!(
+                                "ldr {dest}, [{}, #{}]",
+                                reserved::STATE_PTR,
+                                instret_off + 4
+                            ));
+                        }
                     }
                     _ => {
                         self.emit_comment(&format!("CSR 0x{:03x} not implemented", csr));
@@ -120,12 +133,21 @@ impl<X: Xlen> Arm64Emitter<X> {
                 dest.to_string()
             }
             Expr::Read(ReadExpr::Cycle) | Expr::Read(ReadExpr::Instret) => {
-                let instret_off = self.layout.offset_instret;
-                self.emitf(format!(
-                    "ldr {dest}, [{}, #{}]",
-                    reserved::STATE_PTR,
-                    instret_off
-                ));
+                if self.config.instret_mode.counts() {
+                    if X::VALUE == 32 {
+                        let instret32 = self.reg_32(reserved::INSTRET);
+                        self.emitf(format!("mov {dest}, {instret32}"));
+                    } else {
+                        self.emitf(format!("mov {dest}, {}", reserved::INSTRET));
+                    }
+                } else {
+                    let instret_off = self.layout.offset_instret;
+                    self.emitf(format!(
+                        "ldr {dest}, [{}, #{}]",
+                        reserved::STATE_PTR,
+                        instret_off
+                    ));
+                }
                 dest.to_string()
             }
             Expr::Read(ReadExpr::Pc) => {
@@ -1043,8 +1065,15 @@ impl<X: Xlen> Arm64Emitter<X> {
                     if *reg == 0 {
                         return;
                     }
-                    let val_reg = self.emit_expr(value, temp1);
-                    self.store_to_rv(*reg, &val_reg);
+                    if let Some(arm_reg) = self.reg_map.get(*reg) {
+                        let val_reg = self.emit_expr(value, arm_reg);
+                        if val_reg != arm_reg {
+                            self.emitf(format!("mov {arm_reg}, {val_reg}"));
+                        }
+                    } else {
+                        let val_reg = self.emit_expr(value, temp1);
+                        self.store_to_rv(*reg, &val_reg);
+                    }
                 }
                 WriteTarget::Mem {
                     base,
@@ -1076,15 +1105,15 @@ impl<X: Xlen> Arm64Emitter<X> {
                         None
                     };
 
-                    self.emitf(format!("add x0, x0, {}", reserved::MEMORY_PTR));
                     // Store
                     let val32 = self.reg_32(temp2);
+                    let mem = format!("{}, x0", reserved::MEMORY_PTR);
                     match width {
-                        1 => self.emitf(format!("strb {val32}, [x0]")),
-                        2 => self.emitf(format!("strh {val32}, [x0]")),
-                        4 => self.emitf(format!("str {val32}, [x0]")),
-                        8 => self.emitf(format!("str {temp2}, [x0]")),
-                        _ => self.emitf(format!("str {val32}, [x0]")),
+                        1 => self.emitf(format!("strb {val32}, [{mem}]")),
+                        2 => self.emitf(format!("strh {val32}, [{mem}]")),
+                        4 => self.emitf(format!("str {val32}, [{mem}]")),
+                        8 => self.emitf(format!("str {temp2}, [{mem}]")),
+                        _ => self.emitf(format!("str {val32}, [{mem}]")),
                     }
 
                     // Emit the done label for HTIF syscall handling

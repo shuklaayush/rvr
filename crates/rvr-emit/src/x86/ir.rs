@@ -122,19 +122,37 @@ impl<X: Xlen> X86Emitter<X> {
                 match *csr {
                     // cycle/instret (user) and mcycle/minstret (machine)
                     0xC00 | 0xC02 | 0xB00 | 0xB02 => {
-                        self.emitf(format!(
-                            "mov{suffix} {}(%{}), %{dest}",
-                            instret_off,
-                            reserved::STATE_PTR
-                        ));
+                        if self.config.instret_mode.counts() {
+                            if X::VALUE == 32 {
+                                self.emitf(format!(
+                                    "movl %{}, %{}",
+                                    self.reg_dword(reserved::INSTRET),
+                                    self.reg_dword(dest)
+                                ));
+                            } else {
+                                self.emitf(format!("movq %{}, %{dest}", reserved::INSTRET));
+                            }
+                        } else {
+                            self.emitf(format!(
+                                "mov{suffix} {}(%{}), %{dest}",
+                                instret_off,
+                                reserved::STATE_PTR
+                            ));
+                        }
                     }
                     // cycleh/instreth/mcycleh/minstreth (upper 32 bits for RV32)
                     0xC80 | 0xC82 | 0xB80 | 0xB82 if X::VALUE == 32 => {
-                        self.emitf(format!(
-                            "movl {}(%{}), %{dest}",
-                            instret_off + 4,
-                            reserved::STATE_PTR
-                        ));
+                        if self.config.instret_mode.counts() {
+                            self.emitf(format!("movq %{}, %rdx", reserved::INSTRET));
+                            self.emit("shrq $32, %rdx");
+                            self.emitf(format!("movl %edx, %{}", self.reg_dword(dest)));
+                        } else {
+                            self.emitf(format!(
+                                "movl {}(%{}), %{dest}",
+                                instret_off + 4,
+                                reserved::STATE_PTR
+                            ));
+                        }
                     }
                     _ => {
                         self.emit_comment(&format!("CSR 0x{:03x} not implemented", csr));
@@ -144,12 +162,24 @@ impl<X: Xlen> X86Emitter<X> {
                 dest.to_string()
             }
             Expr::Read(ReadExpr::Cycle) | Expr::Read(ReadExpr::Instret) => {
-                let instret_off = self.layout.offset_instret;
-                self.emitf(format!(
-                    "mov{suffix} {}(%{}), %{dest}",
-                    instret_off,
-                    reserved::STATE_PTR
-                ));
+                if self.config.instret_mode.counts() {
+                    if X::VALUE == 32 {
+                        self.emitf(format!(
+                            "movl %{}, %{}",
+                            self.reg_dword(reserved::INSTRET),
+                            self.reg_dword(dest)
+                        ));
+                    } else {
+                        self.emitf(format!("movq %{}, %{dest}", reserved::INSTRET));
+                    }
+                } else {
+                    let instret_off = self.layout.offset_instret;
+                    self.emitf(format!(
+                        "mov{suffix} {}(%{}), %{dest}",
+                        instret_off,
+                        reserved::STATE_PTR
+                    ));
+                }
                 dest.to_string()
             }
             Expr::Read(ReadExpr::Pc) => {
@@ -1092,8 +1122,23 @@ impl<X: Xlen> X86Emitter<X> {
                     if *reg == 0 {
                         return;
                     }
-                    let val_reg = self.emit_expr(value, temp1);
-                    self.store_to_rv(*reg, &val_reg);
+                    if let Some(x86_reg) = self.reg_map.get(*reg) {
+                        let val_reg = self.emit_expr(value, x86_reg);
+                        if val_reg != x86_reg {
+                            if X::VALUE == 32 {
+                                self.emitf(format!(
+                                    "movl %{}, %{}",
+                                    self.reg_dword(&val_reg),
+                                    self.reg_dword(x86_reg)
+                                ));
+                            } else {
+                                self.emitf(format!("movq %{val_reg}, %{x86_reg}"));
+                            }
+                        }
+                    } else {
+                        let val_reg = self.emit_expr(value, temp1);
+                        self.store_to_rv(*reg, &val_reg);
+                    }
                 }
                 WriteTarget::Mem {
                     base,
