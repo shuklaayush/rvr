@@ -397,8 +397,10 @@ impl<X: Xlen> Arm64Emitter<X> {
             let mask = self.memory_mask;
             let addr64 = self.reg_64(addr_reg);
 
-            // Load mask and AND
-            if mask <= 0xFFF {
+            if mask == 0xffff_ffff {
+                let addr32 = self.reg_32(&addr64);
+                self.emitf(format!("uxtw {addr64}, {addr32}"));
+            } else if mask <= 0xFFF {
                 // 12-bit immediate fits in and instruction
                 self.emitf(format!("and {addr64}, {addr64}, #{mask}"));
             } else {
@@ -406,6 +408,70 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emitf(format!("and {addr64}, {addr64}, x2"));
             }
         }
+    }
+
+    /// Check if an immediate can be encoded as an ARM64 logical immediate.
+    pub(super) fn is_logical_imm(&self, value: u64, is_32: bool) -> bool {
+        let bits = if is_32 { 32 } else { 64 };
+        let v = if is_32 { value as u32 as u64 } else { value };
+        if v == 0 {
+            return false;
+        }
+        let full_mask = if bits == 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
+        if v == full_mask {
+            return false;
+        }
+
+        let mut size = 2usize;
+        while size <= bits {
+            let mask = if size == 64 {
+                u64::MAX
+            } else {
+                (1u64 << size) - 1
+            };
+            let pattern = v & mask;
+            let mut replicated = 0u64;
+            let mut shift = 0usize;
+            while shift < bits {
+                replicated |= pattern << shift;
+                shift += size;
+            }
+            if replicated == v && Self::is_rotated_mask(pattern, size as u32) {
+                return true;
+            }
+            size <<= 1;
+        }
+        false
+    }
+
+    fn is_rotated_mask(value: u64, size: u32) -> bool {
+        if size == 0 || size > 64 {
+            return false;
+        }
+        let mask = if size == 64 {
+            u64::MAX
+        } else {
+            (1u64 << size) - 1
+        };
+        let v = value & mask;
+        if v == 0 || v == mask {
+            return false;
+        }
+        for rot in 0..size {
+            let r = if rot == 0 {
+                v
+            } else {
+                ((v >> rot) | (v << (size - rot))) & mask
+            };
+            if (r & (r + 1)) == 0 {
+                return true;
+            }
+        }
+        false
     }
 
     // ========================================================================

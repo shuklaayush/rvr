@@ -347,6 +347,122 @@ impl<X: Xlen> X86Emitter<X> {
         let temp2 = self.temp2();
         let suffix = self.suffix();
 
+        if let Expr::Imm(imm) = right {
+            let v = X::to_u64(*imm);
+            let full_mask = if X::VALUE == 32 { u32::MAX as u64 } else { u64::MAX };
+            match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Or | BinaryOp::Xor if v == 0 => {
+                    let left_reg = self.emit_expr(left, dest);
+                    if left_reg != dest {
+                        if X::VALUE == 32 {
+                            self.emitf(format!(
+                                "movl %{}, %{}",
+                                self.reg_dword(&left_reg),
+                                self.reg_dword(dest)
+                            ));
+                        } else {
+                            self.emitf(format!("movq %{left_reg}, %{dest}"));
+                        }
+                    }
+                    return dest.to_string();
+                }
+                BinaryOp::And if v == 0 => {
+                    self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
+                    return dest.to_string();
+                }
+                BinaryOp::And if v == full_mask => {
+                    let left_reg = self.emit_expr(left, dest);
+                    if left_reg != dest {
+                        if X::VALUE == 32 {
+                            self.emitf(format!(
+                                "movl %{}, %{}",
+                                self.reg_dword(&left_reg),
+                                self.reg_dword(dest)
+                            ));
+                        } else {
+                            self.emitf(format!("movq %{left_reg}, %{dest}"));
+                        }
+                    }
+                    return dest.to_string();
+                }
+                BinaryOp::Mul if v == 0 => {
+                    self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
+                    return dest.to_string();
+                }
+                BinaryOp::Mul if v == 1 => {
+                    let left_reg = self.emit_expr(left, dest);
+                    if left_reg != dest {
+                        if X::VALUE == 32 {
+                            self.emitf(format!(
+                                "movl %{}, %{}",
+                                self.reg_dword(&left_reg),
+                                self.reg_dword(dest)
+                            ));
+                        } else {
+                            self.emitf(format!("movq %{left_reg}, %{dest}"));
+                        }
+                    }
+                    return dest.to_string();
+                }
+                _ => {}
+            }
+        }
+
+        // Fast path: in-place op on hot register
+        if matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor | BinaryOp::Mul
+        ) {
+            if let Expr::Read(ReadExpr::Reg(reg)) = left {
+                if let Some(mapped) = self.reg_map.get(*reg) {
+                    if mapped == dest {
+                        let right_is_imm = matches!(right, Expr::Imm(_));
+                        let right_val = if let Expr::Imm(imm) = right {
+                            X::to_u64(*imm)
+                        } else {
+                            0
+                        };
+                        let imm_fits = right_val <= i32::MAX as u64;
+                        match op {
+                            BinaryOp::Add | BinaryOp::Sub | BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => {
+                                if right_is_imm && imm_fits {
+                                    let op_str = match op {
+                                        BinaryOp::Add => "add",
+                                        BinaryOp::Sub => "sub",
+                                        BinaryOp::And => "and",
+                                        BinaryOp::Or => "or",
+                                        BinaryOp::Xor => "xor",
+                                        _ => unreachable!(),
+                                    };
+                                    self.emitf(format!("{op_str}{suffix} ${}, %{dest}", right_val as i32));
+                                    return dest.to_string();
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        let right_reg = self.emit_expr(right, temp2);
+                        match op {
+                            BinaryOp::Add => self.emitf(format!("add{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::Sub => self.emitf(format!("sub{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::And => self.emitf(format!("and{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::Or => self.emitf(format!("or{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::Xor => self.emitf(format!("xor{suffix} %{right_reg}, %{dest}")),
+                            BinaryOp::Mul => {
+                                if X::VALUE == 32 {
+                                    self.emitf(format!("imull %{right_reg}, %{dest}"));
+                                } else {
+                                    self.emitf(format!("imulq %{right_reg}, %{dest}"));
+                                }
+                            }
+                            _ => {}
+                        }
+                        return dest.to_string();
+                    }
+                }
+            }
+        }
+
         let left_reg = self.emit_expr(left, temp1);
         if left_reg != temp1 {
             self.emitf(format!("mov{suffix} %{left_reg}, %{temp1}"));
