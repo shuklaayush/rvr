@@ -35,6 +35,13 @@ rvr test riscv build                # build from source (requires riscv toolchai
 rvr test riscv run                  # run all tests
 rvr test riscv run --filter rv64ui  # filtered
 
+# Run riscv-arch-test (official architecture compliance tests)
+rvr test arch build                 # build from source (requires riscv toolchain)
+rvr test arch build --category rv64i-I  # build specific category
+rvr test arch gen-refs              # generate reference signatures (requires Spike)
+rvr test arch run                   # run all tests
+rvr test arch run --filter add      # filtered
+
 # Benchmarks
 rvr bench list                       # List available benchmarks
 rvr bench build                      # Build all from source
@@ -53,6 +60,12 @@ rvr bench run reth --compare-host    # Run with host comparison
 rvr/
 ├── crates/
 │   ├── rvr/           # CLI and high-level API
+│   │   └── src/commands/
+│   │       ├── test/          # Test suite commands
+│   │       │   ├── riscv_tests/   # riscv-tests runner
+│   │       │   └── arch_tests/    # riscv-arch-test runner (includes harness files)
+│   │       └── bench/         # Benchmark commands
+│   │           └── coremark/  # CoreMark port files
 │   ├── rvr-elf/       # ELF parsing
 │   ├── rvr-isa/       # Decoder, lifter, extensions
 │   ├── rvr-ir/        # Intermediate representation
@@ -66,8 +79,11 @@ rvr/
 │   ├── rv32i/         # RV32I binaries
 │   ├── rv64e/         # RV64E binaries
 │   ├── rv64i/         # RV64I binaries
-│   └── riscv-tests/   # riscv-tests suite (rv32ui-p-*, rv64ui-p-*, etc.)
-├── programs/          # Source for test programs
+│   ├── riscv-tests/   # riscv-tests suite (rv32ui-p-*, rv64ui-p-*, etc.)
+│   └── riscv-arch-test/  # riscv-arch-test binaries and references
+├── programs/          # Source for test programs and submodules
+│   ├── riscv-tests/       # Submodule: upstream riscv-tests
+│   └── riscv-arch-test/   # Submodule: upstream riscv-arch-test
 ├── docs/              # Design notes and backend TODOs
 └── scripts/           # Helper scripts
 ```
@@ -101,6 +117,31 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **LFS for Binaries**: All binaries in `bin/` are tracked with Git LFS.
 - **Keep Dependencies Minimal**: Don't add dependencies for trivial functionality.
 - **Document Public APIs**: All public items need doc comments.
+
+### Submodule Management
+
+Submodules in `programs/` contain upstream test suites and benchmarks. **Never modify submodules** for rvr-specific functionality - only update them to track upstream changes or fix upstream bugs.
+
+**Pattern for test/benchmark harnesses**: Keep rvr-specific harness files (linker scripts, model headers, port files) alongside the Rust code that uses them in `crates/rvr/src/commands/`:
+
+```text
+crates/rvr/src/commands/
+├── test/
+│   ├── riscv_tests/          # riscv-tests runner code
+│   └── arch_tests/           # riscv-arch-test runner code
+│       ├── mod.rs            # Test runner implementation
+│       ├── model_test.h      # RVMODEL_* macros for rvr target
+│       └── link.ld           # Linker script for rvr
+└── bench/
+    └── coremark/             # CoreMark benchmark
+        ├── mod.rs            # Build/run implementation
+        ├── host_portme.h     # Host port header
+        ├── host_portme.c     # Host port implementation
+        ├── riscv_portme.h    # RISC-V port header
+        └── riscv_portme.c    # RISC-V port implementation
+```
+
+This pattern keeps harness files with the code that uses them, making it clear which files belong together. The upstream submodules remain unmodified.
 
 ### Development Workflow
 

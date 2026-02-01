@@ -451,6 +451,35 @@ impl Runner {
         self.inner.set_target_instret(target)
     }
 
+    /// Dump register state to stderr for debugging.
+    /// Useful for comparing execution between different backends.
+    pub fn dump_registers(&self) {
+        eprintln!("=== Register State ===");
+        eprintln!("pc:      {:016x}", self.inner.get_pc());
+        eprintln!("instret: {:016x}", self.inner.instret());
+        for i in 0..self.inner.num_regs() {
+            eprintln!("x{:02}:     {:016x}", i, self.inner.get_register(i));
+        }
+    }
+
+    /// Compute a simple checksum of memory for comparison.
+    pub fn memory_checksum(&self, start: u64, len: usize) -> u64 {
+        let mut checksum: u64 = 0;
+        let mut buf = [0u8; 8];
+        let mut offset = start;
+        let end = start + len as u64;
+        while offset < end {
+            let read = self.inner.read_memory(offset, &mut buf);
+            if read == 0 {
+                break;
+            }
+            checksum = checksum.wrapping_add(u64::from_le_bytes(buf));
+            checksum = checksum.rotate_left(7);
+            offset += 8;
+        }
+        checksum
+    }
+
     /// Execute from a specific address.
     pub fn execute_from(&mut self, pc: u64) -> Result<(std::time::Duration, u64), RunError> {
         let start = Instant::now();

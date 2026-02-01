@@ -362,6 +362,11 @@ pub enum TestCommands {
         #[command(subcommand)]
         command: RiscvTestCommands,
     },
+    /// Run riscv-arch-test suite (official RISC-V architecture tests)
+    Arch {
+        #[command(subcommand)]
+        command: ArchTestCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -405,6 +410,70 @@ pub enum RiscvTestCommands {
         /// Code generation backend
         #[arg(long, value_enum, default_value = "c")]
         backend: BackendArg,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ArchTestCommands {
+    /// Build riscv-arch-test from source (requires riscv toolchain and Spike)
+    Build {
+        /// Test categories to build (comma-separated, or "all")
+        /// Categories: rv64i-I, rv64i-M, rv64i-A, rv64i-C, rv64i-B, rv64i-Zicond,
+        ///             rv32i-I, rv32i-M, rv32i-A, rv32i-C, rv32i-B, rv32i-Zicond
+        #[arg(short, long, default_value = "all")]
+        category: String,
+
+        /// Output directory for built binaries
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Toolchain prefix (e.g., riscv64-unknown-elf-)
+        #[arg(long)]
+        toolchain: Option<String>,
+
+        /// Skip generating reference signatures (use existing)
+        #[arg(long)]
+        no_refs: bool,
+    },
+    /// Run riscv-arch-test (compares signatures against references)
+    Run {
+        /// Filter pattern (e.g., "rv64i_m/I" or "add")
+        #[arg(short, long)]
+        filter: Option<String>,
+
+        /// Verbose output (show all tests, not just failures)
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Timeout per test in seconds
+        #[arg(short, long, default_value = "30")]
+        timeout: u64,
+
+        /// C compiler command
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// Linker to use
+        #[arg(long)]
+        linker: Option<String>,
+
+        /// Code generation backend
+        #[arg(long, value_enum, default_value = "c")]
+        backend: BackendArg,
+    },
+    /// Generate reference signatures using Spike
+    GenRefs {
+        /// Test categories (comma-separated, or "all")
+        #[arg(short, long, default_value = "all")]
+        category: String,
+
+        /// Output directory for reference signatures
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Force regeneration even if references exist
+        #[arg(long)]
+        force: bool,
     },
 }
 
