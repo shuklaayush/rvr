@@ -9,7 +9,8 @@ mod run;
 mod test;
 
 use crate::cli::{
-    BenchCommands, Cli, Commands, EXIT_SUCCESS, OutputFormat, RiscvTestCommands, TestCommands,
+    ArchTestCommands, BenchCommands, Cli, Commands, EXIT_SUCCESS, OutputFormat, RiscvTestCommands,
+    TestCommands,
 };
 
 /// Dispatch CLI command to the appropriate handler.
@@ -181,6 +182,34 @@ pub fn run_command(cli: &Cli) -> i32 {
                     linker.as_deref(),
                     (*backend).into(),
                 ),
+            },
+            TestCommands::Arch { command } => match command {
+                ArchTestCommands::Build {
+                    category,
+                    output,
+                    toolchain,
+                    no_refs,
+                } => test::arch_tests_build(category, output.clone(), toolchain.clone(), *no_refs),
+                ArchTestCommands::Run {
+                    filter,
+                    verbose,
+                    timeout,
+                    cc,
+                    linker,
+                    backend,
+                } => test::arch_tests_run(
+                    filter.clone(),
+                    *verbose,
+                    *timeout,
+                    cc,
+                    linker.as_deref(),
+                    (*backend).into(),
+                ),
+                ArchTestCommands::GenRefs {
+                    category,
+                    output,
+                    force,
+                } => test::arch_tests_gen_refs(category, output.clone(), *force),
             },
         },
     }

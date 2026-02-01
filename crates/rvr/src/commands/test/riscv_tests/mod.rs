@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use rvr_emit::Backend;
 
-use crate::{CompileOptions, Compiler, Runner, compile_with_options};
+use rvr::{compile_with_options, CompileOptions, Compiler, Runner};
+pub use rvr::metrics::TestStatus;
 
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[
@@ -16,14 +17,6 @@ const SKIP_TESTS: &[&str] = &[
     "rv32ui-p-fence_i",
     "rv64ui-p-fence_i",
 ];
-
-/// Test result status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestStatus {
-    Pass,
-    Fail,
-    Skip,
-}
 
 /// Result of running a single test.
 #[derive(Debug, Clone)]
@@ -76,6 +69,7 @@ pub struct TestSummary {
 
 impl TestSummary {
     /// Total number of tests.
+    #[allow(dead_code)]
     pub fn total(&self) -> usize {
         self.passed + self.failed + self.skipped
     }
@@ -88,7 +82,7 @@ impl TestSummary {
     /// Add a result to the summary.
     pub fn add(&mut self, result: TestResult) {
         // Record metric for this test
-        crate::metrics::record_test(&result.name, result.status);
+        rvr::metrics::record_test(&result.name, result.status);
 
         match result.status {
             TestStatus::Pass => self.passed += 1,
@@ -102,7 +96,7 @@ impl TestSummary {
 
     /// Record summary totals to metrics.
     pub fn record_metrics(&self) {
-        crate::metrics::record_test_summary(
+        rvr::metrics::record_test_summary(
             self.passed as u64,
             self.failed as u64,
             self.skipped as u64,
@@ -634,25 +628,7 @@ impl BuildConfig {
 
 /// Find RISC-V GCC toolchain prefix.
 pub fn find_toolchain() -> Option<String> {
-    const PREFIXES: &[&str] = &[
-        "riscv64-unknown-elf-",
-        "riscv32-unknown-elf-",
-        "riscv64-linux-gnu-",
-        "riscv32-linux-gnu-",
-    ];
-
-    for prefix in PREFIXES {
-        let gcc = format!("{}gcc", prefix);
-        if Command::new("which")
-            .arg(&gcc)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some(prefix.to_string());
-        }
-    }
-    None
+    rvr::build_utils::find_toolchain()
 }
 
 /// Result of building a category.

@@ -12,8 +12,15 @@ use metrics::{
 };
 use parking_lot::RwLock;
 
-use crate::tests::TestStatus;
 use crate::{PerfCounters, RunResult};
+
+/// Test result status for metrics recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestStatus {
+    Pass,
+    Fail,
+    Skip,
+}
 
 // ============================================================================
 // Metric descriptions
