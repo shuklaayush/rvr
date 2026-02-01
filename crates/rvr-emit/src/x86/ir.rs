@@ -120,16 +120,16 @@ impl<X: Xlen> X86Emitter<X> {
             Expr::Read(ReadExpr::Csr(csr)) => {
                 let instret_off = self.layout.offset_instret;
                 match *csr {
-                    0xC00 | 0xC02 => {
-                        // cycle/instret
+                    // cycle/instret (user) and mcycle/minstret (machine)
+                    0xC00 | 0xC02 | 0xB00 | 0xB02 => {
                         self.emitf(format!(
                             "mov{suffix} {}(%{}), %{dest}",
                             instret_off,
                             reserved::STATE_PTR
                         ));
                     }
-                    0xC80 | 0xC82 if X::VALUE == 32 => {
-                        // cycleh/instreth
+                    // cycleh/instreth/mcycleh/minstreth (upper 32 bits for RV32)
+                    0xC80 | 0xC82 | 0xB80 | 0xB82 if X::VALUE == 32 => {
                         self.emitf(format!(
                             "movl {}(%{}), %{dest}",
                             instret_off + 4,

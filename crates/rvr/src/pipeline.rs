@@ -8,7 +8,7 @@ use rvr_elf::{DebugInfo, ElfImage};
 use rvr_emit::arm64::Arm64Emitter;
 use rvr_emit::c::{
     CProject, HeaderConfig, HtifConfig, MemorySegment, SyscallsConfig, gen_header,
-    gen_htif_header, gen_syscalls_source, gen_tracer_header,
+    gen_htif_header, gen_htif_source, gen_syscalls_source, gen_tracer_header,
 };
 use rvr_emit::x86::X86Emitter;
 use rvr_emit::{AnalysisMode, Backend, EmitConfig, EmitInputs, SyscallMode, NUM_REGS_E, NUM_REGS_I};
@@ -728,21 +728,37 @@ impl<X: Xlen> Pipeline<X> {
         base_name: &str,
         inputs: &EmitInputs,
     ) -> Result<()> {
-        if self.config.syscall_mode != SyscallMode::Linux {
-            return Ok(());
-        }
-
-        let header_cfg = HeaderConfig::new(base_name, &self.config, inputs, Vec::new());
-        let header = gen_header::<X>(&header_cfg);
-        std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
-
+        // HTIF support can be used with any syscall mode (for riscv-tests benchmarks)
         if self.config.htif_enabled {
-            let htif_cfg = HtifConfig::new(base_name, true);
+            // Write header file (needed for HTIF source to compile)
+            let header_cfg = HeaderConfig::new(base_name, &self.config, inputs, Vec::new());
+            let header = gen_header::<X>(&header_cfg);
+            std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
+
+            let htif_cfg = HtifConfig::new(base_name, true)
+                .with_verbose(self.config.htif_verbose);
             let htif_header = gen_htif_header::<X>(&htif_cfg);
             std::fs::write(
                 output_dir.join(format!("{}_htif.h", base_name)),
                 htif_header,
             )?;
+            let htif_source = gen_htif_source::<X>(&htif_cfg);
+            std::fs::write(
+                output_dir.join(format!("{}_htif.c", base_name)),
+                htif_source,
+            )?;
+        }
+
+        // Linux syscall mode requires additional support files
+        if self.config.syscall_mode != SyscallMode::Linux {
+            return Ok(());
+        }
+
+        // Write header if not already written for HTIF
+        if !self.config.htif_enabled {
+            let header_cfg = HeaderConfig::new(base_name, &self.config, inputs, Vec::new());
+            let header = gen_header::<X>(&header_cfg);
+            std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
         }
 
         if !self.config.tracer_config.is_none() {

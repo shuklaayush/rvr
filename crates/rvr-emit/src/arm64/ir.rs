@@ -96,16 +96,16 @@ impl<X: Xlen> Arm64Emitter<X> {
             Expr::Read(ReadExpr::Csr(csr)) => {
                 let instret_off = self.layout.offset_instret;
                 match *csr {
-                    0xC00 | 0xC02 => {
-                        // cycle/instret
+                    // cycle/instret (user) and mcycle/minstret (machine)
+                    0xC00 | 0xC02 | 0xB00 | 0xB02 => {
                         self.emitf(format!(
                             "ldr {dest}, [{}, #{}]",
                             reserved::STATE_PTR,
                             instret_off
                         ));
                     }
-                    0xC80 | 0xC82 if X::VALUE == 32 => {
-                        // cycleh/instreth (upper 32 bits)
+                    // cycleh/instreth/mcycleh/minstreth (upper 32 bits for RV32)
+                    0xC80 | 0xC82 | 0xB80 | 0xB82 if X::VALUE == 32 => {
                         self.emitf(format!(
                             "ldr {dest}, [{}, #{}]",
                             reserved::STATE_PTR,
@@ -1069,9 +1069,12 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.apply_address_mode("x0");
 
                     // HTIF handling: check for tohost write
-                    if self.config.htif_enabled && (*width == 4 || *width == 8) {
-                        self.emit_htif_check();
-                    }
+                    let htif_done_label = if self.config.htif_enabled && (*width == 4 || *width == 8)
+                    {
+                        Some(self.emit_htif_check())
+                    } else {
+                        None
+                    };
 
                     self.emitf(format!("add x0, x0, {}", reserved::MEMORY_PTR));
                     // Store
@@ -1082,6 +1085,11 @@ impl<X: Xlen> Arm64Emitter<X> {
                         4 => self.emitf(format!("str {val32}, [x0]")),
                         8 => self.emitf(format!("str {temp2}, [x0]")),
                         _ => self.emitf(format!("str {val32}, [x0]")),
+                    }
+
+                    // Emit the done label for HTIF syscall handling
+                    if let Some(label) = htif_done_label {
+                        self.emit_label(&label);
                     }
                 }
                 WriteTarget::Pc => {

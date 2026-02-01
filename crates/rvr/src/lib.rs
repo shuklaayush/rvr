@@ -859,6 +859,49 @@ fn compile_x86_to_shared(
         obj_files.push(syscalls_obj_path);
     }
 
+    // Check for htif.c and compile it if present (for HTIF syscall support)
+    let htif_c_path = output_dir.join(format!("{}_htif.c", base_name));
+    if htif_c_path.exists() {
+        let htif_obj_path = output_dir.join(format!("{}_htif.o", base_name));
+        let mut htif_cmd = Command::new(cc);
+
+        if needs_cross {
+            htif_cmd.args([
+                "--target=x86_64-unknown-linux-gnu",
+                "-c",
+                "-fPIC",
+                "-O2",
+                "-std=c23",
+            ]);
+        } else {
+            htif_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
+        }
+
+        htif_cmd
+            .arg("-I")
+            .arg(output_dir)
+            .arg("-o")
+            .arg(&htif_obj_path)
+            .arg(&htif_c_path);
+
+        let htif_output = htif_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to compile htif: {}", e)))?;
+
+        if !htif_output.status.success() {
+            let stderr = String::from_utf8_lossy(&htif_output.stderr);
+            error!(stderr = %stderr, "htif compilation failed");
+            return Err(Error::CompilationFailed(format!(
+                "HTIF compilation failed: {}",
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
+
+        obj_files.push(htif_obj_path);
+    }
+
     // Link to shared library
     let mut link_cmd = Command::new(cc);
 
@@ -1017,6 +1060,49 @@ fn compile_arm64_to_shared(
         }
 
         obj_files.push(syscalls_obj_path);
+    }
+
+    // Check for htif.c and compile it if present (for HTIF syscall support)
+    let htif_c_path = output_dir.join(format!("{}_htif.c", base_name));
+    if htif_c_path.exists() {
+        let htif_obj_path = output_dir.join(format!("{}_htif.o", base_name));
+        let mut htif_cmd = Command::new(cc);
+
+        if needs_cross {
+            htif_cmd.args([
+                "--target=aarch64-unknown-linux-gnu",
+                "-c",
+                "-fPIC",
+                "-O2",
+                "-std=c23",
+            ]);
+        } else {
+            htif_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
+        }
+
+        htif_cmd
+            .arg("-I")
+            .arg(output_dir)
+            .arg("-o")
+            .arg(&htif_obj_path)
+            .arg(&htif_c_path);
+
+        let htif_output = htif_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to compile htif: {}", e)))?;
+
+        if !htif_output.status.success() {
+            let stderr = String::from_utf8_lossy(&htif_output.stderr);
+            error!(stderr = %stderr, "htif compilation failed");
+            return Err(Error::CompilationFailed(format!(
+                "HTIF compilation failed: {}",
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
+
+        obj_files.push(htif_obj_path);
     }
 
     // Link to shared library
