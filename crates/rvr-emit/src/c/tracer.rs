@@ -28,6 +28,10 @@ pub enum TracerKind {
     Debug,
     /// Spike-compatible tracer - outputs in Spike's --log-commits format.
     Spike,
+    /// Diff tracer - captures single-instruction state for differential testing.
+    Diff,
+    /// Buffered diff tracer - captures N instruction states for block-level comparison.
+    BufferedDiff,
 }
 
 impl TracerKind {
@@ -46,6 +50,8 @@ impl TracerKind {
             Self::Dynamic => "dynamic",
             Self::Debug => "debug",
             Self::Spike => "spike",
+            Self::Diff => "diff",
+            Self::BufferedDiff => "buffered-diff",
         }
     }
 
@@ -59,6 +65,8 @@ impl TracerKind {
             Self::Dynamic => 4,
             Self::Debug => 5,
             Self::Spike => 6,
+            Self::Diff => 7,
+            Self::BufferedDiff => 8,
         }
     }
 }

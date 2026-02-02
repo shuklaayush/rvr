@@ -40,6 +40,8 @@ pub struct RvStateLayout {
     pub offset_start_brk: usize,
     /// Offset of memory pointer.
     pub offset_memory: usize,
+    /// Offset of tracer field (immediately after memory pointer).
+    pub offset_tracer: usize,
 }
 
 impl RvStateLayout {
@@ -87,6 +89,7 @@ impl RvStateLayout {
 
         // Memory pointer
         let offset_memory = offset_start_brk + reg_bytes;
+        let offset_tracer = offset_memory + 8;
 
         Self {
             reg_bytes,
@@ -103,6 +106,7 @@ impl RvStateLayout {
             offset_brk,
             offset_start_brk,
             offset_memory,
+            offset_tracer,
         }
     }
 

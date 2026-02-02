@@ -4,7 +4,9 @@ use rvr_ir::Xlen;
 
 use super::tracer::TracerKind;
 
+mod buffered_diff;
 mod debug;
+mod diff;
 mod dynamic;
 mod ffi;
 mod none;
@@ -21,5 +23,7 @@ pub fn gen_tracer_header<X: Xlen>(kind: TracerKind) -> String {
         TracerKind::Dynamic => dynamic::gen_tracer_dynamic::<X>(),
         TracerKind::Debug => debug::gen_tracer_debug::<X>(),
         TracerKind::Spike => spike::gen_tracer_spike::<X>(),
+        TracerKind::Diff => diff::gen_tracer_diff::<X>(),
+        TracerKind::BufferedDiff => buffered_diff::gen_tracer_buffered_diff::<X>(),
     }
 }

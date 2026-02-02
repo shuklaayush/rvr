@@ -17,7 +17,10 @@ mod ffi;
 mod state;
 
 // Re-export state types
-pub use state::{DebugTracer, DynamicTracer, FfiTracer, PreflightTracer, StatsTracer, TracerState};
+pub use state::{
+    BufferedDiffIterator, BufferedDiffTracer, DebugTracer, DiffEntry, DiffTracer, DynamicTracer,
+    FfiTracer, PreflightTracer, StatsTracer, TracerState,
+};
 
 // Re-export FFI types
 pub use ffi::{CountingTracer, FfiTracerPtr, NoopTracer, Tracer};

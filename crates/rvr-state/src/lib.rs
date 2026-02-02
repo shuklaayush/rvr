@@ -36,8 +36,12 @@ pub use state::{
 };
 pub use suspender::{InstretSuspender, SuspenderState};
 pub use tracer::{
+    BufferedDiffIterator,
+    BufferedDiffTracer,
     CountingTracer,
     DebugTracer,
+    DiffEntry,
+    DiffTracer,
     DynamicTracer,
     FfiTracer,
     FfiTracerPtr,
