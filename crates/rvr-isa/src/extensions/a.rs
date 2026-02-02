@@ -420,8 +420,11 @@ fn lift_a<X: Xlen>(args: &InstrArgs, opid: crate::OpId) -> (Vec<Stmt<X>>, Termin
                     Stmt::write_reg(rd, Expr::imm(X::from_u64(0))),
                     Stmt::write_res_valid(Expr::imm(X::from_u64(0))),
                 ];
-                // Else: write 1 to rd (failure)
-                let else_stmts = vec![Stmt::write_reg(rd, Expr::imm(X::from_u64(1)))];
+                // Else: write 1 to rd (failure) and clear reservation
+                let else_stmts = vec![
+                    Stmt::write_reg(rd, Expr::imm(X::from_u64(1))),
+                    Stmt::write_res_valid(Expr::imm(X::from_u64(0))),
+                ];
                 let stmts = vec![Stmt::if_then_else(cond, then_stmts, else_stmts)];
                 return (stmts, Terminator::Fall { target: None });
             }
