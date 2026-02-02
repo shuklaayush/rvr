@@ -11,9 +11,10 @@ pub mod diff;
 pub mod riscv_tests;
 pub mod trace;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rvr_emit::Backend;
+use rvr_ir::Xlen;
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use rvr::Compiler;
@@ -752,6 +753,8 @@ pub fn diff_compare(
         DiffGranularityArg::Instruction => diff::DiffGranularity::Instruction,
         DiffGranularityArg::Block => diff::DiffGranularity::Block,
         DiffGranularityArg::Hybrid => diff::DiffGranularity::Hybrid,
+        DiffGranularityArg::Checkpoint => diff::DiffGranularity::Checkpoint,
+        DiffGranularityArg::PureC => diff::DiffGranularity::PureC,
     };
 
     // Check if test should be skipped
@@ -822,6 +825,7 @@ pub fn diff_compare(
         return EXIT_FAILURE;
     }
 
+    let checkpoint_requested = matches!(granularity, diff::DiffGranularity::Checkpoint);
     let block_requested = matches!(
         granularity,
         diff::DiffGranularity::Block | diff::DiffGranularity::Hybrid
@@ -837,8 +841,39 @@ pub fn diff_compare(
         );
     }
 
+    // Check if checkpoint mode is possible (requires two compiled backends)
+    let use_checkpoint_comparison = checkpoint_requested
+        && matches!(ref_backend, DiffBackend::Backend(_))
+        && matches!(test_backend, DiffBackend::Backend(_));
+    if checkpoint_requested && !use_checkpoint_comparison {
+        eprintln!(
+            "Warning: checkpoint mode requires two compiled backends (not Spike); falling back to instruction mode."
+        );
+    }
+
+    // Check if pure-C mode is possible (requires two compiled backends)
+    let pure_c_requested = matches!(granularity, diff::DiffGranularity::PureC);
+    let use_pure_c = pure_c_requested
+        && matches!(ref_backend, DiffBackend::Backend(_))
+        && matches!(test_backend, DiffBackend::Backend(_));
+    if pure_c_requested && !use_pure_c {
+        eprintln!(
+            "Warning: pure-C mode requires two compiled backends (not Spike); falling back to instruction mode."
+        );
+    }
+
     // Determine what to compile based on mode and granularity
-    let result = if use_block_comparison {
+    let result = if use_pure_c {
+        // Pure-C comparison: generates a standalone C program
+        run_pure_c_comparison(
+            elf_path,
+            &output_dir,
+            ref_backend.as_backend().unwrap(),
+            test_backend.as_backend().unwrap(),
+            cc,
+            max_instrs,
+        )
+    } else if use_block_comparison {
         // Block-level comparison: reference as block executor, test as linear executor
         eprintln!("Using block-level comparison (reference block vs test linear)");
 
@@ -898,6 +933,65 @@ pub fn diff_compare(
         };
 
         diff::compare_block_vs_linear(&mut block_exec, &mut linear_exec, &config, max_instrs)
+    } else if use_checkpoint_comparison {
+        // Fast checkpoint comparison: compare PC+registers every N instructions
+        eprintln!("Using checkpoint comparison (1M instruction intervals)");
+
+        // Compile both backends with suspend mode (no tracer needed)
+        let ref_dir = if let Some(dir) = ref_dir {
+            dir
+        } else {
+            let dir = output_dir.join("ref");
+            let backend = ref_backend.as_backend().unwrap();
+            eprintln!("Compiling reference ({:?} for checkpoint)...", backend);
+            if !compile_for_checkpoint(elf_path, &dir, backend, cc) {
+                eprintln!("Error: Failed to compile reference");
+                return EXIT_FAILURE;
+            }
+            dir
+        };
+
+        let test_dir = if let Some(dir) = test_dir {
+            dir
+        } else {
+            let dir = output_dir.join("test");
+            let backend = test_backend.as_backend().unwrap();
+            eprintln!("Compiling test ({:?} for checkpoint)...", backend);
+            if !compile_for_checkpoint(elf_path, &dir, backend, cc) {
+                eprintln!("Error: Failed to compile test");
+                return EXIT_FAILURE;
+            }
+            dir
+        };
+
+        eprintln!("Starting checkpoint comparison...");
+
+        // Load runners
+        let mut ref_runner = match rvr::Runner::load(&ref_dir, elf_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error loading reference runner: {}", e);
+                return EXIT_FAILURE;
+            }
+        };
+        ref_runner.prepare();
+        let entry = ref_runner.entry_point();
+        ref_runner.set_pc(entry);
+
+        let mut test_runner = match rvr::Runner::load(&test_dir, elf_path) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error loading test runner: {}", e);
+                return EXIT_FAILURE;
+            }
+        };
+        test_runner.prepare();
+        test_runner.set_pc(entry);
+
+        // Checkpoint interval: 1M instructions
+        const CHECKPOINT_INTERVAL: u64 = 1_000_000;
+
+        diff::compare_checkpoint(&mut ref_runner, &mut test_runner, CHECKPOINT_INTERVAL, max_instrs)
     } else {
         // Instruction-level comparison (original behavior)
         // Compile reference if needed
@@ -1025,6 +1119,9 @@ enum DiffCompileMode {
     /// Block mode: run blocks with buffered diff tracer.
     /// Used for block executor that captures N instructions per block.
     Block,
+    /// Checkpoint mode: suspend mode only, no tracer needed.
+    /// Used for fast checkpoint comparison at intervals.
+    Checkpoint,
 }
 
 /// Compile an ELF for differential execution with the specified mode.
@@ -1083,6 +1180,14 @@ fn compile_for_diff_mode(
                 .arg("buffered-diff");
             // Note: no --no-superblock so blocks can be optimized
         }
+        DiffCompileMode::Checkpoint => {
+            // Checkpoint mode: suspend only, no tracer needed
+            // Use --no-superblock to ensure consistent instruction sequences
+            // This makes the code paths more similar to instruction mode
+            cmd.arg("--instret")
+                .arg("per-instruction")
+                .arg("--no-superblock");
+        }
     }
 
     let status = cmd.status();
@@ -1102,4 +1207,214 @@ fn compile_for_diff_block(
     cc: &str,
 ) -> bool {
     compile_for_diff_mode(elf_path, output_dir, backend, cc, DiffCompileMode::Block)
+}
+
+/// Compile an ELF for checkpoint-based differential execution (suspend mode only).
+fn compile_for_checkpoint(
+    elf_path: &PathBuf,
+    output_dir: &PathBuf,
+    backend: Backend,
+    cc: &str,
+) -> bool {
+    compile_for_diff_mode(elf_path, output_dir, backend, cc, DiffCompileMode::Checkpoint)
+}
+
+/// Run pure-C comparison: generates and runs a standalone C comparison program.
+///
+/// This eliminates all Rust FFI overhead by running the comparison entirely in C.
+fn run_pure_c_comparison(
+    elf_path: &PathBuf,
+    output_dir: &Path,
+    ref_backend: Backend,
+    test_backend: Backend,
+    cc: &str,
+    max_instrs: Option<u64>,
+) -> diff::CompareResult {
+    use rvr_elf::ElfImage;
+    use rvr_ir::Rv64;
+
+    eprintln!("Using pure-C comparison (no Rust FFI overhead)");
+
+    // Load ELF to get segments
+    let elf_data = match std::fs::read(elf_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error reading ELF: {}", e);
+            return diff::CompareResult {
+                matched: 0,
+                divergence: None,
+            };
+        }
+    };
+
+    let image = match ElfImage::<Rv64>::parse(&elf_data) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("Error parsing ELF: {}", e);
+            return diff::CompareResult {
+                matched: 0,
+                divergence: None,
+            };
+        }
+    };
+
+    // Compile both backends
+    let ref_dir = output_dir.join("ref");
+    eprintln!("Compiling reference ({:?})...", ref_backend);
+    if !compile_for_checkpoint(elf_path, &ref_dir, ref_backend, cc) {
+        eprintln!("Error: Failed to compile reference");
+        return diff::CompareResult {
+            matched: 0,
+            divergence: None,
+        };
+    }
+
+    let test_dir = output_dir.join("test");
+    eprintln!("Compiling test ({:?})...", test_backend);
+    if !compile_for_checkpoint(elf_path, &test_dir, test_backend, cc) {
+        eprintln!("Error: Failed to compile test");
+        return diff::CompareResult {
+            matched: 0,
+            divergence: None,
+        };
+    }
+
+    // Generate pure-C comparison program
+    let default_mem_bits = rvr_emit::EmitConfig::<Rv64>::default().memory_bits;
+    let initial_sp = image.lookup_symbol("__stack_top").unwrap_or(0);
+    let initial_gp = image.lookup_symbol("__global_pointer$").unwrap_or(0);
+    let config = diff::CCompareConfig {
+        entry_point: image.entry_point,
+        max_instrs: max_instrs.unwrap_or(u64::MAX),
+        checkpoint_interval: 1_000_000,
+        memory_bits: default_mem_bits,
+        num_regs: 32,
+        instret_suspend: true,
+        initial_brk: Rv64::to_u64(image.get_initial_program_break()),
+        initial_sp,
+        initial_gp,
+    };
+
+    eprintln!("Generating pure-C comparison program...");
+    if let Err(e) = diff::generate_c_compare(output_dir, &image.memory_segments, &config) {
+        eprintln!("Error generating C code: {}", e);
+        return diff::CompareResult {
+            matched: 0,
+            divergence: None,
+        };
+    }
+
+    // Compile comparison program
+    eprintln!("Compiling comparison program...");
+    if !diff::compile_c_compare(output_dir, cc) {
+        eprintln!("Error: Failed to compile comparison program");
+        eprintln!("See {}/diff_compare.c for generated code", output_dir.display());
+        return diff::CompareResult {
+            matched: 0,
+            divergence: None,
+        };
+    }
+
+    // Find the compiled libraries (names vary by backend: libref.so, libtest.so, librv.so)
+    let ref_lib = find_library_in_dir(&ref_dir);
+    let test_lib = find_library_in_dir(&test_dir);
+
+    let (ref_lib, test_lib) = match (ref_lib, test_lib) {
+        (Some(r), Some(t)) => (r, t),
+        (None, _) => {
+            eprintln!("Error: Could not find compiled library in {}", ref_dir.display());
+            return diff::CompareResult {
+                matched: 0,
+                divergence: None,
+            };
+        }
+        (_, None) => {
+            eprintln!("Error: Could not find compiled library in {}", test_dir.display());
+            return diff::CompareResult {
+                matched: 0,
+                divergence: None,
+            };
+        }
+    };
+
+    eprintln!("Running pure-C comparison...");
+    eprintln!("  Reference: {}", ref_lib.display());
+    eprintln!("  Test: {}", test_lib.display());
+    eprintln!();
+
+    match diff::run_c_compare(output_dir, &ref_lib, &test_lib) {
+        Ok(output) => {
+            // Print output
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if !stdout.is_empty() {
+                eprint!("{}", stdout);
+            }
+            if !stderr.is_empty() {
+                eprint!("{}", stderr);
+            }
+
+            // Parse result from output
+            // The C program prints "PASS: N instructions matched" on success
+            // or "DIVERGENCE at instruction N" on failure
+            if output.status.success() {
+                // Extract matched count from stdout
+                let matched = stdout
+                    .lines()
+                    .find(|l| l.contains("PASS:"))
+                    .and_then(|l| {
+                        l.split_whitespace()
+                            .nth(1)
+                            .and_then(|n| n.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+
+                diff::CompareResult {
+                    matched,
+                    divergence: None,
+                }
+            } else {
+                // Extract divergence info from stderr
+                let matched = stderr
+                    .lines()
+                    .find(|l| l.contains("DIVERGENCE"))
+                    .and_then(|l| {
+                        l.split_whitespace()
+                            .last()
+                            .and_then(|n| n.parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+
+                diff::CompareResult {
+                    matched,
+                    divergence: Some(diff::Divergence {
+                        index: matched,
+                        expected: diff::DiffState::default(),
+                        actual: diff::DiffState::default(),
+                        kind: diff::DivergenceKind::Pc,
+                    }),
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error running comparison: {}", e);
+            diff::CompareResult {
+                matched: 0,
+                divergence: None,
+            }
+        }
+    }
+}
+
+/// Find a shared library (.so) file in the given directory.
+fn find_library_in_dir(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("so") {
+            return Some(path);
+        }
+    }
+    None
 }
