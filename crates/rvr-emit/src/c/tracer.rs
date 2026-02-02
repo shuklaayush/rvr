@@ -26,6 +26,8 @@ pub enum TracerKind {
     Dynamic,
     /// Debug tracer - detects repeated PCs.
     Debug,
+    /// Spike-compatible tracer - outputs in Spike's --log-commits format.
+    Spike,
 }
 
 impl TracerKind {
@@ -43,6 +45,7 @@ impl TracerKind {
             Self::Ffi => "ffi",
             Self::Dynamic => "dynamic",
             Self::Debug => "debug",
+            Self::Spike => "spike",
         }
     }
 
@@ -55,6 +58,7 @@ impl TracerKind {
             Self::Ffi => 3,
             Self::Dynamic => 4,
             Self::Debug => 5,
+            Self::Spike => 6,
         }
     }
 }
@@ -74,14 +78,7 @@ impl TracerSource {
     /// Name used for display/logging.
     pub fn name(&self) -> &str {
         match self {
-            TracerSource::Builtin(kind) => match kind {
-                TracerKind::None => "none",
-                TracerKind::Preflight => "preflight",
-                TracerKind::Stats => "stats",
-                TracerKind::Ffi => "ffi",
-                TracerKind::Dynamic => "dynamic",
-                TracerKind::Debug => "debug",
-            },
+            TracerSource::Builtin(kind) => kind.as_str(),
             TracerSource::Inline { name, .. } => name,
             TracerSource::File { name, .. } => name,
         }
@@ -196,6 +193,11 @@ impl TracerConfig {
         Self::builtin(TracerKind::Debug)
     }
 
+    /// Spike-compatible tracer.
+    pub fn spike() -> Self {
+        Self::builtin(TracerKind::Spike)
+    }
+
     /// Custom tracer with inline header content.
     pub fn custom_inline(
         name: impl Into<String>,
@@ -268,6 +270,8 @@ impl TracerConfig {
             "stats" => Some(Self::stats()),
             "ffi" => Some(Self::ffi()),
             "dynamic" => Some(Self::dynamic()),
+            "debug" => Some(Self::debug()),
+            "spike" => Some(Self::spike()),
             _ => None,
         }
     }

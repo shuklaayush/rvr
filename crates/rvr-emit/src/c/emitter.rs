@@ -34,6 +34,8 @@ pub struct CEmitter<X: Xlen> {
     current_pc: u64,
     /// Current instruction op (packed OpId for tracing).
     current_op: u16,
+    /// Current instruction raw bytes (for spike tracer).
+    current_raw: u32,
     /// Instruction index within block (for instret).
     instr_idx: usize,
 }
@@ -57,6 +59,7 @@ impl<X: Xlen> CEmitter<X> {
             signed_type,
             current_pc: 0,
             current_op: 0,
+            current_raw: 0,
             instr_idx: 0,
         }
     }
@@ -66,6 +69,7 @@ impl<X: Xlen> CEmitter<X> {
         self.out.clear();
         self.current_pc = 0;
         self.current_op = 0;
+        self.current_raw = 0;
         self.instr_idx = 0;
     }
 
@@ -892,6 +896,7 @@ impl<X: Xlen> CEmitter<X> {
     ) {
         self.current_pc = X::to_u64(ir.pc);
         self.current_op = ir.op;
+        self.current_raw = ir.raw;
 
         // Optional: emit comment with PC and instruction mnemonic
         if self.config.emit_comments {
@@ -1358,17 +1363,29 @@ impl<X: Xlen> CEmitter<X> {
                     pc_lit, self.current_op
                 ),
             );
+            // Emit trace_opcode for Spike-compatible tracing
+            self.writeln(
+                1,
+                &format!(
+                    "trace_opcode(&{state}->tracer, {}, {}, 0x{:x});",
+                    pc_lit, self.current_op, self.current_raw
+                ),
+            );
         }
     }
 
     /// Render trace_pc call for a specific instruction (used for taken-inline branches).
-    pub fn emit_trace_pc_for(&mut self, pc: u64, op: u16) {
+    pub fn emit_trace_pc_for(&mut self, pc: u64, op: u16, raw: u32) {
         if self.config.has_tracing() {
             let pc_lit = self.fmt_addr(pc);
             let state = self.state_ref();
             self.writeln(
                 1,
                 &format!("trace_pc(&{state}->tracer, {}, {});", pc_lit, op),
+            );
+            self.writeln(
+                1,
+                &format!("trace_opcode(&{state}->tracer, {}, {}, 0x{:x});", pc_lit, op, raw),
             );
         }
     }

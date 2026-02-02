@@ -9,6 +9,7 @@ mod dynamic;
 mod ffi;
 mod none;
 mod preflight;
+mod spike;
 mod stats;
 
 pub fn gen_tracer_header<X: Xlen>(kind: TracerKind) -> String {
@@ -19,5 +20,6 @@ pub fn gen_tracer_header<X: Xlen>(kind: TracerKind) -> String {
         TracerKind::Ffi => ffi::gen_tracer_ffi::<X>(),
         TracerKind::Dynamic => dynamic::gen_tracer_dynamic::<X>(),
         TracerKind::Debug => debug::gen_tracer_debug::<X>(),
+        TracerKind::Spike => spike::gen_tracer_spike::<X>(),
     }
 }

@@ -286,7 +286,7 @@ impl<X: Xlen> CProject<X> {
                     // Handle last instruction specially if it has taken-inline
                     if let Some((cond, hint, inline_start)) = &taken_inline {
                         // Emit trace_pc for the branch instruction before rendering its statements
-                        emitter.emit_trace_pc_for(X::to_u64(last_instr.pc), last_instr.op);
+                        emitter.emit_trace_pc_for(X::to_u64(last_instr.pc), last_instr.op, last_instr.raw);
 
                         // Render the last instruction's statements (but not terminator)
                         for stmt in &last_instr.statements {
@@ -671,7 +671,7 @@ mod tests {
         let mut block = BlockIR::new(start_pc);
         for i in 0..num_instrs {
             let pc = start_pc + (i as u64 * 4);
-            let ir = InstrIR::new(pc, 4, 0, Vec::new(), Terminator::default());
+            let ir = InstrIR::new(pc, 4, 0, 0, Vec::new(), Terminator::default());
             block.push(ir);
         }
         block
