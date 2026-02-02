@@ -792,46 +792,6 @@ impl<X: Xlen> X86Emitter<X> {
             self.emitf(format!("addq %rdx, %{}", reserved::INSTRET));
         }
 
-        // For suspend mode, check if we hit the limit
-        if self.config.instret_mode.suspends() {
-            let continue_label = self.next_label("instret_ok");
-            let target_offset = self.layout.offset_target_instret;
-            self.emitf(format!(
-                "movq {}(%{}), %rdx",
-                target_offset,
-                reserved::STATE_PTR
-            ));
-            self.emitf(format!("cmpq %rdx, %{}", reserved::INSTRET));
-            self.emitf(format!("jb {continue_label}"));
-            // Suspend: save current PC
-            let pc_offset = self.layout.offset_pc;
-            if X::VALUE == 32 {
-                self.emitf(format!(
-                    "movl $0x{:x}, {}(%{})",
-                    pc as u32,
-                    pc_offset,
-                    reserved::STATE_PTR
-                ));
-            } else {
-                // For 64-bit immediates > 32-bit, need movabs
-                if pc > 0x7fffffff {
-                    self.emitf(format!("movabsq $0x{:x}, %rdx", pc));
-                    self.emitf(format!(
-                        "movq %rdx, {}(%{})",
-                        pc_offset,
-                        reserved::STATE_PTR
-                    ));
-                } else {
-                    self.emitf(format!(
-                        "movq $0x{:x}, {}(%{})",
-                        pc,
-                        pc_offset,
-                        reserved::STATE_PTR
-                    ));
-                }
-            }
-            self.emit("jmp asm_exit");
-            self.emit_label(&continue_label);
-        }
+        let _ = pc; // Instret suspend checks handled at block boundaries.
     }
 }

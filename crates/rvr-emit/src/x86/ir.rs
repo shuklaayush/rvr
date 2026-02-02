@@ -195,6 +195,105 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_label(&continue_label);
     }
 
+    fn emit_instret_suspend_check(&mut self, instr: &InstrIR<X>, fall_pc: u64, current_pc: u64) {
+        if !self.config.instret_mode.suspends() || self.config.instret_mode.per_instruction() {
+            return;
+        }
+
+        let continue_label = self.next_label("instret_ok");
+        let target_offset = self.layout.offset_target_instret;
+        self.emitf(format!(
+            "movq {}(%{}), %rdx",
+            target_offset,
+            reserved::STATE_PTR
+        ));
+        self.emitf(format!("cmpq %rdx, %{}", reserved::INSTRET));
+        self.emitf(format!("jb {continue_label}"));
+
+        match &instr.terminator {
+            Terminator::Fall { target } => {
+                let target_pc = target
+                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
+                    .unwrap_or(fall_pc);
+                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                let next_pc = if target_pc == current_pc {
+                    fall_pc
+                } else {
+                    target_pc
+                };
+                self.emit_store_next_pc_imm(next_pc);
+                self.emit("jmp asm_exit");
+            }
+            Terminator::Jump { target } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit("jmp asm_exit");
+            }
+            Terminator::JumpDyn { addr, .. } => {
+                self.emit_expr_as_addr(addr);
+                self.emit("andq $-2, %rax");
+                let pc_offset = self.layout.offset_pc;
+                if X::VALUE == 32 {
+                    self.emitf(format!(
+                        "movl %eax, {}(%{})",
+                        pc_offset,
+                        reserved::STATE_PTR
+                    ));
+                } else {
+                    self.emitf(format!(
+                        "movq %rax, {}(%{})",
+                        pc_offset,
+                        reserved::STATE_PTR
+                    ));
+                }
+                self.emit("jmp asm_exit");
+            }
+            Terminator::Branch {
+                cond, target, fall, ..
+            } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                let fall_target_pc = fall
+                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                    .unwrap_or(fall_pc);
+                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+
+                let suffix = self.suffix();
+                let target_label = self.next_label("instret_target");
+                let done_label = self.next_label("instret_done");
+                let cond_reg = self.emit_expr(cond, self.temp1());
+                self.emitf(format!("test{suffix} %{cond_reg}, %{cond_reg}"));
+                self.emitf(format!("jnz {target_label}"));
+                self.emit_store_next_pc_imm(fall_target_pc);
+                self.emitf(format!("jmp {done_label}"));
+                self.emit_label(&target_label);
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit_label(&done_label);
+                self.emit("jmp asm_exit");
+            }
+            Terminator::Exit { .. } | Terminator::Trap { .. } => {}
+        }
+
+        self.emit_label(&continue_label);
+    }
+
     /// Emit an expression, returning which x86 register holds the result.
     #[allow(clippy::collapsible_if)]
     pub(super) fn emit_expr(&mut self, expr: &Expr<X>, dest: &str) -> String {
@@ -1659,6 +1758,12 @@ impl<X: Xlen> X86Emitter<X> {
 
         if self.config.instret_mode.per_instruction() {
             self.emit_instret_post_check(instr, fall_pc, pc);
+        }
+
+        if is_last && self.config.instret_mode.suspends()
+            && !self.config.instret_mode.per_instruction()
+        {
+            self.emit_instret_suspend_check(instr, fall_pc, pc);
         }
 
         if is_last {

@@ -48,7 +48,10 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Emit a PC label.
+    /// Resets the cold cache since labels are entry points where
+    /// the cold cache register (x17) might contain stale data.
     pub(super) fn emit_pc_label(&mut self, pc: u64) {
+        self.cold_cache = None;
         self.asm.push_str(&format!("asm_pc_{:x}:\n", pc));
     }
 
@@ -839,30 +842,6 @@ impl<X: Xlen> Arm64Emitter<X> {
             ));
         }
 
-        // For suspend mode, check if we hit the limit
-        if self.config.instret_mode.suspends() {
-            let continue_label = self.next_label("instret_ok");
-            let target_offset = self.layout.offset_target_instret;
-
-            self.emitf(format!(
-                "ldr x1, [{}, #{}]",
-                reserved::STATE_PTR,
-                target_offset
-            ));
-            self.emitf(format!("cmp {}, x1", reserved::INSTRET));
-            self.emitf(format!("b.lo {continue_label}"));
-
-            // Suspend: save current PC
-            let pc_offset = self.layout.offset_pc;
-            if X::VALUE == 32 {
-                self.load_imm("w1", pc);
-                self.emitf(format!("str w1, [{}, #{}]", reserved::STATE_PTR, pc_offset));
-            } else {
-                self.load_imm("x1", pc);
-                self.emitf(format!("str x1, [{}, #{}]", reserved::STATE_PTR, pc_offset));
-            }
-            self.emit("b asm_exit");
-            self.emit_label(&continue_label);
-        }
+        let _ = pc; // Instret suspend checks handled at block boundaries.
     }
 }

@@ -1038,6 +1038,11 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render static jump with custom indent.
     fn render_jump_static_impl(&mut self, target: u64, indent: usize) {
+        // In suspend modes, check for suspension before the tail call
+        if self.config.instret_mode.suspends() {
+            self.render_instret_check_impl(target, indent);
+        }
+
         if self.is_valid_address(target) {
             // Resolve absorbed addresses to their merged block
             let resolved = self.inputs.resolve_address(target);
@@ -1052,6 +1057,26 @@ impl<X: Xlen> CEmitter<X> {
         } else {
             self.render_exit_impl("1", indent);
         }
+    }
+
+    /// Render instret check with custom indent.
+    fn render_instret_check_impl(&mut self, pc: u64, indent: usize) {
+        if !self.config.instret_mode.suspends() {
+            return;
+        }
+        let save_to_state = self.sig.save_to_state.clone();
+        let pc_lit = self.fmt_addr(pc);
+        let state = self.state_ref();
+        self.writeln(
+            indent,
+            &format!("if (unlikely({state}->target_instret <= instret)) {{"),
+        );
+        self.writeln(indent + 1, &format!("{state}->pc = {};", pc_lit));
+        if !save_to_state.is_empty() {
+            self.writeln(indent + 1, &save_to_state);
+        }
+        self.writeln(indent + 1, "return;");
+        self.writeln(indent, "}");
     }
 
     /// Render dynamic jump.
@@ -1071,6 +1096,12 @@ impl<X: Xlen> CEmitter<X> {
         let target = pre_eval_var
             .map(|s| s.to_string())
             .unwrap_or_else(|| self.render_expr(target_expr));
+
+        // In suspend modes, check for suspension before the tail call
+        if self.config.instret_mode.suspends() {
+            self.render_instret_check_dynamic(&target, indent);
+        }
+
         self.writeln(
             indent,
             &format!(
@@ -1078,6 +1109,25 @@ impl<X: Xlen> CEmitter<X> {
                 target, self.sig.args
             ),
         );
+    }
+
+    /// Render instret check for dynamic target.
+    fn render_instret_check_dynamic(&mut self, target_var: &str, indent: usize) {
+        if !self.config.instret_mode.suspends() {
+            return;
+        }
+        let save_to_state = self.sig.save_to_state.clone();
+        let state = self.state_ref();
+        self.writeln(
+            indent,
+            &format!("if (unlikely({state}->target_instret <= instret)) {{"),
+        );
+        self.writeln(indent + 1, &format!("{state}->pc = {};", target_var));
+        if !save_to_state.is_empty() {
+            self.writeln(indent + 1, &save_to_state);
+        }
+        self.writeln(indent + 1, "return;");
+        self.writeln(indent, "}");
     }
 
     /// Render jump with resolved targets.
@@ -1111,6 +1161,10 @@ impl<X: Xlen> CEmitter<X> {
                 let pc_str = self.fmt_pc(*target);
                 let addr_lit = self.fmt_addr(*target);
                 self.writeln(indent, &format!("if ({} == {}) {{", var_name, addr_lit));
+                // In per-instruction mode, check for suspension before the tail call
+                if self.config.instret_mode.per_instruction() {
+                    self.render_instret_check_impl(*target, indent + 1);
+                }
                 self.writeln(
                     indent + 1,
                     &format!(
@@ -1183,6 +1237,10 @@ impl<X: Xlen> CEmitter<X> {
             if !trace_taken.is_empty() {
                 self.writeln(2, trace_taken.trim_end());
             }
+            // In suspend modes, check for suspension before the tail call
+            if self.config.instret_mode.suspends() {
+                self.render_instret_check_impl(target, 2);
+            }
             self.writeln(
                 2,
                 &format!("[[clang::musttail]] return B_{}({});", pc_str, args),
@@ -1214,6 +1272,10 @@ impl<X: Xlen> CEmitter<X> {
         if self.is_valid_address(fall_pc) {
             let resolved = self.inputs.resolve_address(fall_pc);
             let pc_str = self.fmt_pc(resolved);
+            // In suspend modes, check for suspension before the tail call
+            if self.config.instret_mode.suspends() {
+                self.render_instret_check_impl(fall_pc, 1);
+            }
             self.writeln(
                 1,
                 &format!("[[clang::musttail]] return B_{}({});", pc_str, args),

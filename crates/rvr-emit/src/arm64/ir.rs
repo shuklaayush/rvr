@@ -211,6 +211,99 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_label(&continue_label);
     }
 
+    fn emit_instret_suspend_check(&mut self, instr: &InstrIR<X>, fall_pc: u64, current_pc: u64) {
+        if !self.config.instret_mode.suspends() || self.config.instret_mode.per_instruction() {
+            return;
+        }
+
+        let continue_label = self.next_label("instret_ok");
+        let target_offset = self.layout.offset_target_instret;
+        self.emitf(format!(
+            "ldr x2, [{}, #{}]",
+            reserved::STATE_PTR,
+            target_offset
+        ));
+        self.emitf(format!("cmp {}, x2", reserved::INSTRET));
+        self.emitf(format!("b.lo {continue_label}"));
+
+        match &instr.terminator {
+            Terminator::Fall { target } => {
+                let target_pc = target
+                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
+                    .unwrap_or(fall_pc);
+                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                if target_pc != current_pc {
+                    self.emit_store_next_pc_imm(target_pc);
+                } else {
+                    self.emit_store_next_pc_imm(fall_pc);
+                }
+                self.emit("b asm_exit");
+            }
+            Terminator::Jump { target } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit("b asm_exit");
+            }
+            Terminator::JumpDyn { addr, .. } => {
+                let base_reg = self.emit_expr_as_addr(addr);
+                if base_reg != "x0" {
+                    self.emitf(format!("mov x0, {base_reg}"));
+                }
+                self.emit("and x0, x0, #-2");
+                let pc_offset = self.layout.offset_pc;
+                if X::VALUE == 32 {
+                    self.emitf(format!("str w0, [{}, #{}]", reserved::STATE_PTR, pc_offset));
+                } else {
+                    self.emitf(format!("str x0, [{}, #{}]", reserved::STATE_PTR, pc_offset));
+                }
+                self.emit("b asm_exit");
+            }
+            Terminator::Branch {
+                cond, target, fall, ..
+            } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                let fall_target_pc = fall
+                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                    .unwrap_or(fall_pc);
+                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+
+                let target_label = self.next_label("instret_target");
+                let done_label = self.next_label("instret_done");
+                if !self.try_emit_compare_branch(cond, &target_label, false) {
+                    let cond_reg = self.emit_expr(cond, self.temp1());
+                    self.emitf(format!("cbnz {cond_reg}, {target_label}"));
+                }
+                self.emit_store_next_pc_imm(fall_target_pc);
+                self.emitf(format!("b {done_label}"));
+                self.emit_label(&target_label);
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit_label(&done_label);
+                self.emit("b asm_exit");
+            }
+            Terminator::Exit { .. } | Terminator::Trap { .. } => {}
+        }
+
+        self.emit_label(&continue_label);
+    }
+
     fn try_emit_compare_branch(&mut self, cond: &Expr<X>, label: &str, invert: bool) -> bool {
         let (op, left, right) = match cond {
             Expr::Binary { op, left, right } => (op, left, right),
@@ -2060,6 +2153,12 @@ impl<X: Xlen> Arm64Emitter<X> {
         // Per-instruction suspend: increment + check after executing the instruction body.
         if self.config.instret_mode.per_instruction() {
             self.emit_instret_post_check(instr, fall_pc, pc);
+        }
+
+        if is_last_in_block && self.config.instret_mode.suspends()
+            && !self.config.instret_mode.per_instruction()
+        {
+            self.emit_instret_suspend_check(instr, fall_pc, pc);
         }
 
         // Use fall_pc from output stream to keep inlined/absorbed ranges correct.
