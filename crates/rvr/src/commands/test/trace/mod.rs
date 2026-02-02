@@ -443,17 +443,38 @@ pub fn compare_traces_with_config(
             let mut skip_exp = None;
             let mut skip_act = None;
 
+            // Prefer resync on (pc, opcode) to avoid false alignment on reused PCs.
+            let mut skip_exp_pc = None;
+            let mut skip_act_pc = None;
             for i in 1..=window {
-                if exp_idx + i < expected.len() && expected[exp_idx + i].pc == act.pc {
-                    skip_exp = Some(i);
-                    break;
+                if exp_idx + i < expected.len() {
+                    let cand = &expected[exp_idx + i];
+                    if cand.pc == act.pc && cand.opcode == act.opcode {
+                        skip_exp = Some(i);
+                        break;
+                    }
+                    if skip_exp_pc.is_none() && cand.pc == act.pc {
+                        skip_exp_pc = Some(i);
+                    }
                 }
             }
             for i in 1..=window {
-                if act_idx + i < actual.len() && actual[act_idx + i].pc == exp.pc {
-                    skip_act = Some(i);
-                    break;
+                if act_idx + i < actual.len() {
+                    let cand = &actual[act_idx + i];
+                    if cand.pc == exp.pc && cand.opcode == exp.opcode {
+                        skip_act = Some(i);
+                        break;
+                    }
+                    if skip_act_pc.is_none() && cand.pc == exp.pc {
+                        skip_act_pc = Some(i);
+                    }
                 }
+            }
+            if skip_exp.is_none() {
+                skip_exp = skip_exp_pc;
+            }
+            if skip_act.is_none() {
+                skip_act = skip_act_pc;
             }
 
             if let (Some(se), Some(sa)) = (skip_exp, skip_act) {
