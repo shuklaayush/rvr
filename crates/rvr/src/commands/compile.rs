@@ -23,6 +23,7 @@ pub fn cmd_compile(
     instret: InstretModeArg,
     syscalls: SyscallModeArg,
     perf: bool,
+    no_superblock: bool,
     jobs: usize,
     cc: Option<&str>,
     linker: Option<&str>,
@@ -48,6 +49,7 @@ pub fn cmd_compile(
         .with_instret_mode(instret.into())
         .with_syscall_mode(syscalls.into())
         .with_tracer_config(tracer_config)
+        .with_superblock(!no_superblock)
         .with_jobs(jobs);
     match analysis {
         AnalysisModeArg::Auto => {

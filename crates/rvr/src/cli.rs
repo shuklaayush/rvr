@@ -72,6 +72,11 @@ pub enum Commands {
         #[arg(long)]
         perf: bool,
 
+        /// Disable superblock formation (keeps blocks at natural boundaries).
+        /// Useful for differential testing where dispatch to all block entries is needed.
+        #[arg(long)]
+        no_superblock: bool,
+
         /// Number of parallel compile jobs (0 = auto)
         #[arg(short = 'j', long, default_value = "0")]
         jobs: usize,
@@ -401,6 +406,14 @@ pub enum TestCommands {
         /// Path to ELF binary
         elf: PathBuf,
 
+        /// Reference backend (overrides mode)
+        #[arg(long = "ref", value_enum)]
+        ref_backend: Option<DiffBackendArg>,
+
+        /// Test backend (overrides mode)
+        #[arg(long = "test", value_enum)]
+        test_backend: Option<DiffBackendArg>,
+
         /// Comparison granularity
         #[arg(short, long, value_enum, default_value = "instruction")]
         granularity: DiffGranularityArg,
@@ -582,6 +595,8 @@ pub enum TracerKindArg {
     Dynamic,
     Debug,
     Spike,
+    Diff,
+    BufferedDiff,
 }
 
 impl From<TracerKindArg> for TracerKind {
@@ -594,6 +609,8 @@ impl From<TracerKindArg> for TracerKind {
             TracerKindArg::Dynamic => TracerKind::Dynamic,
             TracerKindArg::Debug => TracerKind::Debug,
             TracerKindArg::Spike => TracerKind::Spike,
+            TracerKindArg::Diff => TracerKind::Diff,
+            TracerKindArg::BufferedDiff => TracerKind::BufferedDiff,
         }
     }
 }
@@ -670,6 +687,19 @@ pub enum DiffModeArg {
     SpikeArm64,
     /// C backend vs ARM64 backend
     CArm64,
+}
+
+/// Differential execution backend.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum DiffBackendArg {
+    /// Spike (reference only)
+    Spike,
+    /// C backend
+    C,
+    /// ARM64 backend
+    Arm64,
+    /// x86 backend
+    X86,
 }
 
 /// Differential execution granularity.

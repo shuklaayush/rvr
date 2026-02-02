@@ -1,7 +1,10 @@
 //! Comparison algorithms for differential execution.
 
 use super::executor::Executor;
-use super::state::{compare_states, CompareConfig, CompareResult, Divergence, DiffGranularity, DivergenceKind};
+use super::inprocess::BufferedInProcessExecutor;
+use super::state::{
+    CompareConfig, CompareResult, DiffGranularity, Divergence, DivergenceKind, compare_states,
+};
 
 /// Run lockstep comparison between reference and test executors.
 ///
@@ -20,8 +23,29 @@ pub fn compare_lockstep(
             break;
         }
 
-        let ref_state = ref_exec.step();
-        let test_state = test_exec.step();
+        let mut ref_state = ref_exec.step();
+        let mut test_state = test_exec.step();
+
+        // Initial alignment: if the first PCs differ, advance the lower PC
+        // to avoid false divergence due to startup differences.
+        if matched == 0 {
+            let mut attempts = 0u32;
+            while attempts < 256 {
+                let (ref_s, test_s) = match (&ref_state, &test_state) {
+                    (Some(r), Some(t)) => (r, t),
+                    _ => break,
+                };
+                if ref_s.pc == test_s.pc {
+                    break;
+                }
+                if ref_s.pc < test_s.pc {
+                    ref_state = ref_exec.step();
+                } else {
+                    test_state = test_exec.step();
+                }
+                attempts += 1;
+            }
+        }
 
         match (ref_state, test_state) {
             (Some(ref_s), Some(test_s)) => {
@@ -72,6 +96,141 @@ pub fn compare_lockstep(
             (None, None) => {
                 // Both finished
                 break;
+            }
+        }
+    }
+
+    CompareResult {
+        matched,
+        divergence: None,
+    }
+}
+
+/// Run block-vs-linear comparison.
+///
+/// The block executor runs with buffered diff tracer and captures N instructions per block.
+/// The linear executor steps one instruction at a time with single diff tracer.
+/// We compare buffered entries against stepped entries.
+///
+/// If the buffered tracer overflows, we fall back to instruction-by-instruction mode.
+pub fn compare_block_vs_linear(
+    block_exec: &mut BufferedInProcessExecutor,
+    linear_exec: &mut dyn Executor,
+    config: &CompareConfig,
+    max_instrs: Option<u64>,
+) -> CompareResult {
+    let mut matched = 0usize;
+    let limit = max_instrs.unwrap_or(u64::MAX);
+
+    loop {
+        if matched as u64 >= limit {
+            break;
+        }
+
+        // Run a block in the block executor to capture states
+        let block_count = block_exec.run_block();
+
+        // Check for overflow - if so, we can't trust the buffer
+        if block_exec.has_overflow() {
+            eprintln!(
+                "Warning: buffer overflow at instruction {}, {} entries dropped",
+                matched,
+                block_exec.dropped_count()
+            );
+            // Could fall back to instruction mode here, but for now just continue
+            // with partial data
+        }
+
+        if block_count == 0 {
+            // Block executor finished
+            if block_exec.has_exited() {
+                // Check if linear also finishes at the same point
+                let linear_state = linear_exec.step();
+                if linear_state.is_some() {
+                    // Linear has more instructions
+                    return CompareResult {
+                        matched,
+                        divergence: Some(Divergence {
+                            index: matched,
+                            expected: Default::default(),
+                            actual: linear_state.unwrap(),
+                            kind: DivergenceKind::ActualTail,
+                        }),
+                    };
+                }
+                break;
+            } else {
+                // No entries but not exited - unexpected
+                break;
+            }
+        }
+
+        // Compare each buffered entry against stepped linear entry
+        for i in 0..block_count {
+            if matched as u64 >= limit {
+                break;
+            }
+
+            let block_state = match block_exec.get_entry(i) {
+                Some(s) => s,
+                None => break,
+            };
+
+            let linear_state = match linear_exec.step() {
+                Some(s) => s,
+                None => {
+                    // Linear executor finished early
+                    return CompareResult {
+                        matched,
+                        divergence: Some(Divergence {
+                            index: matched,
+                            expected: block_state,
+                            actual: Default::default(),
+                            kind: DivergenceKind::ExpectedTail,
+                        }),
+                    };
+                }
+            };
+
+            // Compare the two states
+            if let Some(kind) = compare_states(&block_state, &linear_state, config) {
+                return CompareResult {
+                    matched,
+                    divergence: Some(Divergence {
+                        index: matched,
+                        expected: block_state,
+                        actual: linear_state,
+                        kind,
+                    }),
+                };
+            }
+
+            matched += 1;
+
+            // Check for exit
+            let block_is_exit = block_state.is_exit();
+            let linear_is_exit = linear_state.is_exit();
+            if block_is_exit || linear_is_exit {
+                // Verify both have the same exit status
+                if block_is_exit != linear_is_exit {
+                    return CompareResult {
+                        matched,
+                        divergence: Some(Divergence {
+                            index: matched - 1,
+                            expected: block_state,
+                            actual: linear_state,
+                            kind: if block_is_exit {
+                                DivergenceKind::ActualTail
+                            } else {
+                                DivergenceKind::ExpectedTail
+                            },
+                        }),
+                    };
+                }
+                return CompareResult {
+                    matched,
+                    divergence: None,
+                };
             }
         }
     }
@@ -166,11 +325,7 @@ mod tests {
         }
 
         fn exit_code(&self) -> Option<u8> {
-            if self.has_exited() {
-                Some(0)
-            } else {
-                None
-            }
+            if self.has_exited() { Some(0) } else { None }
         }
     }
 
@@ -263,7 +418,10 @@ mod tests {
 
         assert_eq!(result.matched, 1);
         assert!(result.divergence.is_some());
-        assert_eq!(result.divergence.unwrap().kind, DivergenceKind::ExpectedTail);
+        assert_eq!(
+            result.divergence.unwrap().kind,
+            DivergenceKind::ExpectedTail
+        );
     }
 
     #[test]

@@ -276,7 +276,16 @@ impl<X: Xlen> Pipeline<X> {
             let (absorbed, tail_duplicated, superblocked) = match self.config.analysis_mode {
                 AnalysisMode::FullCfg => {
                     let _span = trace_span!("block_transforms").entered();
-                    block_table.optimize(&self.registry)
+                    if self.config.enable_superblock {
+                        block_table.optimize(&self.registry)
+                    } else {
+                        // Only merge and tail-dup, skip superblock formation
+                        let merged = block_table.merge_blocks(&self.registry);
+                        let tail_duped = block_table
+                            .tail_duplicate(rvr_cfg::DEFAULT_TAIL_DUP_SIZE, &self.registry);
+                        block_table.fix_stale_mappings();
+                        (merged, tail_duped, 0)
+                    }
                 }
                 AnalysisMode::Basic => (0, 0, 0),
             };

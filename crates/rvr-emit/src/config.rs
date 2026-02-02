@@ -239,6 +239,9 @@ pub struct EmitConfig<X: Xlen> {
     pub fixed_addresses: Option<FixedAddressConfig>,
     /// Perf mode: disable instret/CSR reads for benchmarking.
     pub perf_mode: bool,
+    /// Enable superblock formation (merging fall-through blocks after branches).
+    /// Disable for differential testing to ensure dispatch works at all block boundaries.
+    pub enable_superblock: bool,
     _marker: PhantomData<X>,
 }
 
@@ -269,6 +272,7 @@ impl<X: Xlen> EmitConfig<X> {
             export_functions: false,
             fixed_addresses: None,
             perf_mode: false,
+            enable_superblock: true, // Enabled by default for performance
             _marker: PhantomData,
         }
     }
@@ -442,6 +446,15 @@ impl<X: Xlen> EmitConfig<X> {
         if enabled {
             self.instret_mode = InstretMode::Off;
         }
+        self
+    }
+
+    /// Enable or disable superblock formation.
+    ///
+    /// Superblocks merge fall-through blocks after branches for better performance,
+    /// but prevent dispatch to mid-block addresses. Disable for differential testing.
+    pub fn with_superblock(mut self, enabled: bool) -> Self {
+        self.enable_superblock = enabled;
         self
     }
 

@@ -14,7 +14,7 @@ pub mod inprocess;
 pub mod spike;
 pub mod state;
 
-pub use compare::compare_lockstep;
-pub use inprocess::InProcessExecutor;
-pub use spike::{find_spike, SpikeExecutor};
+pub use compare::{compare_block_vs_linear, compare_lockstep};
+pub use inprocess::{BufferedInProcessExecutor, InProcessExecutor};
+pub use spike::{SpikeExecutor, find_spike};
 pub use state::{CompareConfig, DiffGranularity};

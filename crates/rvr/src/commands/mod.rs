@@ -26,6 +26,7 @@ pub fn run_command(cli: &Cli) -> i32 {
             instret,
             syscalls,
             perf,
+            no_superblock,
             jobs,
             cc,
             linker,
@@ -41,6 +42,7 @@ pub fn run_command(cli: &Cli) -> i32 {
             *instret,
             *syscalls,
             *perf,
+            *no_superblock,
             *jobs,
             cc.as_deref(),
             linker.as_deref(),
@@ -229,6 +231,8 @@ pub fn run_command(cli: &Cli) -> i32 {
             TestCommands::Diff {
                 mode,
                 elf,
+                ref_backend,
+                test_backend,
                 granularity,
                 max_instrs,
                 output,
@@ -239,6 +243,8 @@ pub fn run_command(cli: &Cli) -> i32 {
                 strict_mem,
             } => test::diff_compare(
                 *mode,
+                *ref_backend,
+                *test_backend,
                 elf,
                 *granularity,
                 *max_instrs,

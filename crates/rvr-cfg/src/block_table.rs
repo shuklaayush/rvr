@@ -726,7 +726,7 @@ impl<X: Xlen> BlockTable<X> {
     /// After multiple transform passes, a block A might map to block B,
     /// which was subsequently absorbed into block C. This method follows
     /// chains to ensure all mappings point to actually remaining blocks.
-    fn fix_stale_mappings(&mut self) {
+    pub fn fix_stale_mappings(&mut self) {
         // Build set of remaining block starts
         let remaining: FxHashSet<u64> = self.blocks.iter().map(|b| b.start).collect();
 
