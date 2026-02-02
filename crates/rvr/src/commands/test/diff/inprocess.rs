@@ -42,18 +42,6 @@ impl InProcessExecutor {
             has_exited: false,
         })
     }
-
-    /// Capture the current state after an instruction.
-    fn capture_state(&self) -> DiffState {
-        DiffState {
-            pc: self.runner.get_pc(),
-            instret: self.runner.instret(),
-            is_exit: self.runner.exit_code() != 0,
-            // Note: opcode, rd, rd_value, mem_addr are captured via tracer
-            // For now, we only compare PC and instret in basic mode
-            ..Default::default()
-        }
-    }
 }
 
 impl Executor for InProcessExecutor {
@@ -116,65 +104,6 @@ impl Executor for InProcessExecutor {
                 }
             }
         }
-    }
-
-    fn step_n(&mut self, n: u64) -> Option<DiffState> {
-        if self.has_exited || n == 0 {
-            return None;
-        }
-
-        let current = self.runner.instret();
-        self.runner.set_target_instret(current + n);
-        self.runner.clear_exit();
-
-        match self.runner.execute_from(self.runner.get_pc()) {
-            Ok(_) => {
-                let state = self.capture_state();
-                if state.is_exit {
-                    self.has_exited = true;
-                }
-                Some(state)
-            }
-            Err(_) => {
-                let state = self.capture_state();
-                self.has_exited = true;
-                if self.runner.exit_code() == 0 {
-                    None
-                } else {
-                    Some(DiffState {
-                        is_exit: true,
-                        ..state
-                    })
-                }
-            }
-        }
-    }
-
-    fn current_pc(&self) -> u64 {
-        self.runner.get_pc()
-    }
-
-    fn instret(&self) -> u64 {
-        self.runner.instret()
-    }
-
-    fn has_exited(&self) -> bool {
-        self.has_exited
-    }
-
-    fn exit_code(&self) -> Option<u8> {
-        if self.has_exited {
-            Some(self.runner.exit_code())
-        } else {
-            None
-        }
-    }
-
-    fn reset_to(&mut self, pc: u64) -> bool {
-        self.runner.set_pc(pc);
-        self.runner.clear_exit();
-        self.has_exited = false;
-        true
     }
 }
 
@@ -248,41 +177,6 @@ impl BufferedInProcessExecutor {
         }
     }
 
-    /// Run N instructions and capture their states.
-    ///
-    /// Uses instret-based suspension if supported.
-    /// Returns the number of instructions captured in the buffer.
-    pub fn run_n(&mut self, n: u64) -> usize {
-        if self.has_exited || n == 0 {
-            return 0;
-        }
-
-        // Reset buffer for fresh capture
-        self.runner.buffered_diff_reset();
-        self.buffer_index = 0;
-
-        let current = self.runner.instret();
-        if self.runner.supports_suspend() {
-            self.runner.set_target_instret(current + n);
-        }
-
-        let pc = self.runner.get_pc();
-        self.runner.clear_exit();
-
-        match self.runner.execute_from(pc) {
-            Ok(_) => {
-                if self.runner.exit_code() != 0 {
-                    self.has_exited = true;
-                }
-                self.runner.buffered_diff_count().unwrap_or(0)
-            }
-            Err(_) => {
-                self.has_exited = true;
-                self.runner.buffered_diff_count().unwrap_or(0)
-            }
-        }
-    }
-
     /// Get the number of entries captured in the buffer.
     pub fn captured_count(&self) -> usize {
         self.runner.buffered_diff_count().unwrap_or(0)
@@ -319,33 +213,9 @@ impl BufferedInProcessExecutor {
         })
     }
 
-    /// Iterate over all captured entries as DiffStates.
-    pub fn iter_entries(&self) -> impl Iterator<Item = DiffState> + '_ {
-        (0..self.captured_count()).filter_map(|i| self.get_entry(i))
-    }
-
-    /// Get the current PC.
-    pub fn current_pc(&self) -> u64 {
-        self.runner.get_pc()
-    }
-
-    /// Get the current instruction count.
-    pub fn instret(&self) -> u64 {
-        self.runner.instret()
-    }
-
     /// Check if the program has exited.
     pub fn has_exited(&self) -> bool {
         self.has_exited
-    }
-
-    /// Get the exit code if exited.
-    pub fn exit_code(&self) -> Option<u8> {
-        if self.has_exited {
-            Some(self.runner.exit_code())
-        } else {
-            None
-        }
     }
 }
 
@@ -376,45 +246,5 @@ impl Executor for BufferedInProcessExecutor {
         // Return first entry
         self.buffer_index = 1;
         self.get_entry(0)
-    }
-
-    fn step_n(&mut self, n: u64) -> Option<DiffState> {
-        // Run N instructions
-        let count = self.run_n(n);
-        if count == 0 {
-            return None;
-        }
-
-        // Return last entry
-        self.get_entry(count.saturating_sub(1))
-    }
-
-    fn current_pc(&self) -> u64 {
-        self.runner.get_pc()
-    }
-
-    fn instret(&self) -> u64 {
-        self.runner.instret()
-    }
-
-    fn has_exited(&self) -> bool {
-        self.has_exited
-    }
-
-    fn exit_code(&self) -> Option<u8> {
-        if self.has_exited {
-            Some(self.runner.exit_code())
-        } else {
-            None
-        }
-    }
-
-    fn reset_to(&mut self, pc: u64) -> bool {
-        self.runner.set_pc(pc);
-        self.runner.clear_exit();
-        self.has_exited = false;
-        self.buffer_index = 0;
-        self.runner.buffered_diff_reset();
-        true
     }
 }

@@ -2,6 +2,9 @@
 
 use std::ffi::c_void;
 
+/// Entry from buffered diff tracer: (pc, opcode, rd, rd_value, (mem_addr, mem_value, mem_width, is_write))
+pub type BufferedDiffEntry = (u64, u32, Option<u8>, Option<u64>, Option<(u64, u64, u8, bool)>);
+
 /// Trait for type-erased runner implementations.
 pub trait RunnerImpl {
     /// Load ELF segments into memory.
@@ -128,16 +131,7 @@ pub trait RunnerImpl {
     }
 
     /// Get entry at index: (pc, opcode, rd, rd_value, mem_access).
-    fn buffered_diff_get(
-        &self,
-        _index: usize,
-    ) -> Option<(
-        u64,
-        u32,
-        Option<u8>,
-        Option<u64>,
-        Option<(u64, u64, u8, bool)>,
-    )> {
+    fn buffered_diff_get(&self, _index: usize) -> Option<BufferedDiffEntry> {
         None
     }
 

@@ -2,9 +2,7 @@
 
 use super::executor::Executor;
 use super::inprocess::BufferedInProcessExecutor;
-use super::state::{
-    CompareConfig, CompareResult, DiffGranularity, Divergence, DivergenceKind, compare_states,
-};
+use super::state::{CompareConfig, CompareResult, Divergence, DivergenceKind, compare_states};
 
 /// Run lockstep comparison between reference and test executors.
 ///
@@ -145,15 +143,14 @@ pub fn compare_block_vs_linear(
             // Block executor finished
             if block_exec.has_exited() {
                 // Check if linear also finishes at the same point
-                let linear_state = linear_exec.step();
-                if linear_state.is_some() {
+                if let Some(linear_state) = linear_exec.step() {
                     // Linear has more instructions
                     return CompareResult {
                         matched,
                         divergence: Some(Divergence {
                             index: matched,
                             expected: Default::default(),
-                            actual: linear_state.unwrap(),
+                            actual: linear_state,
                             kind: DivergenceKind::ActualTail,
                         }),
                     };
@@ -241,49 +238,6 @@ pub fn compare_block_vs_linear(
     }
 }
 
-/// Comparison runner that handles all granularity modes.
-pub struct DiffRunner<'a> {
-    ref_exec: &'a mut dyn Executor,
-    test_exec: &'a mut dyn Executor,
-    config: CompareConfig,
-    granularity: DiffGranularity,
-    max_instrs: Option<u64>,
-}
-
-impl<'a> DiffRunner<'a> {
-    /// Create a new diff runner.
-    pub fn new(
-        ref_exec: &'a mut dyn Executor,
-        test_exec: &'a mut dyn Executor,
-        config: CompareConfig,
-        granularity: DiffGranularity,
-        max_instrs: Option<u64>,
-    ) -> Self {
-        Self {
-            ref_exec,
-            test_exec,
-            config,
-            granularity,
-            max_instrs,
-        }
-    }
-
-    /// Run the comparison.
-    pub fn run(self) -> CompareResult {
-        match self.granularity {
-            DiffGranularity::Instruction => {
-                compare_lockstep(self.ref_exec, self.test_exec, &self.config, self.max_instrs)
-            }
-            DiffGranularity::Block | DiffGranularity::Hybrid => {
-                // For now, block and hybrid fall back to instruction mode
-                // Block mode would step by CFG block boundaries
-                // Hybrid would do block mode and drill down on divergence
-                compare_lockstep(self.ref_exec, self.test_exec, &self.config, self.max_instrs)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,22 +264,6 @@ mod tests {
             } else {
                 None
             }
-        }
-
-        fn current_pc(&self) -> u64 {
-            self.states.get(self.index).map(|s| s.pc).unwrap_or(0)
-        }
-
-        fn instret(&self) -> u64 {
-            self.index as u64
-        }
-
-        fn has_exited(&self) -> bool {
-            self.index >= self.states.len()
-        }
-
-        fn exit_code(&self) -> Option<u8> {
-            if self.has_exited() { Some(0) } else { None }
         }
     }
 

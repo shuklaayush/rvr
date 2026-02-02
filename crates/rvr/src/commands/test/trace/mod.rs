@@ -41,8 +41,8 @@ impl TraceEntry {
             return None;
         }
 
-        let pc_pattern =
-            PC_PATTERN.get_or_init(|| Regex::new(r"0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)").unwrap());
+        let pc_pattern = PC_PATTERN
+            .get_or_init(|| Regex::new(r"0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)").unwrap());
         let caps = pc_pattern.captures(line)?;
 
         let pc = u64::from_str_radix(caps.get(1)?.as_str(), 16).ok()?;
@@ -360,48 +360,48 @@ pub fn compare_traces_with_config(
                         if is_sc(exp.opcode) {
                             // SC may or may not perform the store.
                         } else {
-                        let divergence = TraceDivergence {
-                            index: matched,
-                            expected: exp.clone(),
-                            actual: act.clone(),
-                            kind: DivergenceKind::MissingMemAccess,
-                        };
-                        if config.stop_on_first {
-                            return TraceComparison {
-                                matched,
-                                divergence: Some(divergence),
+                            let divergence = TraceDivergence {
+                                index: matched,
+                                expected: exp.clone(),
+                                actual: act.clone(),
+                                kind: DivergenceKind::MissingMemAccess,
                             };
-                        }
-                        if first_divergence.is_none() {
-                            first_divergence = Some(divergence);
-                        }
-                        exp_idx += 1;
-                        act_idx += 1;
-                        continue;
+                            if config.stop_on_first {
+                                return TraceComparison {
+                                    matched,
+                                    divergence: Some(divergence),
+                                };
+                            }
+                            if first_divergence.is_none() {
+                                first_divergence = Some(divergence);
+                            }
+                            exp_idx += 1;
+                            act_idx += 1;
+                            continue;
                         }
                     }
                     (false, true) => {
                         if is_sc(exp.opcode) {
                             // SC may or may not perform the store.
                         } else {
-                        let divergence = TraceDivergence {
-                            index: matched,
-                            expected: exp.clone(),
-                            actual: act.clone(),
-                            kind: DivergenceKind::ExtraMemAccess,
-                        };
-                        if config.stop_on_first {
-                            return TraceComparison {
-                                matched,
-                                divergence: Some(divergence),
+                            let divergence = TraceDivergence {
+                                index: matched,
+                                expected: exp.clone(),
+                                actual: act.clone(),
+                                kind: DivergenceKind::ExtraMemAccess,
                             };
-                        }
-                        if first_divergence.is_none() {
-                            first_divergence = Some(divergence);
-                        }
-                        exp_idx += 1;
-                        act_idx += 1;
-                        continue;
+                            if config.stop_on_first {
+                                return TraceComparison {
+                                    matched,
+                                    divergence: Some(divergence),
+                                };
+                            }
+                            if first_divergence.is_none() {
+                                first_divergence = Some(divergence);
+                            }
+                            exp_idx += 1;
+                            act_idx += 1;
+                            continue;
                         }
                     }
                     _ => {}
@@ -565,7 +565,10 @@ pub fn compare_traces_with_config(
         };
     }
 
-    TraceComparison { matched, divergence: None }
+    TraceComparison {
+        matched,
+        divergence: None,
+    }
 }
 
 /// Align traces by finding first common PC at or after the entry point.
@@ -578,16 +581,10 @@ pub fn align_traces_at(
     entry_point: u64,
 ) -> (Vec<TraceEntry>, Vec<TraceEntry>) {
     // Find first instruction at entry_point or above in Spike trace
-    let spike_start = spike
-        .iter()
-        .position(|e| e.pc >= entry_point)
-        .unwrap_or(0);
+    let spike_start = spike.iter().position(|e| e.pc >= entry_point).unwrap_or(0);
 
     // Find first instruction at entry_point or above in rvr trace
-    let rvr_start = rvr
-        .iter()
-        .position(|e| e.pc >= entry_point)
-        .unwrap_or(0);
+    let rvr_start = rvr.iter().position(|e| e.pc >= entry_point).unwrap_or(0);
 
     (spike[spike_start..].to_vec(), rvr[rvr_start..].to_vec())
 }
@@ -721,9 +718,7 @@ pub fn elf_entry_point(elf_path: &Path) -> std::io::Result<u64> {
                 "ELF file too small for entry point",
             ));
         }
-        Ok(u64::from_le_bytes(
-            elf_data[0x18..0x20].try_into().unwrap(),
-        ))
+        Ok(u64::from_le_bytes(elf_data[0x18..0x20].try_into().unwrap()))
     } else {
         if elf_data.len() < 0x18 + 4 {
             return Err(std::io::Error::new(
@@ -731,9 +726,7 @@ pub fn elf_entry_point(elf_path: &Path) -> std::io::Result<u64> {
                 "ELF file too small for entry point",
             ));
         }
-        Ok(u32::from_le_bytes(
-            elf_data[0x18..0x1c].try_into().unwrap(),
-        ) as u64)
+        Ok(u32::from_le_bytes(elf_data[0x18..0x1c].try_into().unwrap()) as u64)
     }
 }
 
@@ -755,8 +748,7 @@ mod tests {
 
     #[test]
     fn test_parse_trace_entry_with_mem() {
-        let line =
-            "core   0: 3 0x000000008000010c (0x0182b283) x5 0x0000000080000000 mem 0x0000000000001018";
+        let line = "core   0: 3 0x000000008000010c (0x0182b283) x5 0x0000000080000000 mem 0x0000000000001018";
         let entry = TraceEntry::parse(line).unwrap();
 
         assert_eq!(entry.pc, 0x8000010c);

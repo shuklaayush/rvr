@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use rvr_emit::Backend;
 
-use super::riscv_tests::{print_result, TestResult, TestSummary};
-use rvr::{compile_with_options, CompileOptions, Compiler, Runner};
+use super::riscv_tests::{TestResult, TestSummary, print_result};
+use rvr::{CompileOptions, Compiler, Runner, compile_with_options};
 
 /// Signature region start address (must match model_test.h and link.ld).
 /// Not directly used in code - signature bounds are read from ELF symbols.
@@ -24,8 +24,7 @@ const MAX_SIG_SIZE: usize = 0x10000;
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[
     // fence.i tests self-modifying code
-    "fence_i",
-    // We don't support fence instructions that affect external memory
+    "fence_i", // We don't support fence instructions that affect external memory
     "fence-01",
 ];
 
@@ -95,7 +94,7 @@ impl ArchTestCategory {
     /// Parse from string (e.g., "rv64i-I" or "rv64i_m/I").
     pub fn parse(s: &str) -> Option<Self> {
         // Normalize: replace / and _ with -
-        let normalized = s.to_lowercase().replace('/', "-").replace('_', "-");
+        let normalized = s.to_lowercase().replace(['/', '_'], "-");
         match normalized.as_str() {
             "rv64i-m-i" | "rv64i-i" => Some(Self::Rv64iI),
             "rv64i-m-m" | "rv64i-m" => Some(Self::Rv64iM),
@@ -216,7 +215,6 @@ impl ArchTestCategory {
             Self::Rv32iZicond => ("rv32im_zicond", "ilp32"),
         }
     }
-
 }
 
 impl std::fmt::Display for ArchTestCategory {
@@ -496,7 +494,7 @@ pub fn run_test(
             let reference = match fs::read_to_string(ref_path) {
                 Ok(r) => r,
                 Err(e) => {
-                    return TestResult::fail(name, format!("failed to read reference: {}", e))
+                    return TestResult::fail(name, format!("failed to read reference: {}", e));
                 }
             };
 
@@ -791,8 +789,7 @@ fn generate_reference(
     let isa = category_to_spike_isa(category);
 
     // Create temp file for signature output
-    let temp_dir =
-        tempfile::tempdir().map_err(|e| format!("failed to create temp dir: {}", e))?;
+    let temp_dir = tempfile::tempdir().map_err(|e| format!("failed to create temp dir: {}", e))?;
     let sig_file = temp_dir.path().join("signature.txt");
 
     // Run Spike with signature dumping

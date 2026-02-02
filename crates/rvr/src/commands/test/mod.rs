@@ -697,21 +697,21 @@ fn resolve_diff_backends(
         return Err("cannot compare Spike against Spike".to_string());
     }
 
-    if let Some(backend) = ref_backend.as_backend() {
-        if !backend_supports_diff(backend) {
-            return Err(format!(
-                "backend {:?} does not support diff tracing",
-                backend
-            ));
-        }
+    if let Some(backend) = ref_backend.as_backend()
+        && !backend_supports_diff(backend)
+    {
+        return Err(format!(
+            "backend {:?} does not support diff tracing",
+            backend
+        ));
     }
-    if let Some(backend) = test_backend.as_backend() {
-        if !backend_supports_diff(backend) {
-            return Err(format!(
-                "backend {:?} does not support diff tracing",
-                backend
-            ));
-        }
+    if let Some(backend) = test_backend.as_backend()
+        && !backend_supports_diff(backend)
+    {
+        return Err(format!(
+            "backend {:?} does not support diff tracing",
+            backend
+        ));
     }
 
     Ok((ref_backend, test_backend))
@@ -732,6 +732,7 @@ fn backend_supports_buffered_diff(backend: Backend) -> bool {
 use crate::cli::{DiffBackendArg, DiffGranularityArg, DiffModeArg};
 
 /// Run lockstep differential execution between two backends.
+#[allow(clippy::too_many_arguments)]
 pub fn diff_compare(
     mode: DiffModeArg,
     ref_backend: Option<DiffBackendArg>,
@@ -876,10 +877,8 @@ pub fn diff_compare(
         eprintln!("Starting block-level differential execution...");
 
         let config = diff::CompareConfig {
-            entry_point,
             strict_reg_writes: true,
             strict_mem_access: strict_mem,
-            stop_on_first: true,
         };
 
         let mut block_exec = match diff::BufferedInProcessExecutor::new(&block_dir, elf_path) {
@@ -935,10 +934,8 @@ pub fn diff_compare(
         eprintln!("Starting differential execution...");
 
         let config = diff::CompareConfig {
-            entry_point,
             strict_reg_writes: true,
             strict_mem_access: strict_mem,
-            stop_on_first: true,
         };
 
         // Run comparison based on mode

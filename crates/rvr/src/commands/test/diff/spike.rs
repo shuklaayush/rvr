@@ -18,9 +18,7 @@ pub struct SpikeExecutor {
     reader: BufReader<ChildStdout>,
     entry_point: u64,
     instret: u64,
-    current_pc: u64,
     has_exited: bool,
-    exit_code: Option<u8>,
     aligned: bool,
 }
 
@@ -59,23 +57,16 @@ impl SpikeExecutor {
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "no stdout"))?;
+            .ok_or_else(|| std::io::Error::other("no stdout"))?;
 
         Ok(Self {
             child,
             reader: BufReader::new(stdout),
             entry_point,
             instret: 0,
-            current_pc: entry_point,
             has_exited: false,
-            exit_code: None,
             aligned: false,
         })
-    }
-
-    /// Try to start Spike, returning None if spike is not available.
-    pub fn try_start(elf: &Path, isa: &str, entry_point: u64) -> Option<Self> {
-        Self::start(elf, isa, entry_point).ok()
     }
 
     /// Read the next instruction state from the pipe.
@@ -177,7 +168,6 @@ impl Executor for SpikeExecutor {
             Some(mut state) => {
                 self.instret += 1;
                 state.instret = self.instret;
-                self.current_pc = state.pc;
                 Some(state)
             }
             None => {
@@ -185,22 +175,6 @@ impl Executor for SpikeExecutor {
                 None
             }
         }
-    }
-
-    fn current_pc(&self) -> u64 {
-        self.current_pc
-    }
-
-    fn instret(&self) -> u64 {
-        self.instret
-    }
-
-    fn has_exited(&self) -> bool {
-        self.has_exited
-    }
-
-    fn exit_code(&self) -> Option<u8> {
-        self.exit_code
     }
 }
 

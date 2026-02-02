@@ -1415,7 +1415,10 @@ impl<X: Xlen> CEmitter<X> {
             );
             self.writeln(
                 1,
-                &format!("trace_opcode(&{state}->tracer, {}, {}, 0x{:x});", pc_lit, op, raw),
+                &format!(
+                    "trace_opcode(&{state}->tracer, {}, {}, 0x{:x});",
+                    pc_lit, op, raw
+                ),
             );
         }
     }

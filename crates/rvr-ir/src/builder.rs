@@ -181,7 +181,14 @@ impl<X: Xlen> IRBuilder<X> {
 
     /// Build with custom terminator.
     pub fn build(self, terminator: Terminator<X>) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.raw, self.statements, terminator)
+        InstrIR::new(
+            self.pc,
+            self.size,
+            self.op,
+            self.raw,
+            self.statements,
+            terminator,
+        )
     }
 }
 

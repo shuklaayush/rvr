@@ -15,6 +15,8 @@ mod suspend;
 mod traits;
 mod typed;
 
+use traits::BufferedDiffEntry;
+
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read as IoRead, Write as IoWrite};
 use std::path::Path;
@@ -540,16 +542,7 @@ impl Runner {
     }
 
     /// Get buffered diff entry at index: (pc, opcode, rd, rd_value, mem_access).
-    pub fn buffered_diff_get(
-        &self,
-        index: usize,
-    ) -> Option<(
-        u64,
-        u32,
-        Option<u8>,
-        Option<u64>,
-        Option<(u64, u64, u8, bool)>,
-    )> {
+    pub fn buffered_diff_get(&self, index: usize) -> Option<BufferedDiffEntry> {
         self.inner.buffered_diff_get(index)
     }
 
@@ -610,10 +603,10 @@ impl Runner {
         self.setup_initial_regs();
 
         // Restore target_instret if it was set
-        if let Some(target) = saved_target {
-            if target != u64::MAX {
-                self.inner.set_target_instret(target);
-            }
+        if let Some(target) = saved_target
+            && target != u64::MAX
+        {
+            self.inner.set_target_instret(target);
         }
 
         let entry_point = self.inner.entry_point();

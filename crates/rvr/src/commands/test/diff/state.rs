@@ -28,24 +28,6 @@ pub struct DiffState {
 }
 
 impl DiffState {
-    /// Create a new empty state at the given PC.
-    pub fn new(pc: u64) -> Self {
-        Self {
-            pc,
-            ..Default::default()
-        }
-    }
-
-    /// Create an exit state.
-    pub fn exit(pc: u64, instret: u64) -> Self {
-        Self {
-            pc,
-            instret,
-            is_exit: true,
-            ..Default::default()
-        }
-    }
-
     /// Check if this state represents program exit.
     pub fn is_exit(&self) -> bool {
         self.is_exit
@@ -141,23 +123,17 @@ pub struct Divergence {
 /// Configuration for comparison.
 #[derive(Debug, Clone)]
 pub struct CompareConfig {
-    /// Entry point for alignment.
-    pub entry_point: u64,
     /// Require exact register write matching.
     pub strict_reg_writes: bool,
     /// Require exact memory access matching.
     pub strict_mem_access: bool,
-    /// Stop on first divergence.
-    pub stop_on_first: bool,
 }
 
 impl Default for CompareConfig {
     fn default() -> Self {
         Self {
-            entry_point: 0,
             strict_reg_writes: true,
             strict_mem_access: false, // Spike doesn't always log mem for loads
-            stop_on_first: true,
         }
     }
 }
@@ -192,10 +168,10 @@ pub fn compare_states(
                     return Some(DivergenceKind::RegDest);
                 }
                 // Same register, compare values
-                if let (Some(e_val), Some(a_val)) = (expected.rd_value, actual.rd_value) {
-                    if e_val != a_val {
-                        return Some(DivergenceKind::RegValue);
-                    }
+                if let (Some(e_val), Some(a_val)) = (expected.rd_value, actual.rd_value)
+                    && e_val != a_val
+                {
+                    return Some(DivergenceKind::RegValue);
                 }
             }
             (Some(_), None) => return Some(DivergenceKind::MissingRegWrite),
@@ -212,10 +188,10 @@ pub fn compare_states(
                     return Some(DivergenceKind::MemAddr);
                 }
                 // Same address, compare values if available
-                if let (Some(e_val), Some(a_val)) = (expected.mem_value, actual.mem_value) {
-                    if e_val != a_val {
-                        return Some(DivergenceKind::MemValue);
-                    }
+                if let (Some(e_val), Some(a_val)) = (expected.mem_value, actual.mem_value)
+                    && e_val != a_val
+                {
+                    return Some(DivergenceKind::MemValue);
                 }
             }
             (Some(_), None) => return Some(DivergenceKind::MissingMemAccess),

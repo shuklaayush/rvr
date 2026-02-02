@@ -10,7 +10,7 @@ use rvr_elf::ElfImage;
 use rvr_ir::Xlen;
 use rvr_state::{BufferedDiffTracer, DiffEntry, GuardedMemory, InstretSuspender, RvState};
 
-use super::RunnerImpl;
+use super::traits::{BufferedDiffEntry, RunnerImpl};
 
 /// Default buffer capacity for buffered diff tracer.
 const DEFAULT_BUFFER_CAPACITY: usize = 4096;
@@ -53,41 +53,6 @@ impl<X: Xlen, const NUM_REGS: usize> BufferedDiffRunner<X, NUM_REGS> {
             elf_image,
             buffer,
         }
-    }
-
-    /// Get a reference to the buffered diff tracer state.
-    pub fn buffered_tracer(&self) -> &BufferedDiffTracer<X> {
-        &self.state.tracer
-    }
-
-    /// Number of entries captured since last reset.
-    pub fn captured_count(&self) -> usize {
-        self.state.tracer.len()
-    }
-
-    /// Check if any entries were dropped due to overflow.
-    pub fn has_overflow(&self) -> bool {
-        self.state.tracer.has_overflow()
-    }
-
-    /// Number of entries dropped due to overflow.
-    pub fn dropped_count(&self) -> u32 {
-        self.state.tracer.dropped_count()
-    }
-
-    /// Get entry at index (0 = oldest entry).
-    pub fn get_entry(&self, index: usize) -> Option<&DiffEntry<X>> {
-        self.state.tracer.get(index)
-    }
-
-    /// Iterate over all captured entries in order (oldest first).
-    pub fn iter_entries(&self) -> impl Iterator<Item = &DiffEntry<X>> {
-        self.state.tracer.iter()
-    }
-
-    /// Reset the tracer buffer (keeps allocation).
-    pub fn reset_tracer(&mut self) {
-        self.state.tracer.reset();
     }
 
     /// Re-setup the tracer buffer pointer after reset.
@@ -229,16 +194,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for BufferedDiffRunner<X, NUM_RE
         Some(self.state.tracer.dropped_count())
     }
 
-    fn buffered_diff_get(
-        &self,
-        index: usize,
-    ) -> Option<(
-        u64,
-        u32,
-        Option<u8>,
-        Option<u64>,
-        Option<(u64, u64, u8, bool)>,
-    )> {
+    fn buffered_diff_get(&self, index: usize) -> Option<BufferedDiffEntry> {
         let entry = self.state.tracer.get(index)?;
         Some((
             X::to_u64(entry.pc),

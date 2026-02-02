@@ -650,11 +650,13 @@ mod tests {
         buffer[1].pc = 0x1004;
         buffer[1].opcode = 0x00000033; // ADD
 
-        let mut tracer = BufferedDiffTracer::<Rv64>::default();
-        tracer.buffer = buffer.as_mut_ptr();
-        tracer.capacity = 4;
-        tracer.count = 2;
-        tracer.head = 2; // Next write would go at index 2
+        let tracer = BufferedDiffTracer::<Rv64> {
+            buffer: buffer.as_mut_ptr(),
+            capacity: 4,
+            count: 2,
+            head: 2, // Next write would go at index 2
+            ..Default::default()
+        };
 
         // Test get
         assert_eq!(tracer.get(0).unwrap().pc, 0x1000);

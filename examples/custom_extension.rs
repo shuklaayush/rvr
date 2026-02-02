@@ -72,7 +72,14 @@ impl InstructionExtension<Rv64> for ToyExtension {
             _ => (Vec::new(), Terminator::trap("invalid args")),
         };
 
-        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), instr.raw, stmts, term)
+        InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            stmts,
+            term,
+        )
     }
 
     fn disasm(&self, instr: &DecodedInstr<Rv64>) -> String {

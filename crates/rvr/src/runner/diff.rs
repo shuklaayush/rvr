@@ -34,41 +34,6 @@ impl<X: Xlen, const NUM_REGS: usize> DiffRunner<X, NUM_REGS> {
             elf_image,
         }
     }
-
-    /// Get a reference to the diff tracer state.
-    pub fn diff_tracer(&self) -> &DiffTracer<X> {
-        &self.state.tracer
-    }
-
-    /// Get the PC from the tracer (instruction that was just executed).
-    pub fn traced_pc(&self) -> u64 {
-        X::to_u64(self.state.tracer.pc)
-    }
-
-    /// Get the opcode from the tracer.
-    pub fn traced_opcode(&self) -> u32 {
-        self.state.tracer.opcode
-    }
-
-    /// Get the destination register if one was written.
-    pub fn traced_rd(&self) -> Option<u8> {
-        self.state.tracer.get_rd()
-    }
-
-    /// Get the value written to rd.
-    pub fn traced_rd_value(&self) -> Option<u64> {
-        self.state.tracer.get_rd_value()
-    }
-
-    /// Get memory access info: (addr, value, width, is_write).
-    pub fn traced_mem(&self) -> Option<(u64, u64, u8, bool)> {
-        self.state.tracer.get_mem_access()
-    }
-
-    /// Check if tracer captured valid state.
-    pub fn tracer_valid(&self) -> bool {
-        self.state.tracer.is_valid()
-    }
 }
 
 impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for DiffRunner<X, NUM_REGS> {

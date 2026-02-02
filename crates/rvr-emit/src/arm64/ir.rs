@@ -70,7 +70,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     fn emit_cmp_with_imm(&mut self, left_reg: &str, imm: i64) {
-        if imm >= 0 && imm <= 0xFFF {
+        if (0..=0xFFF).contains(&imm) {
             self.emitf(format!("cmp {left_reg}, #{imm}"));
         } else if imm < 0 && -imm <= 0xFFF {
             let abs = -imm;
@@ -217,17 +217,19 @@ impl<X: Xlen> Arm64Emitter<X> {
             _ => return false,
         };
         if matches!(op, BinaryOp::Or | BinaryOp::And) {
-            let is_cmp = |expr: &Expr<X>| match expr {
-                Expr::Binary { op, .. } => match op {
-                    BinaryOp::Eq
-                    | BinaryOp::Ne
-                    | BinaryOp::Lt
-                    | BinaryOp::Ge
-                    | BinaryOp::Ltu
-                    | BinaryOp::Geu => true,
-                    _ => false,
-                },
-                _ => false,
+            let is_cmp = |expr: &Expr<X>| {
+                matches!(
+                    expr,
+                    Expr::Binary {
+                        op: BinaryOp::Eq
+                            | BinaryOp::Ne
+                            | BinaryOp::Lt
+                            | BinaryOp::Ge
+                            | BinaryOp::Ltu
+                            | BinaryOp::Geu,
+                        ..
+                    }
+                )
             };
             if is_cmp(left) && is_cmp(right) {
                 let skip_label = self.next_label("bool_skip");
@@ -331,7 +333,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         if imm == i64::MIN {
             return None;
         }
-        let abs = imm.abs() as u64;
+        let abs = imm.unsigned_abs();
         if abs <= 0xFFF {
             Some((abs as u16, false))
         } else if abs <= 0xFFF000 && (abs & 0xFFF) == 0 {
@@ -395,17 +397,18 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Emit an expression, returning which ARM64 register holds the result.
+    #[allow(clippy::collapsible_if)]
     pub(super) fn emit_expr(&mut self, expr: &Expr<X>, dest: &str) -> String {
-        if self.config.perf_mode {
-            if matches!(
+        if self.config.perf_mode
+            && matches!(
                 expr,
                 Expr::Read(ReadExpr::Csr(_))
                     | Expr::Read(ReadExpr::Cycle)
                     | Expr::Read(ReadExpr::Instret)
-            ) {
-                self.emitf(format!("mov {dest}, #0"));
-                return dest.to_string();
-            }
+            )
+        {
+            self.emitf(format!("mov {dest}, #0"));
+            return dest.to_string();
         }
         match expr {
             Expr::Imm(val) => {
@@ -680,6 +683,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Emit a binary operation.
+    #[allow(clippy::collapsible_if)]
     pub(super) fn emit_binary_op(
         &mut self,
         op: BinaryOp,
@@ -2007,6 +2011,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Emit a single instruction from IR.
+    #[allow(clippy::collapsible_if)]
     pub(super) fn emit_instruction(
         &mut self,
         instr: &InstrIR<X>,

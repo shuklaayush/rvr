@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use rvr_emit::Backend;
 
-use rvr::{compile_with_options, CompileOptions, Compiler, Runner};
 pub use rvr::metrics::TestStatus;
+use rvr::{CompileOptions, Compiler, Runner, compile_with_options};
 
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[

@@ -286,7 +286,11 @@ impl<X: Xlen> CProject<X> {
                     // Handle last instruction specially if it has taken-inline
                     if let Some((cond, hint, inline_start)) = &taken_inline {
                         // Emit trace_pc for the branch instruction before rendering its statements
-                        emitter.emit_trace_pc_for(X::to_u64(last_instr.pc), last_instr.op, last_instr.raw);
+                        emitter.emit_trace_pc_for(
+                            X::to_u64(last_instr.pc),
+                            last_instr.op,
+                            last_instr.raw,
+                        );
 
                         // Render the last instruction's statements (but not terminator)
                         for stmt in &last_instr.statements {
@@ -306,7 +310,8 @@ impl<X: Xlen> CProject<X> {
                             for (j, inline_instr) in inline_block.instructions.iter().enumerate() {
                                 let is_inline_last = j == inline_num_instrs - 1;
                                 // For per-instruction mode, pass the next instruction's PC
-                                let next_instr_pc = if !is_inline_last && j + 1 < inline_num_instrs {
+                                let next_instr_pc = if !is_inline_last && j + 1 < inline_num_instrs
+                                {
                                     Some(X::to_u64(inline_block.instructions[j + 1].pc))
                                 } else {
                                     None

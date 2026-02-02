@@ -196,18 +196,19 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit an expression, returning which x86 register holds the result.
+    #[allow(clippy::collapsible_if)]
     pub(super) fn emit_expr(&mut self, expr: &Expr<X>, dest: &str) -> String {
         let suffix = self.suffix();
-        if self.config.perf_mode {
-            if matches!(
+        if self.config.perf_mode
+            && matches!(
                 expr,
                 Expr::Read(ReadExpr::Csr(_))
                     | Expr::Read(ReadExpr::Cycle)
                     | Expr::Read(ReadExpr::Instret)
-            ) {
-                self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
-                return dest.to_string();
-            }
+            )
+        {
+            self.emitf(format!("xor{suffix} %{dest}, %{dest}"));
+            return dest.to_string();
         }
         match expr {
             Expr::Imm(val) => {
@@ -478,6 +479,7 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a binary operation.
+    #[allow(clippy::collapsible_if)]
     pub(super) fn emit_binary_op(
         &mut self,
         op: BinaryOp,
@@ -1443,7 +1445,7 @@ impl<X: Xlen> X86Emitter<X> {
                         self.emitf(format!("leaq {offset}(%rax), %rax"));
                     }
                     self.apply_address_mode("rax");
-                    self.emit_trace_mem_access("rax", &temp2, *width, true);
+                    self.emit_trace_mem_access("rax", temp2, *width, true);
                     let mem = format!("(%{}, %rax)", reserved::MEMORY_PTR);
                     let (sfx, reg) = match width {
                         1 => ("b", "cl"),
