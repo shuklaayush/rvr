@@ -392,6 +392,47 @@ pub enum TestCommands {
         #[arg(long, default_value = "60")]
         timeout: u64,
     },
+    /// Lockstep differential execution between backends
+    Diff {
+        /// Comparison mode
+        #[arg(value_enum)]
+        mode: DiffModeArg,
+
+        /// Path to ELF binary
+        elf: PathBuf,
+
+        /// Comparison granularity
+        #[arg(short, long, value_enum, default_value = "instruction")]
+        granularity: DiffGranularityArg,
+
+        /// Maximum instructions to compare
+        #[arg(short = 'n', long)]
+        max_instrs: Option<u64>,
+
+        /// Output directory for compiled code (default: temp dir)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Use pre-compiled reference from this directory
+        #[arg(long)]
+        ref_dir: Option<PathBuf>,
+
+        /// Use pre-compiled test from this directory
+        #[arg(long)]
+        test_dir: Option<PathBuf>,
+
+        /// C compiler command
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// ISA string for Spike (auto-detected if not specified)
+        #[arg(long)]
+        isa: Option<String>,
+
+        /// Also compare memory values when available
+        #[arg(long)]
+        strict_mem: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -615,6 +656,29 @@ impl From<BackendArg> for rvr_emit::Backend {
             BackendArg::Arm64 => rvr_emit::Backend::ARM64Asm,
         }
     }
+}
+
+/// Differential execution mode.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum DiffModeArg {
+    /// Spike (reference) vs C backend
+    SpikeC,
+    /// Spike (reference) vs ARM64 backend
+    SpikeArm64,
+    /// C backend vs ARM64 backend
+    CArm64,
+}
+
+/// Differential execution granularity.
+#[derive(Clone, Copy, Debug, ValueEnum, Default)]
+pub enum DiffGranularityArg {
+    /// Compare after every instruction
+    #[default]
+    Instruction,
+    /// Compare at block boundaries
+    Block,
+    /// Compare by block, drill down on divergence
+    Hybrid,
 }
 
 /// Analysis mode for the compilation pipeline.

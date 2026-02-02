@@ -4,8 +4,10 @@
 //! - `riscv_tests`: The classic riscv-tests suite (exit code based)
 //! - `arch_tests`: The official riscv-arch-test suite (signature comparison based)
 //! - `trace`: Trace comparison between rvr and Spike for differential testing
+//! - `diff`: Lockstep differential execution between backends
 
 pub mod arch_tests;
+pub mod diff;
 pub mod riscv_tests;
 pub mod trace;
 
@@ -631,4 +633,235 @@ pub fn trace_compare(
         eprintln!("PASS: {} instructions matched", result.matched);
         EXIT_SUCCESS
     }
+}
+
+// ============================================================================
+// Differential Execution Command
+// ============================================================================
+
+use crate::cli::{DiffGranularityArg, DiffModeArg};
+
+/// Run lockstep differential execution between two backends.
+pub fn diff_compare(
+    mode: DiffModeArg,
+    elf_path: &PathBuf,
+    granularity_arg: DiffGranularityArg,
+    max_instrs: Option<u64>,
+    output_dir: Option<PathBuf>,
+    ref_dir: Option<PathBuf>,
+    test_dir: Option<PathBuf>,
+    cc: &str,
+    isa: Option<String>,
+    strict_mem: bool,
+) -> i32 {
+    // Convert granularity argument
+    let granularity = match granularity_arg {
+        DiffGranularityArg::Instruction => diff::DiffGranularity::Instruction,
+        DiffGranularityArg::Block => diff::DiffGranularity::Block,
+        DiffGranularityArg::Hybrid => diff::DiffGranularity::Hybrid,
+    };
+
+    // Check if test should be skipped
+    let test_name = elf_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if riscv_tests::should_skip(test_name) {
+        eprintln!("SKIP: {} (not compatible with static recompilation)", test_name);
+        return EXIT_SUCCESS;
+    }
+
+    // Determine ISA
+    let isa = match isa {
+        Some(i) => i,
+        None => match trace::elf_to_isa(elf_path) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("Error detecting ISA: {}", e);
+                return EXIT_FAILURE;
+            }
+        },
+    };
+    let isa = trace::isa_from_test_name(test_name, &isa);
+
+    // Get entry point for alignment
+    let entry_point = match trace::elf_entry_point(elf_path) {
+        Ok(ep) => ep,
+        Err(e) => {
+            eprintln!("Error reading ELF entry point: {}", e);
+            return EXIT_FAILURE;
+        }
+    };
+
+    eprintln!("ELF: {}", elf_path.display());
+    eprintln!("Mode: {:?}", mode);
+    eprintln!("Granularity: {:?}", granularity);
+    eprintln!("ISA: {}", isa);
+    eprintln!("Entry: 0x{:x}", entry_point);
+    if let Some(n) = max_instrs {
+        eprintln!("Max instructions: {}", n);
+    }
+    eprintln!();
+
+    // Create output directory
+    let output_dir = output_dir.unwrap_or_else(|| {
+        let temp = tempfile::tempdir().expect("failed to create temp dir");
+        temp.keep()
+    });
+
+    // Determine what to compile based on mode
+    let (needs_spike, ref_backend, test_backend) = match mode {
+        DiffModeArg::SpikeC => (true, None, Some(Backend::C)),
+        DiffModeArg::SpikeArm64 => (true, None, Some(Backend::ARM64Asm)),
+        DiffModeArg::CArm64 => (false, Some(Backend::C), Some(Backend::ARM64Asm)),
+    };
+
+    // Check Spike is available if needed
+    if needs_spike && diff::find_spike().is_none() {
+        eprintln!("Error: Spike not found in PATH");
+        eprintln!("Install from https://github.com/riscv-software-src/riscv-isa-sim");
+        return EXIT_FAILURE;
+    }
+
+    // Compile reference if needed
+    let ref_compiled_dir = if let Some(dir) = ref_dir {
+        dir
+    } else if let Some(backend) = ref_backend {
+        let dir = output_dir.join("ref");
+        eprintln!("Compiling reference ({:?})...", backend);
+        if !compile_for_diff(elf_path, &dir, backend, cc) {
+            eprintln!("Error: Failed to compile reference");
+            return EXIT_FAILURE;
+        }
+        dir
+    } else {
+        PathBuf::new() // Not used for Spike mode
+    };
+
+    // Compile test
+    let test_compiled_dir = if let Some(dir) = test_dir {
+        dir
+    } else if let Some(backend) = test_backend {
+        let dir = output_dir.join("test");
+        eprintln!("Compiling test ({:?})...", backend);
+        if !compile_for_diff(elf_path, &dir, backend, cc) {
+            eprintln!("Error: Failed to compile test");
+            return EXIT_FAILURE;
+        }
+        dir
+    } else {
+        unreachable!("test backend always required")
+    };
+
+    // Create executors
+    eprintln!("Starting differential execution...");
+
+    let config = diff::CompareConfig {
+        entry_point,
+        strict_reg_writes: true,
+        strict_mem_access: strict_mem,
+        stop_on_first: true,
+    };
+
+    // Run comparison based on mode
+    let result = match mode {
+        DiffModeArg::SpikeC | DiffModeArg::SpikeArm64 => {
+            // Spike as reference
+            let mut spike = match diff::SpikeExecutor::start(elf_path, &isa, entry_point) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Error starting Spike: {}", e);
+                    return EXIT_FAILURE;
+                }
+            };
+
+            let mut test = match diff::InProcessExecutor::new(&test_compiled_dir, elf_path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error loading test executor: {}", e);
+                    return EXIT_FAILURE;
+                }
+            };
+
+            diff::compare_lockstep(&mut spike, &mut test, &config, max_instrs)
+        }
+        DiffModeArg::CArm64 => {
+            // C as reference, ARM64 as test
+            let mut reference = match diff::InProcessExecutor::new(&ref_compiled_dir, elf_path) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Error loading reference executor: {}", e);
+                    return EXIT_FAILURE;
+                }
+            };
+
+            let mut test = match diff::InProcessExecutor::new(&test_compiled_dir, elf_path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Error loading test executor: {}", e);
+                    return EXIT_FAILURE;
+                }
+            };
+
+            diff::compare_lockstep(&mut reference, &mut test, &config, max_instrs)
+        }
+    };
+
+    // Report result
+    eprintln!();
+    if let Some(div) = &result.divergence {
+        eprintln!("DIVERGENCE at instruction {}: {}", div.index, div.kind);
+        eprintln!();
+        eprintln!("Expected:");
+        eprintln!("  PC: 0x{:016x}", div.expected.pc);
+        eprintln!("  Opcode: 0x{:08x}", div.expected.opcode);
+        if let (Some(rd), Some(val)) = (div.expected.rd, div.expected.rd_value) {
+            eprintln!("  x{} = 0x{:016x}", rd, val);
+        }
+        if let Some(addr) = div.expected.mem_addr {
+            eprintln!("  mem 0x{:016x}", addr);
+        }
+        eprintln!();
+        eprintln!("Actual:");
+        eprintln!("  PC: 0x{:016x}", div.actual.pc);
+        eprintln!("  Opcode: 0x{:08x}", div.actual.opcode);
+        if let (Some(rd), Some(val)) = (div.actual.rd, div.actual.rd_value) {
+            eprintln!("  x{} = 0x{:016x}", rd, val);
+        }
+        if let Some(addr) = div.actual.mem_addr {
+            eprintln!("  mem 0x{:016x}", addr);
+        }
+        eprintln!();
+        eprintln!("Output: {}", output_dir.display());
+        EXIT_FAILURE
+    } else {
+        eprintln!("PASS: {} instructions matched", result.matched);
+        EXIT_SUCCESS
+    }
+}
+
+/// Compile an ELF for differential execution.
+fn compile_for_diff(elf_path: &PathBuf, output_dir: &PathBuf, backend: Backend, cc: &str) -> bool {
+    use std::process::Command;
+
+    std::fs::create_dir_all(output_dir).ok();
+
+    let status = Command::new("./target/release/rvr")
+        .arg("compile")
+        .arg(elf_path)
+        .arg("-o")
+        .arg(output_dir)
+        .arg("--backend")
+        .arg(match backend {
+            Backend::C => "c",
+            Backend::ARM64Asm => "arm64",
+            Backend::X86Asm => "x86",
+        })
+        .arg("--instret")
+        .arg("suspend") // Required for single-stepping
+        .arg("--cc")
+        .arg(cc)
+        .status();
+
+    matches!(status, Ok(s) if s.success())
 }
