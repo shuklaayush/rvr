@@ -506,9 +506,19 @@ impl Runner {
 
     /// Run the program and return the result.
     pub fn run(&mut self) -> Result<RunResult, RunError> {
+        // Save target_instret before reset (reset() disables the suspender)
+        let saved_target = self.inner.get_target_instret();
+
         self.inner.load_segments();
         self.inner.reset();
         self.setup_initial_regs();
+
+        // Restore target_instret if it was set
+        if let Some(target) = saved_target {
+            if target != u64::MAX {
+                self.inner.set_target_instret(target);
+            }
+        }
 
         let entry_point = self.inner.entry_point();
         trace!(entry_point = format!("{:#x}", entry_point), "executing");

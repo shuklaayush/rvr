@@ -305,10 +305,17 @@ impl<X: Xlen> CProject<X> {
                             // Render inlined instructions with extra indent
                             for (j, inline_instr) in inline_block.instructions.iter().enumerate() {
                                 let is_inline_last = j == inline_num_instrs - 1;
+                                // For per-instruction mode, pass the next instruction's PC
+                                let next_instr_pc = if !is_inline_last && j + 1 < inline_num_instrs {
+                                    Some(X::to_u64(inline_block.instructions[j + 1].pc))
+                                } else {
+                                    None
+                                };
                                 emitter.render_instruction_indented(
                                     inline_instr,
                                     is_inline_last,
                                     inline_end_pc,
+                                    next_instr_pc,
                                     2, // Extra indentation for if-block
                                 );
                             }
@@ -322,10 +329,16 @@ impl<X: Xlen> CProject<X> {
                         emitter.render_jump_static(end_pc);
                     } else {
                         // No taken-inline, render normally
-                        emitter.render_instruction(instr, is_last, end_pc);
+                        emitter.render_instruction(instr, is_last, end_pc, None);
                     }
                 } else {
-                    emitter.render_instruction(instr, false, end_pc);
+                    // For per-instruction mode, pass the next instruction's PC
+                    let next_instr_pc = if i + 1 < num_instrs {
+                        Some(X::to_u64(block.instructions[i + 1].pc))
+                    } else {
+                        None
+                    };
+                    emitter.render_instruction(instr, false, end_pc, next_instr_pc);
                 }
             }
 

@@ -555,8 +555,10 @@ pub enum InstretModeArg {
     /// Count instructions
     #[default]
     Count,
-    /// Count and suspend at limit
+    /// Count and suspend at limit (checked at block boundaries)
     Suspend,
+    /// Count and suspend at limit (checked after every instruction)
+    PerInstruction,
 }
 
 impl From<InstretModeArg> for InstretMode {
@@ -565,6 +567,7 @@ impl From<InstretModeArg> for InstretMode {
             InstretModeArg::Off => InstretMode::Off,
             InstretModeArg::Count => InstretMode::Count,
             InstretModeArg::Suspend => InstretMode::Suspend,
+            InstretModeArg::PerInstruction => InstretMode::PerInstruction,
         }
     }
 }

@@ -58,8 +58,10 @@ pub enum InstretMode {
     /// Count instructions but don't suspend.
     #[default]
     Count,
-    /// Count instructions and suspend at limit.
+    /// Count instructions and suspend at limit (checked at block boundaries).
     Suspend,
+    /// Count instructions and suspend at limit (checked after every instruction).
+    PerInstruction,
 }
 
 impl InstretMode {
@@ -68,7 +70,12 @@ impl InstretMode {
     }
 
     pub fn suspends(&self) -> bool {
-        *self == Self::Suspend
+        matches!(self, Self::Suspend | Self::PerInstruction)
+    }
+
+    /// True if suspension check is emitted after every instruction.
+    pub fn per_instruction(&self) -> bool {
+        *self == Self::PerInstruction
     }
 
     /// Convert to C constant value for RV_INSTRET_MODE export.
@@ -77,6 +84,7 @@ impl InstretMode {
             Self::Off => 0,
             Self::Count => 1,
             Self::Suspend => 2,
+            Self::PerInstruction => 3,
         }
     }
 }

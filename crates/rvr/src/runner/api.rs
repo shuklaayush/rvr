@@ -54,7 +54,8 @@ impl RvApi {
 
     /// Check if the library supports suspend mode (for single-stepping).
     pub fn supports_suspend(&self) -> bool {
-        self.instret_mode == 2 // Suspend mode
+        // Suspend (2) or PerInstruction (3) mode
+        self.instret_mode >= 2
     }
 }
 
@@ -117,8 +118,10 @@ pub enum InstretMode {
     Off,
     /// Count instructions but don't suspend.
     Count,
-    /// Count instructions and suspend at limit.
+    /// Count instructions and suspend at limit (block boundaries).
     Suspend,
+    /// Count instructions and suspend at limit (per instruction).
+    PerInstruction,
 }
 
 impl InstretMode {
@@ -126,11 +129,13 @@ impl InstretMode {
         match raw {
             0 => Self::Off,
             2 => Self::Suspend,
+            3 => Self::PerInstruction,
             _ => Self::Count, // Default to Count (1)
         }
     }
 
+    /// True if the mode supports suspension (Suspend or PerInstruction).
     pub fn is_suspend(&self) -> bool {
-        *self == Self::Suspend
+        matches!(self, Self::Suspend | Self::PerInstruction)
     }
 }

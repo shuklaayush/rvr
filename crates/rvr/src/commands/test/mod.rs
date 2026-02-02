@@ -858,7 +858,7 @@ fn compile_for_diff(elf_path: &PathBuf, output_dir: &PathBuf, backend: Backend, 
             Backend::X86Asm => "x86",
         })
         .arg("--instret")
-        .arg("suspend") // Required for single-stepping
+        .arg("per-instruction") // Enable per-instruction suspension checks
         .arg("--cc")
         .arg(cc)
         .status();

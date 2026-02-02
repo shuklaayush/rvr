@@ -879,18 +879,27 @@ impl<X: Xlen> CEmitter<X> {
     /// Render instruction.
     ///
     /// `fall_pc` is the address to fall through to (typically end_pc of the block).
-    pub fn render_instruction(&mut self, ir: &InstrIR<X>, is_last: bool, fall_pc: u64) {
-        self.render_instruction_impl(ir, is_last, fall_pc, 1, false);
+    /// `next_instr_pc` is the PC of the next instruction in this block (for per-instruction checks).
+    pub fn render_instruction(
+        &mut self,
+        ir: &InstrIR<X>,
+        is_last: bool,
+        fall_pc: u64,
+        next_instr_pc: Option<u64>,
+    ) {
+        self.render_instruction_impl(ir, is_last, fall_pc, next_instr_pc, 1, false);
     }
 
     /// Render instruction with custom indent (for inlined blocks).
     ///
     /// When `use_simple_branch` is true, uses simplified branch rendering for superblock side-exits.
+    /// `next_instr_pc` is the actual PC of the next instruction (for per-instruction checks in superblocks).
     fn render_instruction_impl(
         &mut self,
         ir: &InstrIR<X>,
         is_last: bool,
         fall_pc: u64,
+        next_instr_pc: Option<u64>,
         indent: usize,
         use_simple_branch: bool,
     ) {
@@ -937,10 +946,25 @@ impl<X: Xlen> CEmitter<X> {
 
         self.instr_idx += 1;
 
+        // Per-instruction instret check: update and potentially suspend after every instruction
+        if self.config.instret_mode.per_instruction() {
+            // Update instret by 1 for this instruction
+            self.writeln(indent, "instret += 1;");
+            // For non-last instructions, check suspension inline
+            // For last instruction, the dispatch loop will check after the tail call returns
+            if !is_last {
+                // Use the actual next instruction PC if provided (for superblocks),
+                // otherwise fall back to sequential PC
+                let next_pc = next_instr_pc.unwrap_or_else(|| X::to_u64(ir.pc) + ir.size as u64);
+                self.render_instret_check(next_pc);
+            }
+        }
+
         // Render terminator
         if is_last {
             // Update instret BEFORE the terminator (tail call) so the incremented value is passed
-            if self.config.instret_mode.counts() {
+            // Skip bulk update if per-instruction mode (already updated above)
+            if self.config.instret_mode.counts() && !self.config.instret_mode.per_instruction() {
                 self.render_instret_update_impl(self.instr_idx as u64, indent);
             }
             if use_simple_branch {
@@ -1334,9 +1358,15 @@ impl<X: Xlen> CEmitter<X> {
         let num_instrs = block.instructions.len();
         for (i, instr) in block.instructions.iter().enumerate() {
             let is_last = i == num_instrs - 1;
+            // For per-instruction mode, pass the next instruction's PC
+            let next_instr_pc = if !is_last && i + 1 < num_instrs {
+                Some(X::to_u64(block.instructions[i + 1].pc))
+            } else {
+                None
+            };
             // For last instruction, fall_pc is end_pc (next block's start)
             // Note: instret update is now done inside render_instruction for is_last=true
-            self.render_instruction(instr, is_last, end_pc);
+            self.render_instruction(instr, is_last, end_pc, next_instr_pc);
         }
 
         self.render_block_footer();
@@ -1433,9 +1463,10 @@ impl<X: Xlen> CEmitter<X> {
         ir: &InstrIR<X>,
         is_last: bool,
         fall_pc: u64,
+        next_instr_pc: Option<u64>,
         indent: usize,
     ) {
-        self.render_instruction_impl(ir, is_last, fall_pc, indent, true);
+        self.render_instruction_impl(ir, is_last, fall_pc, next_instr_pc, indent, true);
     }
 
     /// Render terminator with custom indent (simplified, no tracing).
