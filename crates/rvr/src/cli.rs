@@ -367,6 +367,31 @@ pub enum TestCommands {
         #[command(subcommand)]
         command: ArchTestCommands,
     },
+    /// Trace comparison between rvr and Spike (differential testing)
+    Trace {
+        /// Path to ELF binary
+        elf: PathBuf,
+
+        /// Output directory for compiled rvr code (default: temp dir)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// C compiler command
+        #[arg(long, default_value = "clang")]
+        cc: String,
+
+        /// Stop on first difference
+        #[arg(long)]
+        stop_on_first: bool,
+
+        /// ISA string for Spike (auto-detected if not specified)
+        #[arg(long)]
+        isa: Option<String>,
+
+        /// Timeout in seconds
+        #[arg(long, default_value = "60")]
+        timeout: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -512,6 +537,7 @@ pub enum TracerKindArg {
     Ffi,
     Dynamic,
     Debug,
+    Spike,
 }
 
 impl From<TracerKindArg> for TracerKind {
@@ -523,6 +549,7 @@ impl From<TracerKindArg> for TracerKind {
             TracerKindArg::Ffi => TracerKind::Ffi,
             TracerKindArg::Dynamic => TracerKind::Dynamic,
             TracerKindArg::Debug => TracerKind::Debug,
+            TracerKindArg::Spike => TracerKind::Spike,
         }
     }
 }

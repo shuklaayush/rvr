@@ -41,6 +41,9 @@ gdbstub_arch = "0.3"
 # Compression
 zstd = "0.13"
 
+# Regex for trace parsing
+regex = "1.11"
+
 # Internal crates
 rvr-elf = { path = "crates/rvr-elf" }
 rvr-isa = { path = "crates/rvr-isa" }

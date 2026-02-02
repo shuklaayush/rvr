@@ -211,6 +211,21 @@ pub fn run_command(cli: &Cli) -> i32 {
                     force,
                 } => test::arch_tests_gen_refs(category, output.clone(), *force),
             },
+            TestCommands::Trace {
+                elf,
+                output,
+                cc,
+                stop_on_first,
+                isa,
+                timeout,
+            } => test::trace_compare(
+                elf,
+                output.clone(),
+                cc,
+                isa.clone(),
+                *timeout,
+                *stop_on_first,
+            ),
         },
     }
 }
