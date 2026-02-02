@@ -62,6 +62,139 @@ impl<X: Xlen> X86Emitter<X> {
         }
     }
 
+    fn emit_store_next_pc_imm(&mut self, next_pc: u64) {
+        let pc_offset = self.layout.offset_pc;
+        if X::VALUE == 32 {
+            self.emitf(format!(
+                "movl $0x{:x}, {}(%{})",
+                next_pc as u32,
+                pc_offset,
+                reserved::STATE_PTR
+            ));
+        } else if next_pc > 0x7fffffff {
+            self.emitf(format!("movabsq $0x{:x}, %rdx", next_pc));
+            self.emitf(format!(
+                "movq %rdx, {}(%{})",
+                pc_offset,
+                reserved::STATE_PTR
+            ));
+        } else {
+            self.emitf(format!(
+                "movq $0x{:x}, {}(%{})",
+                next_pc,
+                pc_offset,
+                reserved::STATE_PTR
+            ));
+        }
+    }
+
+    fn emit_instret_post_check(&mut self, instr: &InstrIR<X>, fall_pc: u64, current_pc: u64) {
+        if !self.config.instret_mode.counts() {
+            return;
+        }
+
+        self.emitf(format!("addq $1, %{}", reserved::INSTRET));
+
+        if !self.config.instret_mode.suspends() {
+            return;
+        }
+
+        let continue_label = self.next_label("instret_ok");
+        let target_offset = self.layout.offset_target_instret;
+        self.emitf(format!(
+            "movq {}(%{}), %rdx",
+            target_offset,
+            reserved::STATE_PTR
+        ));
+        self.emitf(format!("cmpq %rdx, %{}", reserved::INSTRET));
+        self.emitf(format!("jb {continue_label}"));
+
+        match &instr.terminator {
+            Terminator::Fall { target } => {
+                let target_pc = target
+                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
+                    .unwrap_or(fall_pc);
+                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                let next_pc = if target_pc == current_pc {
+                    fall_pc
+                } else {
+                    target_pc
+                };
+                self.emit_store_next_pc_imm(next_pc);
+                self.emit("jmp asm_exit");
+            }
+            Terminator::Jump { target } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit("jmp asm_exit");
+            }
+            Terminator::JumpDyn { addr, .. } => {
+                self.emit_expr_as_addr(addr);
+                self.emit("andq $-2, %rax");
+                let pc_offset = self.layout.offset_pc;
+                if X::VALUE == 32 {
+                    self.emitf(format!(
+                        "movl %eax, {}(%{})",
+                        pc_offset,
+                        reserved::STATE_PTR
+                    ));
+                } else {
+                    self.emitf(format!(
+                        "movq %rax, {}(%{})",
+                        pc_offset,
+                        reserved::STATE_PTR
+                    ));
+                }
+                self.emit("jmp asm_exit");
+            }
+            Terminator::Branch {
+                cond, target, fall, ..
+            } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                let fall_target_pc = fall
+                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                    .unwrap_or(fall_pc);
+                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("jmp asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+
+                let suffix = self.suffix();
+                let target_label = self.next_label("instret_target");
+                let done_label = self.next_label("instret_done");
+                let cond_reg = self.emit_expr(cond, self.temp1());
+                self.emitf(format!("test{suffix} %{cond_reg}, %{cond_reg}"));
+                self.emitf(format!("jnz {target_label}"));
+                self.emit_store_next_pc_imm(fall_target_pc);
+                self.emitf(format!("jmp {done_label}"));
+                self.emit_label(&target_label);
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit_label(&done_label);
+                self.emit("jmp asm_exit");
+            }
+            Terminator::Exit { .. } | Terminator::Trap { .. } => {
+                // Let the terminator handle exit/trap semantics.
+            }
+        }
+
+        self.emit_label(&continue_label);
+    }
+
     /// Emit an expression, returning which x86 register holds the result.
     pub(super) fn emit_expr(&mut self, expr: &Expr<X>, dest: &str) -> String {
         let suffix = self.suffix();
@@ -106,6 +239,7 @@ impl<X: Xlen> X86Emitter<X> {
                 self.apply_address_mode("rax");
                 let mem = format!("(%{}, %rax)", reserved::MEMORY_PTR);
                 self.emit_load_from_mem(&mem, dest, *width, *signed);
+                self.emit_trace_mem_access("rax", dest, *width, false);
                 dest.to_string()
             }
             Expr::Read(ReadExpr::MemAddr {
@@ -117,6 +251,7 @@ impl<X: Xlen> X86Emitter<X> {
                 self.apply_address_mode("rax");
                 let mem = format!("(%{}, %rax)", reserved::MEMORY_PTR);
                 self.emit_load_from_mem(&mem, dest, *width, *signed);
+                self.emit_trace_mem_access("rax", dest, *width, false);
                 dest.to_string()
             }
             Expr::PcConst(val) => {
@@ -1287,9 +1422,11 @@ impl<X: Xlen> X86Emitter<X> {
                                 self.emitf(format!("movq %{val_reg}, %{x86_reg}"));
                             }
                         }
+                        self.emit_trace_reg_write(*reg, &val_reg);
                     } else {
                         let val_reg = self.emit_expr(value, temp1);
                         self.store_to_rv(*reg, &val_reg);
+                        self.emit_trace_reg_write(*reg, &val_reg);
                     }
                 }
                 WriteTarget::Mem {
@@ -1306,6 +1443,7 @@ impl<X: Xlen> X86Emitter<X> {
                         self.emitf(format!("leaq {offset}(%rax), %rax"));
                     }
                     self.apply_address_mode("rax");
+                    self.emit_trace_mem_access("rax", &temp2, *width, true);
                     let mem = format!("(%{}, %rax)", reserved::MEMORY_PTR);
                     let (sfx, reg) = match width {
                         1 => ("b", "cl"),
@@ -1493,7 +1631,10 @@ impl<X: Xlen> X86Emitter<X> {
     /// Emit a single instruction from IR.
     pub(super) fn emit_instruction(&mut self, instr: &InstrIR<X>, is_last: bool, fall_pc: u64) {
         let pc = X::to_u64(instr.pc);
-        self.emit_instret_increment(1, pc);
+        self.emit_trace_pc(pc, instr.raw);
+        if !self.config.instret_mode.per_instruction() {
+            self.emit_instret_increment(1, pc);
+        }
 
         // Check if any statement might set has_exited (e.g., exit syscall)
         let might_exit = instr.statements.iter().any(stmt_writes_to_exited);
@@ -1512,6 +1653,10 @@ impl<X: Xlen> X86Emitter<X> {
                 reserved::STATE_PTR
             ));
             self.emit(&format!("jne{suffix} asm_exit"));
+        }
+
+        if self.config.instret_mode.per_instruction() {
+            self.emit_instret_post_check(instr, fall_pc, pc);
         }
 
         if is_last {

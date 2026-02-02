@@ -4,6 +4,8 @@
 
 use rvr_ir::Xlen;
 
+use crate::c::TracerKind;
+
 use super::Arm64Emitter;
 use super::registers::reserved;
 
@@ -139,6 +141,310 @@ impl<X: Xlen> Arm64Emitter<X> {
         if self.cold_cache == Some(rv_reg) {
             self.cold_cache = None;
         }
+    }
+
+    // ========================================================================
+    // Diff tracer helpers (ASM backends)
+    // ========================================================================
+
+    fn tracer_kind(&self) -> Option<TracerKind> {
+        self.config.tracer_config.builtin_kind()
+    }
+
+    fn diff_tracer_enabled(&self) -> bool {
+        matches!(self.tracer_kind(), Some(TracerKind::Diff))
+    }
+
+    fn diff_offsets(
+        &self,
+    ) -> (
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    ) {
+        let reg_bytes = X::REG_BYTES;
+        let off_opcode = reg_bytes;
+        let off_rd = reg_bytes + 4;
+        let off_rd_value = reg_bytes + 8;
+        let off_mem_addr = off_rd_value + reg_bytes;
+        let off_mem_value = off_mem_addr + reg_bytes;
+        let off_mem_width = off_mem_value + reg_bytes;
+        let off_is_write = off_mem_width + 1;
+        let off_has_rd = off_is_write + 1;
+        let off_has_mem = off_has_rd + 1;
+        let off_valid = off_has_mem + 1;
+        (
+            off_opcode,
+            off_rd,
+            off_rd_value,
+            off_mem_addr,
+            off_mem_value,
+            off_mem_width,
+            off_is_write,
+            off_has_rd,
+            off_has_mem,
+            off_valid,
+        )
+    }
+
+    pub(super) fn emit_trace_pc(&mut self, pc: u64, opcode: u32) {
+        if !self.diff_tracer_enabled() {
+            return;
+        }
+
+        let tracer_base = self.layout.offset_tracer;
+        let (
+            off_opcode,
+            off_rd,
+            off_rd_value,
+            off_mem_addr,
+            off_mem_value,
+            off_mem_width,
+            off_is_write,
+            off_has_rd,
+            off_has_mem,
+            off_valid,
+        ) = self.diff_offsets();
+
+        let tmp = self.temp1();
+        let tmp32 = self.reg_32(tmp);
+
+        // pc
+        self.load_imm(tmp, pc);
+        if X::VALUE == 32 {
+            self.emitf(format!(
+                "str {tmp32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base
+            ));
+        } else {
+            self.emitf(format!(
+                "str {tmp}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base
+            ));
+        }
+
+        // opcode
+        self.load_imm(tmp, opcode as u64);
+        self.emitf(format!(
+            "str {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_opcode
+        ));
+
+        // Clear fields
+        self.emitf(format!("mov {tmp32}, #0"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_rd
+        ));
+        if X::VALUE == 32 {
+            self.emitf(format!(
+                "str {tmp32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_rd_value
+            ));
+            self.emitf(format!(
+                "str {tmp32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_addr
+            ));
+            self.emitf(format!(
+                "str {tmp32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_value
+            ));
+        } else {
+            self.emitf(format!(
+                "str xzr, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_rd_value
+            ));
+            self.emitf(format!(
+                "str xzr, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_addr
+            ));
+            self.emitf(format!(
+                "str xzr, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_value
+            ));
+        }
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_mem_width
+        ));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_is_write
+        ));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_has_rd
+        ));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_has_mem
+        ));
+        self.emitf(format!("mov {tmp32}, #1"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_valid
+        ));
+    }
+
+    pub(super) fn emit_trace_reg_write(&mut self, reg: u8, val_reg: &str) {
+        if !self.diff_tracer_enabled() || reg == 0 {
+            return;
+        }
+
+        let tracer_base = self.layout.offset_tracer;
+        let (
+            _off_opcode,
+            off_rd,
+            off_rd_value,
+            _off_mem_addr,
+            _off_mem_value,
+            _off_mem_width,
+            _off_is_write,
+            off_has_rd,
+            _off_has_mem,
+            _off_valid,
+        ) = self.diff_offsets();
+
+        let tmp = self.temp3();
+        let tmp32 = self.reg_32(tmp);
+        self.emitf(format!("mov {tmp32}, #{reg}"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_rd
+        ));
+
+        if X::VALUE == 32 {
+            let val32 = self.reg_32(val_reg);
+            self.emitf(format!(
+                "str {val32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_rd_value
+            ));
+        } else {
+            let val64 = self.reg_64(val_reg);
+            self.emitf(format!(
+                "str {val64}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_rd_value
+            ));
+        }
+
+        self.emitf(format!("mov {tmp32}, #1"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_has_rd
+        ));
+    }
+
+    pub(super) fn emit_trace_mem_access(
+        &mut self,
+        addr_reg: &str,
+        val_reg: &str,
+        width: u8,
+        is_write: bool,
+    ) {
+        if !self.diff_tracer_enabled() {
+            return;
+        }
+
+        let tracer_base = self.layout.offset_tracer;
+        let (_, _, _, off_mem_addr, off_mem_value, off_mem_width, off_is_write, _, off_has_mem, _) =
+            self.diff_offsets();
+
+        if X::VALUE == 32 {
+            let addr32 = self.reg_32(addr_reg);
+            self.emitf(format!(
+                "str {addr32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_addr
+            ));
+        } else {
+            let addr64 = self.reg_64(addr_reg);
+            self.emitf(format!(
+                "str {addr64}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_addr
+            ));
+        }
+
+        let tmp = self.temp3();
+        let tmp32 = self.reg_32(tmp);
+        match width {
+            1 => self.emitf(format!("uxtb {tmp32}, {}", self.reg_32(val_reg))),
+            2 => self.emitf(format!("uxth {tmp32}, {}", self.reg_32(val_reg))),
+            4 => self.emitf(format!("mov {tmp32}, {}", self.reg_32(val_reg))),
+            8 => {
+                if X::VALUE == 32 {
+                    self.emitf(format!("mov {tmp32}, {}", self.reg_32(val_reg)));
+                } else {
+                    self.emitf(format!("mov {tmp}, {}", self.reg_64(val_reg)));
+                }
+            }
+            _ => self.emitf(format!("mov {tmp32}, {}", self.reg_32(val_reg))),
+        }
+
+        if X::VALUE == 32 {
+            self.emitf(format!(
+                "str {tmp32}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_value
+            ));
+        } else {
+            let tmp64 = if width == 8 {
+                tmp.to_string()
+            } else {
+                self.reg_64(tmp)
+            };
+            self.emitf(format!(
+                "str {tmp64}, [{}, #{}]",
+                reserved::STATE_PTR,
+                tracer_base + off_mem_value
+            ));
+        }
+
+        self.emitf(format!("mov {tmp32}, #{width}"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_mem_width
+        ));
+        let write_flag = if is_write { 1 } else { 0 };
+        self.emitf(format!("mov {tmp32}, #{write_flag}"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_is_write
+        ));
+        self.emitf(format!("mov {tmp32}, #1"));
+        self.emitf(format!(
+            "strb {tmp32}, [{}, #{}]",
+            reserved::STATE_PTR,
+            tracer_base + off_has_mem
+        ));
     }
 
     // ========================================================================

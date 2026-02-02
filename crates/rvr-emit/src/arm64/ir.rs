@@ -94,6 +94,123 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
     }
 
+    fn emit_store_next_pc_imm(&mut self, next_pc: u64) {
+        let pc_offset = self.layout.offset_pc;
+        if X::VALUE == 32 {
+            self.load_imm("w1", next_pc);
+            self.emitf(format!("str w1, [{}, #{}]", reserved::STATE_PTR, pc_offset));
+        } else {
+            self.load_imm("x1", next_pc);
+            self.emitf(format!("str x1, [{}, #{}]", reserved::STATE_PTR, pc_offset));
+        }
+    }
+
+    fn emit_instret_post_check(&mut self, instr: &InstrIR<X>, fall_pc: u64, current_pc: u64) {
+        if !self.config.instret_mode.counts() {
+            return;
+        }
+
+        // Increment instret counter (always 64-bit) in the cached register.
+        self.emitf(format!(
+            "add {}, {}, #1",
+            reserved::INSTRET,
+            reserved::INSTRET
+        ));
+
+        if !self.config.instret_mode.suspends() {
+            return;
+        }
+
+        let continue_label = self.next_label("instret_ok");
+        let target_offset = self.layout.offset_target_instret;
+        self.emitf(format!(
+            "ldr x2, [{}, #{}]",
+            reserved::STATE_PTR,
+            target_offset
+        ));
+        self.emitf(format!("cmp {}, x2", reserved::INSTRET));
+        self.emitf(format!("b.lo {continue_label}"));
+
+        match &instr.terminator {
+            Terminator::Fall { target } => {
+                let target_pc = target
+                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
+                    .unwrap_or(fall_pc);
+                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                if target_pc != current_pc {
+                    self.emit_store_next_pc_imm(target_pc);
+                } else {
+                    self.emit_store_next_pc_imm(fall_pc);
+                }
+                self.emit("b asm_exit");
+            }
+            Terminator::Jump { target } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit("b asm_exit");
+            }
+            Terminator::JumpDyn { addr, .. } => {
+                let base_reg = self.emit_expr_as_addr(addr);
+                if base_reg != "x0" {
+                    self.emitf(format!("mov x0, {base_reg}"));
+                }
+                self.emit("and x0, x0, #-2");
+                let pc_offset = self.layout.offset_pc;
+                if X::VALUE == 32 {
+                    self.emitf(format!("str w0, [{}, #{}]", reserved::STATE_PTR, pc_offset));
+                } else {
+                    self.emitf(format!("str x0, [{}, #{}]", reserved::STATE_PTR, pc_offset));
+                }
+                self.emit("b asm_exit");
+            }
+            Terminator::Branch {
+                cond, target, fall, ..
+            } => {
+                let target_pc = self.inputs.resolve_address(X::to_u64(*target));
+                let fall_target_pc = fall
+                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
+                    .unwrap_or(fall_pc);
+                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+                if !self.inputs.is_valid_address(target_pc) {
+                    self.emit("b asm_trap");
+                    self.emit_label(&continue_label);
+                    return;
+                }
+
+                let target_label = self.next_label("instret_target");
+                let done_label = self.next_label("instret_done");
+                if !self.try_emit_compare_branch(cond, &target_label, false) {
+                    let cond_reg = self.emit_expr(cond, self.temp1());
+                    self.emitf(format!("cbnz {cond_reg}, {target_label}"));
+                }
+                self.emit_store_next_pc_imm(fall_target_pc);
+                self.emitf(format!("b {done_label}"));
+                self.emit_label(&target_label);
+                self.emit_store_next_pc_imm(target_pc);
+                self.emit_label(&done_label);
+                self.emit("b asm_exit");
+            }
+            Terminator::Exit { .. } | Terminator::Trap { .. } => {
+                // Let the terminator handle exit/trap semantics.
+            }
+        }
+
+        self.emit_label(&continue_label);
+    }
+
     fn try_emit_compare_branch(&mut self, cond: &Expr<X>, label: &str, invert: bool) -> bool {
         let (op, left, right) = match cond {
             Expr::Binary { op, left, right } => (op, left, right),
@@ -316,6 +433,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.apply_address_mode("x0");
                 let mem = format!("{}, x0", reserved::MEMORY_PTR);
                 self.emit_load_from_mem(&mem, dest, *width, *signed);
+                self.emit_trace_mem_access("x0", dest, *width, false);
                 dest.to_string()
             }
             Expr::Read(ReadExpr::MemAddr {
@@ -330,6 +448,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.apply_address_mode("x0");
                 let mem = format!("{}, x0", reserved::MEMORY_PTR);
                 self.emit_load_from_mem(&mem, dest, *width, *signed);
+                self.emit_trace_mem_access("x0", dest, *width, false);
                 dest.to_string()
             }
             Expr::PcConst(val) => {
@@ -1620,9 +1739,11 @@ impl<X: Xlen> Arm64Emitter<X> {
                         if val_reg != arm_reg {
                             self.emitf(format!("mov {arm_reg}, {val_reg}"));
                         }
+                        self.emit_trace_reg_write(*reg, &val_reg);
                     } else {
                         let val_reg = self.emit_expr(value, temp1);
                         self.store_to_rv(*reg, &val_reg);
+                        self.emit_trace_reg_write(*reg, &val_reg);
                     }
                     self.cold_cache_invalidate(*reg);
                 }
@@ -1632,8 +1753,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                     width,
                 } => {
                     // Check if HTIF handling might be needed for this store
-                    let htif_possible =
-                        self.config.htif_enabled && (*width == 4 || *width == 8);
+                    let htif_possible = self.config.htif_enabled && (*width == 4 || *width == 8);
 
                     // First evaluate value to temp2 (x1)
                     let val_reg = self.emit_expr(value, temp2);
@@ -1679,6 +1799,8 @@ impl<X: Xlen> Arm64Emitter<X> {
 
                     // Translate to physical address for the actual store
                     self.apply_address_mode("x0");
+
+                    self.emit_trace_mem_access("x0", &store_reg, *width, true);
 
                     // Store
                     let val32 = self.reg_32(&store_reg);
@@ -1892,13 +2014,16 @@ impl<X: Xlen> Arm64Emitter<X> {
         fall_pc: u64,
     ) {
         let pc = X::to_u64(instr.pc);
-        self.emit_instret_increment(1, pc);
+        self.emit_trace_pc(pc, instr.raw);
+        if !self.config.instret_mode.per_instruction() {
+            self.emit_instret_increment(1, pc);
+        }
 
         // Check if any statement might set has_exited (e.g., exit syscall)
         let might_exit = instr.statements.iter().any(stmt_writes_to_exited);
         let mut skip_last_temp_cmp = false;
         let mut cmp_for_branch: Option<(Expr<X>, Expr<X>, BinaryOp)> = None;
-        if is_last_in_block {
+        if is_last_in_block && !self.config.instret_mode.per_instruction() {
             if let Terminator::Branch { cond, .. } = &instr.terminator {
                 if let Some((left, right, op)) = self.cmp_from_temp_branch(&instr.statements, cond)
                 {
@@ -1925,6 +2050,11 @@ impl<X: Xlen> Arm64Emitter<X> {
                 has_exited_off
             ));
             self.emit("cbnz w0, asm_exit");
+        }
+
+        // Per-instruction suspend: increment + check after executing the instruction body.
+        if self.config.instret_mode.per_instruction() {
+            self.emit_instret_post_check(instr, fall_pc, pc);
         }
 
         // Use fall_pc from output stream to keep inlined/absorbed ranges correct.
