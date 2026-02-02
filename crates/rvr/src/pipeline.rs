@@ -407,6 +407,41 @@ impl<X: Xlen> Pipeline<X> {
         Ok(())
     }
 
+    /// Lift all instructions to IR as single-instruction blocks.
+    ///
+    /// Creates one block per instruction, useful for per-instruction stepping
+    /// where mid-block resume is needed. Each instruction becomes its own block
+    /// with the dispatch table having an entry for every instruction PC.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::CfgNotBuilt` if `build_cfg` has not been called.
+    pub fn lift_to_ir_as_single_blocks(&mut self) -> Result<()> {
+        let _span = info_span!("lift_to_ir_as_single_blocks").entered();
+
+        // For C backend, instruction_table is stored inside block_table
+        // For other backends, it's stored directly in self.instruction_table
+        let block_table = self
+            .block_table
+            .as_ref()
+            .ok_or(Error::CfgNotBuilt("lift_to_ir_as_single_blocks"))?;
+
+        self.ir_blocks.clear();
+        for (_, instr) in block_table.instruction_table().valid_instructions() {
+            let instr_ir = self.registry.lift(instr);
+            let pc = X::to_u64(instr_ir.pc);
+            let end_pc = pc + instr_ir.size as u64;
+            let mut block = BlockIR::new(instr_ir.pc);
+            block.end_pc = X::from_u64(end_pc);
+            block.instructions.push(instr_ir);
+            self.ir_blocks.insert(pc, block);
+        }
+
+        debug!(blocks = self.ir_blocks.len(), "lifted to IR as single-instruction blocks");
+
+        Ok(())
+    }
+
     /// Load debug info and attach source locations to instructions.
     ///
     /// Must be called after `lift_to_ir()`. Uses llvm-addr2line to resolve

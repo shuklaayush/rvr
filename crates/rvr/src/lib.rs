@@ -398,7 +398,12 @@ impl<X: Xlen> Recompiler<X> {
         pipeline.build_cfg()?;
 
         // Lift to IR
+        // For C backend in per-instruction mode, use single-instruction blocks
+        // to enable mid-block resume (dispatch table entry for every instruction PC)
         match self.config.backend {
+            Backend::C if self.config.instret_mode.per_instruction() => {
+                pipeline.lift_to_ir_as_single_blocks()?
+            }
             Backend::C => pipeline.lift_to_ir()?,
             _ => pipeline.lift_to_ir_linear()?,
         }
