@@ -96,6 +96,9 @@ pub enum TracerKind {
     Ffi,
     Dynamic,
     Debug,
+    Spike,
+    Diff,
+    BufferedDiff,
 }
 
 impl TracerKind {
@@ -106,6 +109,9 @@ impl TracerKind {
             3 => Self::Ffi,
             4 => Self::Dynamic,
             5 => Self::Debug,
+            6 => Self::Spike,
+            7 => Self::Diff,
+            8 => Self::BufferedDiff,
             _ => Self::None,
         }
     }

@@ -4,7 +4,9 @@
 //! Uses trait-based type erasure to support RV32/RV64 × I/E × Tracer variants.
 
 mod api;
+mod buffered_diff;
 mod debug;
+mod diff;
 mod error;
 mod fixed;
 mod preflight;
@@ -21,15 +23,17 @@ use std::time::Instant;
 use libloading::os::unix::{Library, RTLD_NOW};
 use rvr_elf::{ElfImage, get_elf_xlen};
 use rvr_ir::{Rv32, Rv64};
+use rvr_isa::{REG_GP, REG_RA, REG_SP};
 use rvr_state::{DEFAULT_MEMORY_SIZE, GuardedMemory, NUM_REGS_E, NUM_REGS_I};
 use tracing::{debug, error, trace};
-use rvr_isa::{REG_GP, REG_RA, REG_SP};
 
 pub use api::{FixedAddresses, InstretMode, RvApi, TracerKind};
 pub use error::RunError;
 pub use traits::RunnerImpl;
 
+use buffered_diff::BufferedDiffRunner;
 use debug::DebugRunner;
+use diff::DiffRunner;
 use fixed::FixedAddrRunner;
 use preflight::PreflightRunner;
 use stats::StatsRunner;
@@ -132,6 +136,18 @@ fn create_rv32_runner(
         (TracerKind::Debug, true) => Ok(Box::new(DebugRunner::<Rv32, NUM_REGS_E>::new(
             image, memory,
         ))),
+        (TracerKind::Diff, false) => {
+            Ok(Box::new(DiffRunner::<Rv32, NUM_REGS_I>::new(image, memory)))
+        }
+        (TracerKind::Diff, true) => {
+            Ok(Box::new(DiffRunner::<Rv32, NUM_REGS_E>::new(image, memory)))
+        }
+        (TracerKind::BufferedDiff, false) => Ok(Box::new(
+            BufferedDiffRunner::<Rv32, NUM_REGS_I>::new(image, memory),
+        )),
+        (TracerKind::BufferedDiff, true) => Ok(Box::new(
+            BufferedDiffRunner::<Rv32, NUM_REGS_E>::new(image, memory),
+        )),
         (_, false) if instret_mode.is_suspend() => Ok(Box::new(
             SuspendRunner::<Rv32, NUM_REGS_I>::new(image, memory),
         )),
@@ -175,6 +191,18 @@ fn create_rv64_runner(
         (TracerKind::Debug, true) => Ok(Box::new(DebugRunner::<Rv64, NUM_REGS_E>::new(
             image, memory,
         ))),
+        (TracerKind::Diff, false) => {
+            Ok(Box::new(DiffRunner::<Rv64, NUM_REGS_I>::new(image, memory)))
+        }
+        (TracerKind::Diff, true) => {
+            Ok(Box::new(DiffRunner::<Rv64, NUM_REGS_E>::new(image, memory)))
+        }
+        (TracerKind::BufferedDiff, false) => Ok(Box::new(
+            BufferedDiffRunner::<Rv64, NUM_REGS_I>::new(image, memory),
+        )),
+        (TracerKind::BufferedDiff, true) => Ok(Box::new(
+            BufferedDiffRunner::<Rv64, NUM_REGS_E>::new(image, memory),
+        )),
         (_, false) if instret_mode.is_suspend() => Ok(Box::new(
             SuspendRunner::<Rv64, NUM_REGS_I>::new(image, memory),
         )),
@@ -460,6 +488,74 @@ impl Runner {
     /// Set the target instret for suspension.
     pub fn set_target_instret(&mut self, target: u64) -> bool {
         self.inner.set_target_instret(target)
+    }
+
+    // Diff tracer methods - available when compiled with --tracer diff
+
+    /// Get the PC from the diff tracer (instruction that was just traced).
+    pub fn diff_traced_pc(&self) -> Option<u64> {
+        self.inner.diff_traced_pc()
+    }
+
+    /// Get the opcode from the diff tracer.
+    pub fn diff_traced_opcode(&self) -> Option<u32> {
+        self.inner.diff_traced_opcode()
+    }
+
+    /// Get the destination register if one was written (None for x0 or no write).
+    pub fn diff_traced_rd(&self) -> Option<u8> {
+        self.inner.diff_traced_rd()
+    }
+
+    /// Get the value written to rd.
+    pub fn diff_traced_rd_value(&self) -> Option<u64> {
+        self.inner.diff_traced_rd_value()
+    }
+
+    /// Get memory access info: (addr, value, width, is_write).
+    pub fn diff_traced_mem(&self) -> Option<(u64, u64, u8, bool)> {
+        self.inner.diff_traced_mem()
+    }
+
+    /// Check if diff tracer captured valid state.
+    pub fn diff_tracer_valid(&self) -> bool {
+        self.inner.diff_tracer_valid()
+    }
+
+    // Buffered diff tracer methods - available when compiled with --tracer buffered-diff
+
+    /// Get number of entries captured in the buffered diff tracer.
+    pub fn buffered_diff_count(&self) -> Option<usize> {
+        self.inner.buffered_diff_count()
+    }
+
+    /// Check if buffered diff tracer has overflowed (entries dropped).
+    pub fn buffered_diff_has_overflow(&self) -> Option<bool> {
+        self.inner.buffered_diff_has_overflow()
+    }
+
+    /// Get number of entries dropped due to overflow.
+    pub fn buffered_diff_dropped(&self) -> Option<u32> {
+        self.inner.buffered_diff_dropped()
+    }
+
+    /// Get buffered diff entry at index: (pc, opcode, rd, rd_value, mem_access).
+    pub fn buffered_diff_get(
+        &self,
+        index: usize,
+    ) -> Option<(
+        u64,
+        u32,
+        Option<u8>,
+        Option<u64>,
+        Option<(u64, u64, u8, bool)>,
+    )> {
+        self.inner.buffered_diff_get(index)
+    }
+
+    /// Reset the buffered diff tracer (clear entries, keep allocation).
+    pub fn buffered_diff_reset(&mut self) {
+        self.inner.buffered_diff_reset()
     }
 
     /// Dump register state to stderr for debugging.

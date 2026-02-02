@@ -77,4 +77,70 @@ pub trait RunnerImpl {
     fn set_target_instret(&mut self, _target: u64) -> bool {
         false
     }
+
+    // Diff tracer methods - returns None for runners without diff tracer
+
+    /// Get the PC from the diff tracer (instruction that was just traced).
+    fn diff_traced_pc(&self) -> Option<u64> {
+        None
+    }
+
+    /// Get the opcode from the diff tracer.
+    fn diff_traced_opcode(&self) -> Option<u32> {
+        None
+    }
+
+    /// Get the destination register if one was written (None for x0 or no write).
+    fn diff_traced_rd(&self) -> Option<u8> {
+        None
+    }
+
+    /// Get the value written to rd.
+    fn diff_traced_rd_value(&self) -> Option<u64> {
+        None
+    }
+
+    /// Get memory access info: (addr, value, width, is_write).
+    fn diff_traced_mem(&self) -> Option<(u64, u64, u8, bool)> {
+        None
+    }
+
+    /// Check if diff tracer captured valid state.
+    fn diff_tracer_valid(&self) -> bool {
+        false
+    }
+
+    // Buffered diff tracer methods - returns None for runners without buffered diff tracer
+
+    /// Get number of entries captured in the buffer.
+    fn buffered_diff_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// Check if buffer has overflowed (entries dropped).
+    fn buffered_diff_has_overflow(&self) -> Option<bool> {
+        None
+    }
+
+    /// Get number of entries dropped due to overflow.
+    fn buffered_diff_dropped(&self) -> Option<u32> {
+        None
+    }
+
+    /// Get entry at index: (pc, opcode, rd, rd_value, mem_access).
+    fn buffered_diff_get(
+        &self,
+        _index: usize,
+    ) -> Option<(
+        u64,
+        u32,
+        Option<u8>,
+        Option<u64>,
+        Option<(u64, u64, u8, bool)>,
+    )> {
+        None
+    }
+
+    /// Reset the buffered diff tracer (clear entries, keep allocation).
+    fn buffered_diff_reset(&mut self) {}
 }

@@ -472,6 +472,9 @@ pub struct CompileOptions {
     pub fixed_addresses: Option<FixedAddressConfig>,
     /// Perf mode (disable instret/CSR reads).
     pub perf_mode: bool,
+    /// Enable superblock formation (merging fall-through blocks after branches).
+    /// Disable for differential testing to ensure dispatch works at all block boundaries.
+    pub enable_superblock: bool,
 }
 
 impl Default for CompileOptions {
@@ -493,6 +496,7 @@ impl Default for CompileOptions {
             quiet: false,
             fixed_addresses: None,
             perf_mode: false,
+            enable_superblock: true, // Enabled by default for performance
         }
     }
 }
@@ -609,6 +613,15 @@ impl CompileOptions {
         self
     }
 
+    /// Enable or disable superblock formation.
+    ///
+    /// Superblocks merge fall-through blocks after branches for better performance,
+    /// but prevent dispatch to mid-block addresses. Disable for differential testing.
+    pub fn with_superblock(mut self, enabled: bool) -> Self {
+        self.enable_superblock = enabled;
+        self
+    }
+
     /// Apply options to EmitConfig.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.backend = self.backend;
@@ -630,6 +643,7 @@ impl CompileOptions {
         config.syscall_mode = self.syscall_mode;
         config.fixed_addresses = self.fixed_addresses;
         config.perf_mode = self.perf_mode;
+        config.enable_superblock = self.enable_superblock;
         if self.perf_mode {
             config.instret_mode = InstretMode::Off;
         }
