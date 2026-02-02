@@ -18,6 +18,7 @@ impl<X: Xlen> SyscallHandler<X> for BareMetalHandler {
             instr.pc,
             instr.size,
             instr.opid.pack(),
+            instr.raw,
             Vec::new(),
             Terminator::exit(Expr::read(REG_A0)),
         )
@@ -38,6 +39,7 @@ mod tests {
             pc: 0x1000,
             opid: OP_ECALL,
             size: 4,
+            raw: 0,
             args: InstrArgs::None,
         }
     }

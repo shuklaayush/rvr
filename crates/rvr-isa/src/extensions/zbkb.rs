@@ -67,6 +67,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                     OP_PACK,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -75,6 +76,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                     OP_PACKH,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -87,6 +89,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                     OP_BREV8,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I { rd, rs1, imm: 0 },
                 ));
             }
@@ -97,6 +100,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                         OP_UNZIP,
                         pc,
                         4,
+                        raw,
                         InstrArgs::I { rd, rs1, imm: 0 },
                     ));
                 }
@@ -105,6 +109,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                         OP_ZIP,
                         pc,
                         4,
+                        raw,
                         InstrArgs::I { rd, rs1, imm: 0 },
                     ));
                 }
@@ -121,6 +126,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                 OP_PACKW,
                 pc,
                 4,
+                raw,
                 InstrArgs::R { rd, rs1, rs2 },
             ));
         }
@@ -140,6 +146,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("unknown Zbkb opid"),
             ),
@@ -173,6 +180,7 @@ fn lift_pack<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -185,6 +193,7 @@ fn lift_pack<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -198,6 +207,7 @@ fn lift_packh<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -210,6 +220,7 @@ fn lift_packh<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -223,6 +234,7 @@ fn lift_packw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -235,6 +247,7 @@ fn lift_packw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -251,6 +264,7 @@ where
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -262,6 +276,7 @@ where
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )

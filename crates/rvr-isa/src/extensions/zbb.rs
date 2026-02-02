@@ -96,6 +96,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -112,6 +113,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -126,6 +128,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -135,6 +138,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     OP_ZEXT_H,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I { rd, rs1, imm: 0 },
                 ));
             }
@@ -156,6 +160,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I { rd, rs1, imm: 0 },
                 ));
             }
@@ -166,6 +171,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                         OP_ORC_B,
                         pc,
                         4,
+                        raw,
                         InstrArgs::I { rd, rs1, imm: 0 },
                     ));
                 }
@@ -179,6 +185,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                         OP_REV8,
                         pc,
                         4,
+                        raw,
                         InstrArgs::I { rd, rs1, imm: 0 },
                     ));
                 }
@@ -198,6 +205,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                         OP_RORI,
                         pc,
                         4,
+                        raw,
                         InstrArgs::I {
                             rd,
                             rs1,
@@ -216,6 +224,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     OP_ZEXT_H,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I { rd, rs1, imm: 0 },
                 ));
             }
@@ -230,6 +239,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -249,6 +259,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I { rd, rs1, imm: 0 },
                 ));
             }
@@ -258,6 +269,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                     OP_RORIW,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I {
                         rd,
                         rs1,
@@ -300,6 +312,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbbExtension {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("unknown Zbb opid"),
             ),
@@ -351,6 +364,7 @@ fn lift_andn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -363,6 +377,7 @@ fn lift_andn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -376,6 +391,7 @@ fn lift_orn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -388,6 +404,7 @@ fn lift_orn<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -401,6 +418,7 @@ fn lift_xnor<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -413,6 +431,7 @@ fn lift_xnor<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -429,6 +448,7 @@ where
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -440,6 +460,7 @@ where
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -456,6 +477,7 @@ where
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -467,6 +489,7 @@ where
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -480,6 +503,7 @@ fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -499,6 +523,7 @@ fn lift_rol<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -512,6 +537,7 @@ fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -531,6 +557,7 @@ fn lift_ror<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -544,6 +571,7 @@ fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -561,6 +589,7 @@ fn lift_rori<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -574,6 +603,7 @@ fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -595,6 +625,7 @@ fn lift_rolw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -608,6 +639,7 @@ fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -628,6 +660,7 @@ fn lift_rorw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -641,6 +674,7 @@ fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -657,6 +691,7 @@ fn lift_roriw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )

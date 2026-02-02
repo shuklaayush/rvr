@@ -11,6 +11,7 @@ pub struct IRBuilder<X: Xlen> {
     pc: X::Reg,
     size: u8,
     op: u16,
+    raw: u32,
     statements: Vec<Stmt<X>>,
 }
 
@@ -21,6 +22,7 @@ impl<X: Xlen> IRBuilder<X> {
             pc,
             size,
             op: 0,
+            raw: 0,
             statements: Vec::new(),
         }
     }
@@ -28,6 +30,12 @@ impl<X: Xlen> IRBuilder<X> {
     /// Set packed OpId (ext << 8 | idx) for tracing.
     pub fn with_op(mut self, op: u16) -> Self {
         self.op = op;
+        self
+    }
+
+    /// Set raw instruction bytes for tracing.
+    pub fn with_raw(mut self, raw: u32) -> Self {
+        self.raw = raw;
         self
     }
 
@@ -93,6 +101,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::fall(next_pc),
         )
@@ -104,6 +113,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::Fall { target: None },
         )
@@ -115,6 +125,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::jump(target),
         )
@@ -126,6 +137,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::jump_dyn(addr),
         )
@@ -137,6 +149,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::branch(cond, target),
         )
@@ -148,6 +161,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::exit(code),
         )
@@ -159,6 +173,7 @@ impl<X: Xlen> IRBuilder<X> {
             self.pc,
             self.size,
             self.op,
+            self.raw,
             self.statements,
             Terminator::trap(message),
         )
@@ -166,7 +181,7 @@ impl<X: Xlen> IRBuilder<X> {
 
     /// Build with custom terminator.
     pub fn build(self, terminator: Terminator<X>) -> InstrIR<X> {
-        InstrIR::new(self.pc, self.size, self.op, self.statements, terminator)
+        InstrIR::new(self.pc, self.size, self.op, self.raw, self.statements, terminator)
     }
 }
 

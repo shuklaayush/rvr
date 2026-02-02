@@ -14,16 +14,19 @@ pub struct DecodedInstr<X: Xlen> {
     pub pc: X::Reg,
     /// Instruction size in bytes (2 for compressed, 4 for normal).
     pub size: u8,
+    /// Raw instruction bytes (16-bit for compressed, 32-bit for normal).
+    pub raw: u32,
     /// Instruction arguments.
     pub args: InstrArgs,
 }
 
 impl<X: Xlen> DecodedInstr<X> {
-    pub fn new(opid: OpId, pc: X::Reg, size: u8, args: InstrArgs) -> Self {
+    pub fn new(opid: OpId, pc: X::Reg, size: u8, raw: u32, args: InstrArgs) -> Self {
         Self {
             opid,
             pc,
             size,
+            raw,
             args,
         }
     }

@@ -26,7 +26,7 @@ impl<X: Xlen> InstructionExtension<X> for ZifenceiExtension {
 
         // FENCE.I: opcode=0x0F, funct3=1
         if opcode == 0x0F && funct3 == 1 {
-            Some(DecodedInstr::new(OP_FENCE_I, pc, 4, InstrArgs::None))
+            Some(DecodedInstr::new(OP_FENCE_I, pc, 4, raw, InstrArgs::None))
         } else {
             None
         }
@@ -38,6 +38,7 @@ impl<X: Xlen> InstructionExtension<X> for ZifenceiExtension {
             instr.pc,
             instr.size,
             instr.opid.pack(),
+            instr.raw,
             Vec::new(),
             Terminator::Fall { target: None },
         )

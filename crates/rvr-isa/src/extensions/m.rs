@@ -97,13 +97,14 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
             opid,
             pc,
             4,
+            raw,
             InstrArgs::R { rd, rs1, rs2 },
         ))
     }
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         let (stmts, term) = lift_m(&instr.args, instr.opid);
-        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), stmts, term)
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), instr.raw, stmts, term)
     }
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {

@@ -40,6 +40,8 @@ pub struct InstrIR<X: Xlen> {
     pub size: u8,
     /// Packed OpId (ext << 8 | idx) for tracing.
     pub op: u16,
+    /// Raw instruction bytes (16-bit for compressed, 32-bit for normal).
+    pub raw: u32,
     /// Statements (writes, side effects).
     pub statements: Vec<Stmt<X>>,
     /// Control flow terminator.
@@ -54,6 +56,7 @@ impl<X: Xlen> InstrIR<X> {
         pc: X::Reg,
         size: u8,
         op: u16,
+        raw: u32,
         statements: Vec<Stmt<X>>,
         terminator: Terminator<X>,
     ) -> Self {
@@ -61,6 +64,7 @@ impl<X: Xlen> InstrIR<X> {
             pc,
             size,
             op,
+            raw,
             statements,
             terminator,
             source_loc: None,
@@ -72,6 +76,7 @@ impl<X: Xlen> InstrIR<X> {
         pc: X::Reg,
         size: u8,
         op: u16,
+        raw: u32,
         statements: Vec<Stmt<X>>,
         terminator: Terminator<X>,
         source_loc: SourceLoc,
@@ -80,6 +85,7 @@ impl<X: Xlen> InstrIR<X> {
             pc,
             size,
             op,
+            raw,
             statements,
             terminator,
             source_loc: Some(source_loc),
@@ -114,5 +120,11 @@ impl<X: Xlen> InstrIR<X> {
     /// Check if this instruction ends a basic block.
     pub fn is_block_end(&self) -> bool {
         self.terminator.is_control_flow()
+    }
+
+    /// Set the raw instruction bytes.
+    pub fn with_raw(mut self, raw: u32) -> Self {
+        self.raw = raw;
+        self
     }
 }

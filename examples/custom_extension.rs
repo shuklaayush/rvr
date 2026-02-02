@@ -53,7 +53,7 @@ impl InstructionExtension<Rv64> for ToyExtension {
         let rs2 = ((raw >> 20) & 0x1f) as u8;
         let args = InstrArgs::R { rd, rs1, rs2 };
 
-        Some(DecodedInstr::new(OP_TOY_ADD, pc, 4, args))
+        Some(DecodedInstr::new(OP_TOY_ADD, pc, 4, raw, args))
     }
 
     fn lift(&self, instr: &DecodedInstr<Rv64>) -> InstrIR<Rv64> {
@@ -72,7 +72,7 @@ impl InstructionExtension<Rv64> for ToyExtension {
             _ => (Vec::new(), Terminator::trap("invalid args")),
         };
 
-        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), stmts, term)
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), instr.raw, stmts, term)
     }
 
     fn disasm(&self, instr: &DecodedInstr<Rv64>) -> String {

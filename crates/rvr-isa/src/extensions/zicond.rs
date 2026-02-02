@@ -50,6 +50,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicondExtension {
                     OP_CZERO_EQZ,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -58,6 +59,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicondExtension {
                     OP_CZERO_NEZ,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -74,6 +76,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicondExtension {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("unknown Zicond opid"),
             ),
@@ -106,6 +109,7 @@ fn lift_czero_eqz<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -119,6 +123,7 @@ fn lift_czero_eqz<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -132,6 +137,7 @@ fn lift_czero_nez<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -145,6 +151,7 @@ fn lift_czero_nez<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )

@@ -120,6 +120,7 @@ mod tests {
             pc: 0x1000,
             opid: OP_ECALL,
             size: 4,
+            raw: 0,
             args: InstrArgs::None,
         }
     }

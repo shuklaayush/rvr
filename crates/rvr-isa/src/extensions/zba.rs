@@ -63,6 +63,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
                 opid,
                 pc,
                 4,
+                raw,
                 InstrArgs::R { rd, rs1, rs2 },
             ));
         }
@@ -75,6 +76,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
                     OP_ADD_UW,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -90,6 +92,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -104,6 +107,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
                     OP_SLLI_UW,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I {
                         rd,
                         rs1,
@@ -130,6 +134,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("unknown Zba opid"),
             ),
@@ -165,6 +170,7 @@ fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -181,6 +187,7 @@ fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -194,6 +201,7 @@ fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -210,6 +218,7 @@ fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -223,6 +232,7 @@ fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -240,6 +250,7 @@ fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -253,6 +264,7 @@ fn lift_slli_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -268,6 +280,7 @@ fn lift_slli_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )

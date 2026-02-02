@@ -149,7 +149,7 @@ impl<X: Xlen> InstructionExtension<X> for BaseExtension {
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
         let (stmts, term) = lift_base(&instr.args, instr.opid, instr.pc, instr.size);
-        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), stmts, term)
+        InstrIR::new(instr.pc, instr.size, instr.opid.pack(), instr.raw, stmts, term)
     }
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
@@ -643,7 +643,7 @@ fn decode_32bit<X: Xlen>(instr: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
         _ => return None,
     };
 
-    Some(DecodedInstr::new(opid, pc, 4, args))
+    Some(DecodedInstr::new(opid, pc, 4, instr, args))
 }
 
 // ===== Lift =====
@@ -878,10 +878,11 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
         InstrArgs::S { rs1, rs2, imm } => {
             let base = Expr::read(*rs1);
             let offset = *imm as i16;
-            (
-                vec![Stmt::write_mem(base, offset, Expr::read(*rs2), width)],
-                Terminator::Fall { target: None },
-            )
+            let mut stmts = Vec::with_capacity(2);
+            stmts.push(Stmt::write_mem(base, offset, Expr::read(*rs2), width));
+            // Clear reservation on any store (spurious failure is allowed).
+            stmts.push(Stmt::write_res_valid(Expr::imm(X::from_u64(0))));
+            (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
     }

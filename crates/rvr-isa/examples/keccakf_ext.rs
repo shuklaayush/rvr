@@ -60,6 +60,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
             OP_KECCAKF_PERMUTE,
             pc,
             4,
+            raw,
             InstrArgs::R { rd, rs1, rs2 },
         ))
     }
@@ -78,6 +79,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
             instr.pc,
             instr.size,
             instr.opid.pack(),
+            instr.raw,
             vec![call],
             Terminator::Fall { target: None },
         )

@@ -197,6 +197,7 @@ impl SyscallTable {
             instr.pc,
             instr.size,
             instr.opid.pack(),
+            instr.raw,
             stmts,
             Terminator::fall(next_pc),
         )
@@ -220,6 +221,7 @@ mod tests {
             pc: 0x1000,
             opid: OP_ECALL,
             size: 4,
+            raw: 0,
             args: InstrArgs::None,
         }
     }

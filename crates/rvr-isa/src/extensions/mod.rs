@@ -477,6 +477,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
             instr.pc,
             instr.size,
             instr.opid.pack(),
+            instr.raw,
             Vec::new(),
             Terminator::trap("unhandled extension"),
         )
@@ -649,6 +650,7 @@ mod tests {
                     instr.pc,
                     instr.size,
                     instr.opid.pack(),
+                    instr.raw,
                     Vec::new(),
                     Terminator::exit(Expr::Imm(99)),
                 )
@@ -774,6 +776,7 @@ mod tests {
                     instr.pc,
                     instr.size,
                     instr.opid.pack(),
+                    instr.raw,
                     Vec::new(),
                     Terminator::exit(Expr::Imm(42)),
                 )
@@ -874,6 +877,7 @@ mod tests {
                     instr.pc,
                     instr.size,
                     instr.opid.pack(),
+                    instr.raw,
                     Vec::new(),
                     Terminator::trap("overridden"),
                 )
@@ -953,6 +957,7 @@ mod tests {
                     instr.pc,
                     instr.size,
                     instr.opid.pack(),
+                    instr.raw,
                     Vec::new(),
                     Terminator::exit(Expr::Imm(99)),
                 )

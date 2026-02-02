@@ -69,6 +69,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -78,6 +79,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
                     OP_BEXT,
                     pc,
                     4,
+                    raw,
                     InstrArgs::R { rd, rs1, rs2 },
                 ));
             }
@@ -105,6 +107,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
                     opid,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I {
                         rd,
                         rs1,
@@ -118,6 +121,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
                     OP_BEXTI,
                     pc,
                     4,
+                    raw,
                     InstrArgs::I {
                         rd,
                         rs1,
@@ -144,6 +148,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbsExtension {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("unknown Zbs opid"),
             ),
@@ -179,6 +184,7 @@ fn lift_bclr<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -194,6 +200,7 @@ fn lift_bclr<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -207,6 +214,7 @@ fn lift_bclri<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -223,6 +231,7 @@ fn lift_bclri<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -236,6 +245,7 @@ fn lift_bext<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -251,6 +261,7 @@ fn lift_bext<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -264,6 +275,7 @@ fn lift_bexti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -277,6 +289,7 @@ fn lift_bexti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -290,6 +303,7 @@ fn lift_binv<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -305,6 +319,7 @@ fn lift_binv<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -318,6 +333,7 @@ fn lift_binvi<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -334,6 +350,7 @@ fn lift_binvi<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -347,6 +364,7 @@ fn lift_bset<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -363,6 +381,7 @@ fn lift_bset<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )
@@ -376,6 +395,7 @@ fn lift_bseti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
                 instr.pc,
                 instr.size,
                 instr.opid.pack(),
+                instr.raw,
                 Vec::new(),
                 Terminator::trap("bad args"),
             );
@@ -393,6 +413,7 @@ fn lift_bseti<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
         instr.pc,
         instr.size,
         instr.opid.pack(),
+        instr.raw,
         vec![stmt],
         Terminator::Fall { target: None },
     )

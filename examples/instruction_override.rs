@@ -47,6 +47,7 @@ impl InstructionOverride<Rv64> for RiscvTestsEcall {
             instr.pc,
             instr.size,
             instr.opid.pack(),
+            instr.raw,
             Vec::new(),
             Terminator::exit(Expr::read(10)), // a0 = x10
         )
