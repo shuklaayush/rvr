@@ -25,12 +25,30 @@ pub struct SpikeExecutor {
 }
 
 impl SpikeExecutor {
+    fn needs_smrnmi(elf: &Path) -> bool {
+        let bytes = match std::fs::read(elf) {
+            Ok(data) => data,
+            Err(_) => return false,
+        };
+
+        // csrwi mnstatus, 0x8 => 0x74445073 (little-endian in ELF)
+        const MNSTATUS_CSRWI: [u8; 4] = [0x73, 0x50, 0x44, 0x74];
+        bytes
+            .windows(MNSTATUS_CSRWI.len())
+            .any(|w| w == MNSTATUS_CSRWI)
+    }
+
     /// Start Spike with the given ELF and ISA.
     ///
     /// Uses `--log=/dev/stdout` to stream output through a pipe.
     pub fn start(elf: &Path, isa: &str, entry_point: u64) -> std::io::Result<Self> {
+        let mut isa_arg = isa.to_string();
+        if Self::needs_smrnmi(elf) && !isa_arg.contains("smrnmi") {
+            isa_arg.push_str("_smrnmi");
+        }
+
         let mut cmd = Command::new("spike");
-        cmd.arg(format!("--isa={}", isa))
+        cmd.arg(format!("--isa={}", isa_arg))
             .arg("--log-commits")
             .arg("--log=/dev/stdout")
             .arg(elf)
@@ -102,9 +120,8 @@ impl SpikeExecutor {
         }
 
         // Parse PC and opcode: 0x<PC> (0x<OPCODE>)
-        let pc_pattern = PC_PATTERN.get_or_init(|| {
-            Regex::new(r"0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)").unwrap()
-        });
+        let pc_pattern = PC_PATTERN
+            .get_or_init(|| Regex::new(r"0x([0-9a-fA-F]+)\s+\(0x([0-9a-fA-F]+)\)").unwrap());
         let caps = pc_pattern.captures(line)?;
 
         let pc = u64::from_str_radix(caps.get(1)?.as_str(), 16).ok()?;
@@ -226,8 +243,7 @@ mod tests {
 
     #[test]
     fn test_parse_line_with_mem() {
-        let line =
-            "core   0: 3 0x000000008000010c (0x0182b283) x5 0x0000000080000000 mem 0x0000000000001018";
+        let line = "core   0: 3 0x000000008000010c (0x0182b283) x5 0x0000000080000000 mem 0x0000000000001018";
         let state = SpikeExecutor::parse_line(line).unwrap();
 
         assert_eq!(state.pc, 0x8000010c);
