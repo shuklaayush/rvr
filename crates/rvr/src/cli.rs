@@ -712,6 +712,10 @@ pub enum DiffGranularityArg {
     Block,
     /// Compare by block, drill down on divergence
     Hybrid,
+    /// Fast checkpoint comparison (compare PC+registers every 1M instructions)
+    Checkpoint,
+    /// Pure C comparison (generates standalone C program, no Rust FFI)
+    PureC,
 }
 
 /// Analysis mode for the compilation pipeline.

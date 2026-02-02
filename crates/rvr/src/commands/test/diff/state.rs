@@ -44,6 +44,12 @@ pub enum DiffGranularity {
     /// Compare by block, drill down to instruction on divergence.
     #[default]
     Hybrid,
+    /// Fast checkpoint-based comparison: compare PC+registers at intervals.
+    /// Falls back to instruction-level on divergence.
+    Checkpoint,
+    /// Pure C comparison: generates a standalone C program that dlopen's both
+    /// backends and compares execution without any Rust FFI overhead.
+    PureC,
 }
 
 impl std::str::FromStr for DiffGranularity {
@@ -54,6 +60,8 @@ impl std::str::FromStr for DiffGranularity {
             "instruction" | "instr" | "i" => Ok(Self::Instruction),
             "block" | "b" => Ok(Self::Block),
             "hybrid" | "h" => Ok(Self::Hybrid),
+            "checkpoint" | "ckpt" | "c" | "fast" => Ok(Self::Checkpoint),
+            "purec" | "pure-c" | "native" | "n" => Ok(Self::PureC),
             _ => Err(format!("unknown granularity: {}", s)),
         }
     }

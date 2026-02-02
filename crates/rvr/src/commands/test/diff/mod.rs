@@ -8,13 +8,15 @@
 //! Unlike trace comparison which writes traces to disk, differential execution
 //! runs in lockstep and compares state in memory.
 
+pub mod c_compare;
 pub mod compare;
 pub mod executor;
 pub mod inprocess;
 pub mod spike;
 pub mod state;
 
-pub use compare::{compare_block_vs_linear, compare_lockstep};
+pub use c_compare::{CCompareConfig, compile_c_compare, generate_c_compare, run_c_compare};
+pub use compare::{compare_block_vs_linear, compare_checkpoint, compare_lockstep};
 pub use inprocess::{BufferedInProcessExecutor, InProcessExecutor};
 pub use spike::{SpikeExecutor, find_spike};
-pub use state::{CompareConfig, DiffGranularity};
+pub use state::{CompareConfig, CompareResult, DiffGranularity, DiffState, Divergence, DivergenceKind};
