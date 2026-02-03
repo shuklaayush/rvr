@@ -51,3 +51,7 @@ rvr-ir = { path = "crates/rvr-ir" }
 rvr-cfg = { path = "crates/rvr-cfg" }
 rvr-emit = { path = "crates/rvr-emit" }
 rvr-state = { path = "crates/rvr-state" }
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }

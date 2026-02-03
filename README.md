@@ -52,21 +52,9 @@ rvr compile program.elf -o output/ --tracer-header my_tracer.h
 # Lift to C source only
 rvr lift program.elf -o output/
 
-# Run riscv-tests
-rvr test riscv build                # build from source (requires riscv toolchain)
-rvr test riscv run                  # run all tests
-rvr test riscv run --filter rv64ui  # filtered
-
-# Benchmarks
-rvr bench list                       # List available benchmarks
-rvr bench build                      # Build all from source
-rvr bench compile                    # Compile all to native
-rvr bench run                        # Run all benchmarks
-
-# Single benchmark
-rvr bench build reth                 # Build reth ELF + host binary
-rvr bench compile reth               # Compile to native
-rvr bench run reth --compare-host    # Run with host comparison
+#
+# Development benchmarks
+cargo bench -p rvr --bench riscv_benchmarks
 
 # Backend selection
 cargo run -- compile program.elf --backend c      # C (default)
