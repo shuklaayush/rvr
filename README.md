@@ -27,6 +27,12 @@ This is useful for recording execution traces for replay, logging state accesses
 ## Usage
 
 ```bash
+# Run tests
+cargo test
+
+# Force rebuild of bin/riscv-tests and bin/riscv-arch-test before tests
+RVR_REBUILD_ELFS=1 cargo test -p rvr
+
 # Compile ELF to native shared library
 rvr compile program.elf -o output/
 
@@ -62,6 +68,17 @@ rvr bench run reth --compare-host    # Run with host comparison
 cargo run -- compile program.elf --backend c      # C (default)
 cargo run -- compile program.elf --backend x86    # x86-64 assembly
 cargo run -- compile program.elf --backend arm64  # ARM64 assembly
+```
+
+## Environment Variables
+
+Test/bench helpers:
+- `RVR_REBUILD_ELFS=1`: rebuilds `bin/riscv-tests` and `bin/riscv-arch-test` before tests.
+
+Examples:
+```bash
+RVR_REBUILD_ELFS=1 cargo test -p rvr --test riscv_tests
+RVR_REBUILD_ELFS=1 cargo test -p rvr --test arch_tests
 ```
 
 ## Syscalls

@@ -102,6 +102,7 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 
 - **Do The Work**: Don't be lazy. Large architectural changes are fine - do them properly with good taste. Design clean, elegant, idiomatic Rust solutions.
 - **Design First**: Before implementing, explore the codebase thoroughly and design a clean, elegant approach. Write out detailed step-by-step todos with small feedback loops. Each step should be testable.
+- **Keep Files Small**: Avoid files > 1000 LOC. Split into module directories with a lean `mod.rs`.
 - **Single Source of Truth**: Derive values from canonical sources rather than duplicating. For example, derive struct sizes from XLEN rather than hardcoding separate RV32/RV64 values. Derive XLEN from ELF rather than requiring a flag.
 - **Avoid Redundant Parameters**: If a value can be derived from another input (like XLEN from ELF), don't add a separate flag.
 - **Question Before Optimizing**: Don't optimize complexity that shouldn't exist. Before adding prefixes like `rv32_`/`rv64_` or separate types, ask: can this be unified? A single generic type is better than duplicated code paths.
@@ -113,6 +114,9 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **No Warnings**: Code must compile without warnings. Use `#![deny(warnings)]` in crate roots.
 - **Delete Tech Debt**: Remove unused code immediately.
 - **Script Large Refactors**: For repetitive refactors, prefer writing a script over manual brute-force edits. Always commit or stash work before running scripts.
+- **Tests/Benches are First-Class**: New test/bench logic should live in `tests/`/`benches/` and be callable from CLI wrappers.
+- **Data-Driven Tests**: Prefer per-ELF generated tests (macro or build-time list) over loops inside a single test.
+- **Platform Gating**: Guard asm-backend tests with `cfg(target_arch = "...")` to keep CI portable.
 
 ### Repository Maintenance
 
@@ -200,6 +204,12 @@ cargo run -- bench run
 ```
 
 riscv-tests binaries are in `bin/riscv-tests/` (tracked with Git LFS).
+
+Set `RVR_REBUILD_ELFS=1` when running `cargo test` to force rebuilding
+`bin/riscv-tests` and `bin/riscv-arch-test` from submodules before tests run.
+
+Heavy integration suites run under `cargo test -p rvr --test riscv_tests` and
+`cargo test -p rvr --test arch_tests`. Concurrency is capped internally.
 
 **Backend Smoke Tests**: For quick backend checks, run a single riscv-test file with a specific backend, e.g.:
 ```bash
