@@ -1,6 +1,6 @@
 use rvr_ir::{Stmt, WriteTarget, Xlen};
 
-use super::Arm64Emitter;
+use crate::arm64::Arm64Emitter;
 use crate::arm64::registers::reserved;
 
 impl<X: Xlen> Arm64Emitter<X> {

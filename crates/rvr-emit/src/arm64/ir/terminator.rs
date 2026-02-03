@@ -1,6 +1,6 @@
 use rvr_ir::{BinaryOp, Expr, InstrIR, Terminator, Xlen};
 
-use super::Arm64Emitter;
+use crate::arm64::Arm64Emitter;
 use crate::arm64::registers::reserved;
 use super::stmt_writes_to_exited;
 
