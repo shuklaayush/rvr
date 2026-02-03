@@ -33,6 +33,9 @@ regex.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 perf-event.workspace = true
 
+[dev-dependencies]
+libtest-mimic = "0.7"
+
 [lib]
 name = "rvr"
 path = "src/lib.rs"
@@ -40,6 +43,16 @@ path = "src/lib.rs"
 [[bin]]
 name = "rvr"
 path = "src/main.rs"
+
+[[test]]
+name = "riscv_tests"
+path = "tests/riscv_tests.rs"
+harness = false
+
+[[test]]
+name = "arch_tests"
+path = "tests/arch_tests.rs"
+harness = false
 
 # Examples at workspace root
 [[example]]
