@@ -150,15 +150,14 @@ fn run_pure_c() -> Result<(), Failed> {
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
 
     match xlen {
-        32 => run_pure_c_for::<Rv32>(&data, &elf_path, temp.path(), &ref_dir, &test_dir, &cc),
-        64 => run_pure_c_for::<Rv64>(&data, &elf_path, temp.path(), &ref_dir, &test_dir, &cc),
+        32 => run_pure_c_for::<Rv32>(&data, temp.path(), &ref_dir, &test_dir, &cc),
+        64 => run_pure_c_for::<Rv64>(&data, temp.path(), &ref_dir, &test_dir, &cc),
         _ => Err(Failed::from("unsupported XLEN")),
     }
 }
 
 fn run_pure_c_for<X: rvr_ir::Xlen>(
     data: &[u8],
-    elf_path: &Path,
     out_dir: &Path,
     ref_dir: &Path,
     test_dir: &Path,
