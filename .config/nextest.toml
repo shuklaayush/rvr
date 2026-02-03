@@ -1,0 +1,12 @@
+[profile.default]
+
+[test-groups]
+rvr-heavy = { max-threads = 5 }
+
+[[profile.default.overrides]]
+filter = 'binary_id(rvr::arch_tests)'
+test-group = 'rvr-heavy'
+
+[[profile.default.overrides]]
+filter = 'binary_id(rvr::riscv_tests)'
+test-group = 'rvr-heavy'

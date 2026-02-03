@@ -30,6 +30,10 @@ This is useful for recording execution traces for replay, logging state accesses
 # Run tests
 cargo test
 
+# Run heavy test suites with nextest (defaults limit riscv-tests/arch-tests to 5 threads)
+cargo nextest run -p rvr --test riscv_tests
+cargo nextest run -p rvr --test arch_tests
+
 # Force rebuild of bin/riscv-tests and bin/riscv-arch-test before tests
 RVR_REBUILD_ELFS=1 cargo test -p rvr
 
@@ -74,6 +78,9 @@ cargo run -- compile program.elf --backend arm64  # ARM64 assembly
 
 Test/bench helpers:
 - `RVR_REBUILD_ELFS=1`: rebuilds `bin/riscv-tests` and `bin/riscv-arch-test` before tests.
+
+Nextest:
+- `.config/nextest.toml` assigns `rvr::riscv_tests` and `rvr::arch_tests` to a test group capped at 5 threads.
 
 Examples:
 ```bash

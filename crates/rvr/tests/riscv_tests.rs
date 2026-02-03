@@ -1,8 +1,10 @@
 use std::path::PathBuf;
-use std::sync::{Condvar, Mutex, Once, OnceLock};
+use std::sync::Once;
 use std::time::Duration;
 
 use rvr_emit::Backend;
+
+mod common;
 
 fn run_case(path: &str, backend: Backend) {
     if !backend_enabled(backend) {
@@ -62,52 +64,7 @@ fn backend_enabled(backend: Backend) -> bool {
     matches!(backend, Backend::C | Backend::ARM64Asm | Backend::X86Asm)
 }
 
-const DEFAULT_MAX_TEST_THREADS: usize = 5;
-
-struct Semaphore {
-    available: Mutex<usize>,
-    cvar: Condvar,
-}
-
-impl Semaphore {
-    fn new(limit: usize) -> Self {
-        Self {
-            available: Mutex::new(limit),
-            cvar: Condvar::new(),
-        }
-    }
-
-    fn acquire(&self) -> SemaphoreGuard<'_> {
-        let mut available = self.available.lock().unwrap();
-        while *available == 0 {
-            available = self.cvar.wait(available).unwrap();
-        }
-        *available -= 1;
-        SemaphoreGuard { sem: self }
-    }
-
-    fn release(&self) {
-        let mut available = self.available.lock().unwrap();
-        *available += 1;
-        self.cvar.notify_one();
-    }
-}
-
-struct SemaphoreGuard<'a> {
-    sem: &'a Semaphore,
-}
-
-impl Drop for SemaphoreGuard<'_> {
-    fn drop(&mut self) {
-        self.sem.release();
-    }
-}
-
-fn concurrency_guard() -> SemaphoreGuard<'static> {
-    static SEM: OnceLock<Semaphore> = OnceLock::new();
-    SEM.get_or_init(|| Semaphore::new(DEFAULT_MAX_TEST_THREADS))
-        .acquire()
-}
+use common::concurrency_guard;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
