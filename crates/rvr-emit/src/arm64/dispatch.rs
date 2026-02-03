@@ -12,29 +12,37 @@ impl<X: Xlen> Arm64Emitter<X> {
         let text_start = self.inputs.text_start;
         let text_size = self.inputs.pc_end - text_start;
 
-        // Range check: trap if target < text_start or target >= pc_end
-        // This prevents out-of-bounds jump table access (e.g., ra=0 on return)
-        // Use local label pattern because b.hs has limited range
-        let valid_label = self.next_label("valid_pc");
+        if self.config.address_mode.needs_bounds_check() {
+            // Range check: trap if target < text_start or target >= pc_end.
+            // This prevents out-of-bounds jump table access (e.g., ra=0 on return).
+            // Use local label pattern because b.hs has limited range.
+            let valid_label = self.next_label("valid_pc");
 
-        if X::VALUE == 32 {
-            // RV32: check 32-bit range
+            if X::VALUE == 32 {
+                // RV32: check 32-bit range
+                self.load_imm("w2", text_start);
+                self.emit("sub w0, w0, w2"); // w0 = target - text_start
+                self.load_imm("w2", text_size);
+                self.emit("cmp w0, w2");
+                self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
+                self.emit("b asm_trap");
+                self.emit_label(&valid_label);
+            } else {
+                // RV64: check 64-bit range
+                self.load_imm("x2", text_start);
+                self.emit("sub x0, x0, x2"); // x0 = target - text_start
+                self.load_imm("x2", text_size);
+                self.emit("cmp x0, x2");
+                self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
+                self.emit("b asm_trap");
+                self.emit_label(&valid_label);
+            }
+        } else if X::VALUE == 32 {
             self.load_imm("w2", text_start);
-            self.emit("sub w0, w0, w2"); // w0 = target - text_start
-            self.load_imm("w2", text_size);
-            self.emit("cmp w0, w2");
-            self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
-            self.emit("b asm_trap");
-            self.emit_label(&valid_label);
+            self.emit("sub w0, w0, w2");
         } else {
-            // RV64: check 64-bit range
             self.load_imm("x2", text_start);
-            self.emit("sub x0, x0, x2"); // x0 = target - text_start
-            self.load_imm("x2", text_size);
-            self.emit("cmp x0, x2");
-            self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
-            self.emit("b asm_trap");
-            self.emit_label(&valid_label);
+            self.emit("sub x0, x0, x2");
         }
 
         // Load jump table base address
