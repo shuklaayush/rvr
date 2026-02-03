@@ -115,7 +115,8 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **Delete Tech Debt**: Remove unused code immediately.
 - **Script Large Refactors**: For repetitive refactors, prefer writing a script over manual brute-force edits. Always commit or stash work before running scripts.
 - **Tests/Benches are First-Class**: New test/bench logic should live in `tests/`/`benches/` and be callable from CLI wrappers.
-- **Data-Driven Tests**: Prefer per-ELF generated tests (macro or build-time list) over loops inside a single test.
+- **Data-Driven Tests**: Prefer per-ELF tests using runtime discovery (no build scripts) with `libtest-mimic`; avoid loops inside a single test.
+- **Heavy Suite Concurrency**: Cap `riscv-tests`/`riscv-arch-test` concurrency (e.g., 5) in the test binary itself and via `.config/nextest.toml` to prevent OOM without extra flags.
 - **Platform Gating**: Guard asm-backend tests with `cfg(target_arch = "...")` to keep CI portable.
 
 ### Repository Maintenance
