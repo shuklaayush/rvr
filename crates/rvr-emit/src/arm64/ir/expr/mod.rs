@@ -732,4 +732,5 @@ impl<X: Xlen> Arm64Emitter<X> {
 
 }
 
-mod ops;
+mod ops_binary;
+mod ops_unary;
