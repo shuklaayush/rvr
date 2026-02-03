@@ -1,4 +1,5 @@
 //! Benchmark commands.
+// TODO: Remove CLI bench commands after cargo test/bench migration is complete.
 
 mod coremark;
 mod libriscv;

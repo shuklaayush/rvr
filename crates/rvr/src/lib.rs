@@ -219,6 +219,7 @@ pub mod bench;
 pub mod build_utils;
 pub mod gdb;
 pub mod metrics;
+pub mod test_support;
 
 use std::marker::PhantomData;
 use std::path::Path;

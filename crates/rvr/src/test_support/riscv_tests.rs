@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use rvr_emit::Backend;
 
-pub use rvr::metrics::TestStatus;
-use rvr::{CompileOptions, Compiler, Runner, compile_with_options};
+pub use crate::metrics::TestStatus;
+use crate::{CompileOptions, Compiler, Runner, compile_with_options};
 
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[
@@ -82,7 +82,7 @@ impl TestSummary {
     /// Add a result to the summary.
     pub fn add(&mut self, result: TestResult) {
         // Record metric for this test
-        rvr::metrics::record_test(&result.name, result.status);
+        crate::metrics::record_test(&result.name, result.status);
 
         match result.status {
             TestStatus::Pass => self.passed += 1,
@@ -96,7 +96,7 @@ impl TestSummary {
 
     /// Record summary totals to metrics.
     pub fn record_metrics(&self) {
-        rvr::metrics::record_test_summary(
+        crate::metrics::record_test_summary(
             self.passed as u64,
             self.failed as u64,
             self.skipped as u64,
@@ -628,7 +628,7 @@ impl BuildConfig {
 
 /// Find RISC-V GCC toolchain prefix.
 pub fn find_toolchain() -> Option<String> {
-    rvr::build_utils::find_toolchain()
+    crate::build_utils::find_toolchain()
 }
 
 /// Result of building a category.

@@ -5,10 +5,9 @@
 //! - `arch_tests`: The official riscv-arch-test suite (signature comparison based)
 //! - `trace`: Trace comparison between rvr and Spike for differential testing
 //! - `diff`: Lockstep differential execution between backends
+// TODO: Remove CLI test commands after cargo test/bench migration is complete.
 
-pub mod arch_tests;
 pub mod diff;
-pub mod riscv_tests;
 pub mod trace;
 
 use std::path::{Path, PathBuf};
@@ -17,11 +16,12 @@ use rvr_emit::Backend;
 use rvr_ir::Xlen;
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
+use rvr::test_support::{arch_tests, riscv_tests};
 use rvr::Compiler;
 
 // Re-export key types for convenience
-pub use arch_tests::{ArchBuildConfig, ArchTestCategory, ArchTestConfig, GenRefsConfig};
-pub use riscv_tests::{BuildConfig, TestCategory, TestConfig};
+pub use rvr::test_support::arch_tests::{ArchBuildConfig, ArchTestCategory, ArchTestConfig, GenRefsConfig};
+pub use rvr::test_support::riscv_tests::{BuildConfig, TestCategory, TestConfig};
 
 /// Build riscv-tests from source.
 pub fn riscv_tests_build(

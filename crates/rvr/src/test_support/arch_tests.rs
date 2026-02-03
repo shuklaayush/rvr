@@ -11,7 +11,7 @@ use std::time::Duration;
 use rvr_emit::Backend;
 
 use super::riscv_tests::{TestResult, TestSummary, print_result};
-use rvr::{CompileOptions, Compiler, Runner, compile_with_options};
+use crate::{CompileOptions, Compiler, Runner, compile_with_options};
 
 /// Signature region start address (must match model_test.h and link.ld).
 /// Not directly used in code - signature bounds are read from ELF symbols.
@@ -656,7 +656,7 @@ fn derive_ref_path(refs_dir: &Path, test_path: &Path) -> PathBuf {
 
 /// Find RISC-V GCC toolchain prefix.
 pub fn find_toolchain() -> Option<String> {
-    rvr::build_utils::find_toolchain()
+    crate::build_utils::find_toolchain()
 }
 
 /// Check if Spike simulator is available.
