@@ -51,6 +51,9 @@ pub fn gen_syscalls_source<X: Xlen>(cfg: &SyscallsConfig) -> String {
 #include <string.h>
 #include <time.h>
 
+int clock_gettime(int clk_id, struct timespec* tp);
+static const int kClockRealtime = 0;
+
 /* Minimal Linux syscall helpers for recompiled guests */
 
 typedef {rtype} reg_t;
@@ -154,7 +157,7 @@ reg_t rv_sys_clock_gettime(RvState* restrict state, reg_t clk_id, reg_t tp) {{
     (void)clk_id;
     (void)state;
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(kClockRealtime, &ts);
     uint64_t secs = (uint64_t)ts.tv_sec;
     uint64_t nsecs = (uint64_t)ts.tv_nsec;
     {wr_mem_secs}
