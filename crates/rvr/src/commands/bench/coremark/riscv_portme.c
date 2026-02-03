@@ -96,6 +96,26 @@ static void print_uint(ee_u32 n) {
     print_str(&buf[i]);
 }
 
+static void print_uint64(ee_u64 n) {
+    char buf[32];
+    int i = 31;
+    buf[i] = 0;
+    if (n == 0) buf[--i] = '0';
+    else while (n > 0) { buf[--i] = '0' + (n % 10); n /= 10; }
+    print_str(&buf[i]);
+}
+
+static void print_int64(long long n) {
+    char buf[32];
+    int i = 31, neg = 0;
+    buf[i] = 0;
+    if (n < 0) { neg = 1; n = -n; }
+    if (n == 0) buf[--i] = '0';
+    else while (n > 0) { buf[--i] = '0' + (n % 10); n /= 10; }
+    if (neg) buf[--i] = '-';
+    print_str(&buf[i]);
+}
+
 static void print_hex(ee_u32 n) {
     char buf[16];
     int i = 15;
@@ -115,13 +135,21 @@ int ee_printf(const char *fmt, ...) {
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;
+            int length = 0;
             while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#' || *fmt == '0') fmt++;
             while (*fmt >= '0' && *fmt <= '9') fmt++;
             if (*fmt == '.') { fmt++; while (*fmt >= '0' && *fmt <= '9') fmt++; }
-            if (*fmt == 'l' || *fmt == 'h' || *fmt == 'z') { fmt++; if (*fmt == 'l' || *fmt == 'h') fmt++; }
+            if (*fmt == 'l') { length = 1; fmt++; if (*fmt == 'l') { length = 2; fmt++; } }
+            else if (*fmt == 'h' || *fmt == 'z') { fmt++; if (*fmt == 'l' || *fmt == 'h') fmt++; }
             switch (*fmt) {
-                case 'd': case 'i': print_int(__builtin_va_arg(ap, ee_s32)); break;
-                case 'u': print_uint(__builtin_va_arg(ap, ee_u32)); break;
+                case 'd': case 'i':
+                    if (length) print_int64(__builtin_va_arg(ap, long long));
+                    else print_int(__builtin_va_arg(ap, ee_s32));
+                    break;
+                case 'u':
+                    if (length) print_uint64(__builtin_va_arg(ap, ee_u64));
+                    else print_uint(__builtin_va_arg(ap, ee_u32));
+                    break;
                 case 's': print_str(__builtin_va_arg(ap, const char *)); break;
                 case 'c': print_char((char)__builtin_va_arg(ap, int)); break;
                 case 'f': case 'g': case 'e': (void)__builtin_va_arg(ap, double); print_str("[float]"); break;
