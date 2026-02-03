@@ -1359,15 +1359,14 @@ fn run_pure_c_comparison(
             // The C program prints "PASS: N instructions matched" on success
             // or "DIVERGENCE at instruction N" on failure
             if output.status.success() {
-                // Extract matched count from stdout
-                let matched = stdout
-                    .lines()
-                    .find(|l| l.contains("PASS:"))
-                    .and_then(|l| {
-                        l.split_whitespace()
-                            .nth(1)
-                            .and_then(|n| n.parse::<usize>().ok())
-                    })
+                // Extract matched count from output (stdout or stderr)
+                let combined = format!("{stdout}\n{stderr}");
+                let tokens: Vec<&str> = combined.split_whitespace().collect();
+                let matched = tokens
+                    .iter()
+                    .position(|t| *t == "PASS:")
+                    .and_then(|idx| tokens.get(idx + 1))
+                    .and_then(|n| n.parse::<usize>().ok())
                     .unwrap_or(0);
 
                 diff::CompareResult {

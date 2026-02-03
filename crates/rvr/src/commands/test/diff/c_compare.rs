@@ -97,6 +97,7 @@ static const uint64_t kMemorySize = {memory_size}ULL;
 static const uint64_t kInitialBrk = 0x{initial_brk:x}ULL;
 static const uint64_t kInitialSp = 0x{initial_sp:x}ULL;
 static const uint64_t kInitialGp = 0x{initial_gp:x}ULL;
+static const int kClockMonotonic = 1;
 enum {{ kNumRegs = {num_regs}, kNumCsrs = 4096 }};
 
 // RvState struct - must match the generated code layout exactly
@@ -138,13 +139,13 @@ static bool load_backend(Backend* b, const char* path, const char* name) {{
     b->name = name;
     b->handle = dlopen(path, RTLD_NOW);
     if (!b->handle) {{
-        fprintf(stderr, "Failed to load %s: %s\\n", path, dlerror());
+        fprintf(stderr, "Failed to load %s: %s\n", path, dlerror());
         return false;
     }}
 
     b->execute_from = (execute_fn)dlsym(b->handle, "rv_execute_from");
     if (!b->execute_from) {{
-        fprintf(stderr, "Failed to find rv_execute_from in %s: %s\\n", path, dlerror());
+        fprintf(stderr, "Failed to find rv_execute_from in %s: %s\n", path, dlerror());
         dlclose(b->handle);
         return false;
     }}
@@ -153,7 +154,7 @@ static bool load_backend(Backend* b, const char* path, const char* name) {{
     b->memory = mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (b->memory == MAP_FAILED) {{
-        fprintf(stderr, "Failed to allocate memory for %s\\n", name);
+        fprintf(stderr, "Failed to allocate memory for %s\n", name);
         dlclose(b->handle);
         return false;
     }}
@@ -187,6 +188,14 @@ static void unload_backend(Backend* b) {{
 
 // Compare two states, return true if they match
 static bool states_match(const RvState* ref, const RvState* test) {{
+    if (ref->has_exited || test->has_exited) {{
+        if (ref->has_exited != test->has_exited) return false;
+        if (ref->exit_code != test->exit_code) return false;
+        for (int i = 0; i < kNumRegs; i++) {{
+            if (ref->regs[i] != test->regs[i]) return false;
+        }}
+        return true;
+    }}
     if (ref->pc != test->pc) return false;
     for (int i = 0; i < kNumRegs; i++) {{
         if (ref->regs[i] != test->regs[i]) return false;
@@ -196,13 +205,13 @@ static bool states_match(const RvState* ref, const RvState* test) {{
 
 // Print divergence details
 static void print_divergence(uint64_t instr, const RvState* ref, const RvState* test) {{
-    fprintf(stderr, "\\nDIVERGENCE at instruction %llu\\n", (unsigned long long)instr);
-    fprintf(stderr, "Reference PC: 0x%016llx\\n", (unsigned long long)ref->pc);
-    fprintf(stderr, "Test PC:      0x%016llx\\n", (unsigned long long)test->pc);
+        fprintf(stderr, "\nDIVERGENCE at instruction %llu\n", (unsigned long long)instr);
+        fprintf(stderr, "Reference PC: 0x%016llx\n", (unsigned long long)ref->pc);
+        fprintf(stderr, "Test PC:      0x%016llx\n", (unsigned long long)test->pc);
 
     for (int i = 0; i < kNumRegs; i++) {{
         if (ref->regs[i] != test->regs[i]) {{
-            fprintf(stderr, "  x%d: ref=0x%016llx test=0x%016llx\\n",
+            fprintf(stderr, "  x%d: ref=0x%016llx test=0x%016llx\n",
                     i, (unsigned long long)ref->regs[i],
                     (unsigned long long)test->regs[i]);
         }}
@@ -217,7 +226,7 @@ static bool reset_backend(Backend* b) {{
     b->memory = mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (b->memory == MAP_FAILED) {{
-        fprintf(stderr, "Failed to allocate memory for %s\\n", b->name);
+        fprintf(stderr, "Failed to allocate memory for %s\n", b->name);
         return false;
     }}
     memset(&b->state, 0, sizeof(b->state));
@@ -254,6 +263,28 @@ static int step_and_compare(Backend* ref, Backend* test, uint64_t* matched) {{
     return 0;
 }}
 
+// Slow fallback: step from a known matching point until divergence or limit
+static int step_from_match(Backend* ref, Backend* test, uint64_t start, uint64_t limit, uint64_t* matched) {{
+    if (!reset_backend(ref) || !reset_backend(test)) {{
+        return 1;
+    }}
+    if (run_to_instret(ref, start) || run_to_instret(test, start)) {{
+        fprintf(stderr, "Exited before reaching target instret %llu\n",
+                (unsigned long long)start);
+        return 1;
+    }}
+    *matched = start;
+    while (*matched < limit) {{
+        if (step_and_compare(ref, test, matched)) {{
+            return 1;
+        }}
+        if (ref->state.has_exited || test->state.has_exited) {{
+            return 0;
+        }}
+    }}
+    return 0;
+}}
+
 // Fast checkpoint + binary search to first mismatch
 static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* matched) {{
     uint64_t limit = kMaxInstrs;
@@ -280,7 +311,7 @@ static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* 
 
         if (ref->state.has_exited || test->state.has_exited) {{
             if (ref->state.has_exited != test->state.has_exited) {{
-                fprintf(stderr, "Exit status mismatch: ref=%d test=%d\\n",
+                fprintf(stderr, "Exit status mismatch: ref=%d test=%d\n",
                         ref->state.has_exited, test->state.has_exited);
                 return 1;
             }}
@@ -292,6 +323,8 @@ static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* 
         return 0;
     }}
 
+    // Binary search to find first mismatch. Fall back to stepping if the
+    // backends exit before reaching the target instret.
     uint64_t low = last_match;
     uint64_t high = mismatch_hi;
 
@@ -302,9 +335,7 @@ static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* 
             return 1;
         }}
         if (run_to_instret(ref, mid) || run_to_instret(test, mid)) {{
-            fprintf(stderr, "Exited before reaching target instret %llu\\n",
-                    (unsigned long long)mid);
-            return 1;
+            return step_from_match(ref, test, last_match, limit, matched);
         }}
 
         if (states_match(&ref->state, &test->state)) {{
@@ -318,9 +349,7 @@ static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* 
         return 1;
     }}
     if (run_to_instret(ref, low) || run_to_instret(test, low)) {{
-        fprintf(stderr, "Exited before reaching target instret %llu\\n",
-                (unsigned long long)low);
-        return 1;
+        return step_from_match(ref, test, last_match, limit, matched);
     }}
     *matched = low;
     return step_and_compare(ref, test, matched);
@@ -329,13 +358,13 @@ static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* 
 // Get current time in seconds
 static double get_time(void) {{
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(kClockMonotonic, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }}
 
 int main(int argc, char** argv) {{
     if (argc != 3) {{
-        fprintf(stderr, "Usage: %s <ref.so> <test.so>\\n", argv[0]);
+        fprintf(stderr, "Usage: %s <ref.so> <test.so>\n", argv[0]);
         return 1;
     }}
 
@@ -346,12 +375,12 @@ int main(int argc, char** argv) {{
     Backend test = {{0}};
 
     // Load backends
-    printf("Loading reference: %s\\n", ref_path);
+    printf("Loading reference: %s\n", ref_path);
     if (!load_backend(&ref, ref_path, "reference")) {{
         return 1;
     }}
 
-    printf("Loading test: %s\\n", test_path);
+    printf("Loading test: %s\n", test_path);
     if (!load_backend(&test, test_path, "test")) {{
         unload_backend(&ref);
         return 1;
@@ -361,8 +390,8 @@ int main(int argc, char** argv) {{
     load_segments(&ref);
     load_segments(&test);
 
-    printf("Starting comparison at PC=0x%llx\\n", (unsigned long long)kEntryPoint);
-    printf("Checkpoint: %llu instructions\\n", (unsigned long long)kCheckpointInterval);
+    printf("Starting comparison at PC=0x%llx\n", (unsigned long long)kEntryPoint);
+    printf("Checkpoint: %llu instructions\n", (unsigned long long)kCheckpointInterval);
 
     // Run comparison
     double start = get_time();
@@ -371,15 +400,14 @@ int main(int argc, char** argv) {{
     double elapsed = get_time() - start;
 
     if (result == 0) {{
-        printf("\\nPASS: %llu instructions matched in %.3fs (%.2fM instr/s)\\n",
+        printf("\nPASS: %llu instructions matched in %.3fs (%.2fM instr/s)\n",
                (unsigned long long)matched, elapsed,
                matched / elapsed / 1e6);
         if (ref.state.exit_code != 0) {{
-            printf("Exit code: %d\\n", ref.state.exit_code);
-            result = ref.state.exit_code;
+            printf("Exit code: %d\n", ref.state.exit_code);
         }}
     }} else {{
-        printf("\\nFAIL: Divergence after %llu instructions\\n",
+        printf("\nFAIL: Divergence after %llu instructions\n",
                (unsigned long long)matched);
     }}
 
