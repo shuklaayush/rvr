@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use clap::Parser;
 use rvr::bench::{self, Arch};
 use rvr::{AddressMode, CompileOptions, Compiler, InstretMode, SyscallMode};
 use rvr_emit::Backend;
@@ -16,42 +17,60 @@ use bench_support::{
     BenchmarkSource,
 };
 
-fn parse_backend() -> Backend {
-    match std::env::var("RVR_BENCH_BACKEND").as_deref() {
-        Ok("x86") | Ok("x86_64") => Backend::X86Asm,
-        Ok("arm64") | Ok("aarch64") => Backend::ARM64Asm,
+#[derive(Parser, Debug)]
+#[command(name = "bench_report")]
+#[command(about = "Generate BENCHMARKS.md from cargo bench helpers")]
+struct Args {
+    /// Backend to use for compilation
+    #[arg(long, value_parser = ["c", "x86", "arm64"], default_value = "c")]
+    backend: String,
+
+    /// Number of runs per benchmark
+    #[arg(long, default_value_t = 1)]
+    runs: usize,
+
+    /// Substring filter for benchmark names
+    #[arg(long)]
+    filter: Option<String>,
+
+    /// Output path for BENCHMARKS.md
+    #[arg(long, default_value = "BENCHMARKS.md")]
+    output: PathBuf,
+
+    /// Rebuild RISC-V ELFs before compiling
+    #[arg(long)]
+    rebuild_elfs: bool,
+
+    /// Recompile native shared libs before running
+    #[arg(long)]
+    recompile: bool,
+
+    /// Enable perf mode (disable instret, enable perf)
+    #[arg(long)]
+    perf: bool,
+}
+
+fn parse_backend(arg: &str) -> Backend {
+    match arg {
+        "x86" => Backend::X86Asm,
+        "arm64" => Backend::ARM64Asm,
         _ => Backend::C,
     }
 }
 
-fn parse_runs() -> usize {
-    std::env::var("RVR_BENCH_RUNS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1)
-        .max(1)
+fn filter_match(name: &str, filter: &Option<String>) -> bool {
+    match filter {
+        Some(f) if !f.trim().is_empty() => name.contains(f),
+        _ => true,
+    }
 }
 
-fn output_path() -> PathBuf {
-    std::env::var("RVR_BENCHMARKS_MD")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("BENCHMARKS.md"))
+fn should_rebuild(args: &Args) -> bool {
+    args.rebuild_elfs
 }
 
-fn filter_match(name: &str) -> bool {
-    let filter = match std::env::var("RVR_BENCH_FILTER") {
-        Ok(f) if !f.trim().is_empty() => f,
-        _ => return true,
-    };
-    name.contains(&filter)
-}
-
-fn should_rebuild() -> bool {
-    std::env::var("RVR_REBUILD_ELFS").is_ok()
-}
-
-fn should_recompile() -> bool {
-    std::env::var("RVR_RECOMPILE_BENCH").is_ok()
+fn should_recompile(args: &Args) -> bool {
+    args.recompile
 }
 
 fn bench_output_dir(
@@ -72,7 +91,7 @@ fn bench_output_dir(
         .join(suffix)
 }
 
-fn compile_options(info: &BenchmarkInfo, backend: Backend) -> CompileOptions {
+fn compile_options(info: &BenchmarkInfo, backend: Backend, args: &Args) -> CompileOptions {
     let mut options = CompileOptions::new()
         .with_compiler(Compiler::default())
         .with_backend(backend)
@@ -90,17 +109,22 @@ fn compile_options(info: &BenchmarkInfo, backend: Backend) -> CompileOptions {
         _ => {}
     }
 
-    if matches!(std::env::var("RVR_BENCH_PERF"), Ok(_)) {
+    if args.perf {
         options = options.with_perf_mode(true).with_instret_mode(InstretMode::Off);
     }
 
     options
 }
 
-fn ensure_elf(project_dir: &PathBuf, info: &BenchmarkInfo, arch: Arch) -> Result<PathBuf, String> {
+fn ensure_elf(
+    project_dir: &PathBuf,
+    info: &BenchmarkInfo,
+    arch: Arch,
+    args: &Args,
+) -> Result<PathBuf, String> {
     let out_dir = project_dir.join("bin").join(arch.as_str());
     let elf_path = out_dir.join(info.name);
-    if elf_path.exists() && !should_rebuild() {
+    if elf_path.exists() && !should_rebuild(args) {
         return Ok(elf_path);
     }
 
@@ -120,6 +144,7 @@ fn ensure_compiled(
     info: &BenchmarkInfo,
     arch: Arch,
     backend: Backend,
+    args: &Args,
 ) -> Result<PathBuf, String> {
     let out_dir = bench_output_dir(project_dir, info, arch, backend);
     let so_path = out_dir.join(format!(
@@ -127,14 +152,14 @@ fn ensure_compiled(
         info.name,
         if cfg!(target_os = "macos") { "dylib" } else { "so" }
     ));
-    if so_path.exists() && !should_recompile() {
+    if so_path.exists() && !should_recompile(args) {
         return Ok(out_dir);
     }
 
-    let elf_path = ensure_elf(project_dir, info, arch)?;
+    let elf_path = ensure_elf(project_dir, info, arch, args)?;
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("failed to create output dir: {}", e))?;
-    let options = compile_options(info, backend);
+    let options = compile_options(info, backend, args);
     rvr::compile_with_options(&elf_path, &out_dir, options)
         .map_err(|e| format!("compile failed: {}", e))?;
     Ok(out_dir)
@@ -215,24 +240,25 @@ fn render_markdown(rows: &[(String, String, String, f64, f64)]) -> String {
 }
 
 fn main() {
+    let args = Args::parse();
     let project_dir = find_project_root();
-    let backend = parse_backend();
-    let runs = parse_runs();
-    if let Ok(filter) = std::env::var("RVR_BENCH_FILTER") {
+    let backend = parse_backend(&args.backend);
+    let runs = args.runs.max(1);
+    if let Some(filter) = &args.filter {
         if !filter.contains('*') {
-            let _ = bench_support::registry::find_benchmark(&filter);
+            let _ = bench_support::registry::find_benchmark(filter);
         }
     }
 
     let mut rows = Vec::new();
 
     for info in bench_support::registry::BENCHMARKS {
-        if !filter_match(info.name) {
+        if !filter_match(info.name, &args.filter) {
             continue;
         }
         let archs = Arch::parse_list(info.default_archs).unwrap_or_else(|_| vec![Arch::Rv64i]);
         for arch in archs {
-            let out_dir = match ensure_compiled(&project_dir, info, arch, backend) {
+            let out_dir = match ensure_compiled(&project_dir, info, arch, backend, &args) {
                 Ok(dir) => dir,
                 Err(err) => {
                     eprintln!("{} ({}) skipped: {}", info.name, arch.as_str(), err);
@@ -268,7 +294,7 @@ fn main() {
     }
 
     let output = render_markdown(&rows);
-    let out_path = output_path();
+    let out_path = args.output;
     if let Err(err) = fs::write(&out_path, output) {
         eprintln!("failed to write {}: {}", out_path.display(), err);
         std::process::exit(1);
