@@ -507,6 +507,7 @@ static inline void wr_mem_u64({mem_param}{addr_type} base, int16_t off, uint64_t
 }
 
 fn gen_csr_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
+    let rtype = reg_type::<X>();
     let instret_param = if cfg.instret_mode.counts() {
         ", uint64_t instret"
     } else {
@@ -540,25 +541,25 @@ fn gen_csr_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     format!(
         r#"/* CSR access */
 __attribute__((hot, pure, {nonnull}always_inline))
-static inline uint32_t rd_csr({state_param_rd}uint32_t csr{instret_param}) {{
+static inline {rtype} rd_csr({state_param_rd}uint32_t csr{instret_param}) {{
     switch (csr) {{
         case CSR_MCYCLE:
         case CSR_CYCLE:
         case CSR_MINSTRET:
         case CSR_INSTRET:
-            return (uint32_t)({instret_val} & 0xFFFFFFFFu);
+            return ({rtype})({instret_val});
         case CSR_MCYCLEH:
         case CSR_CYCLEH:
         case CSR_MINSTRETH:
         case CSR_INSTRETH:
-            return (uint32_t)({instret_val} >> 32);
+            return ({rtype})({instret_val} >> 32);
         default:
             return {state_ref}->csrs[csr];
     }}
 }}
 
 __attribute__((hot, {nonnull}always_inline))
-static inline void wr_csr({state_param_wr}uint32_t csr, uint32_t val) {{
+static inline void wr_csr({state_param_wr}uint32_t csr, {rtype} val) {{
     switch (csr) {{
         case CSR_MCYCLE:
         case CSR_MCYCLEH:
