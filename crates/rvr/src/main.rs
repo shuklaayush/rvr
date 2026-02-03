@@ -31,7 +31,7 @@ fn main() {
         "rvr=error"
     } else {
         match &cli.command {
-            Commands::Bench { .. } | Commands::Test { .. } => "rvr=warn",
+            Commands::Dev { .. } => "rvr=warn",
             _ => "rvr=info",
         }
     };

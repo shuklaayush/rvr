@@ -5,11 +5,21 @@ use std::time::Duration;
 use libtest_mimic::{Arguments, Failed, Trial};
 use rvr_emit::Backend;
 
-mod common;
+mod test_utils;
+#[path = "support/riscv_arch_test.rs"]
+mod support;
 
 fn main() {
     let mut args = Arguments::from_args();
-    common::cap_threads(&mut args);
+    test_utils::cap_threads(&mut args);
+
+    if std::env::var("RVR_BUILD_ONLY").is_ok() {
+        if let Err(err) = build_only() {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        return;
+    }
 
     let cases = collect_arch_tests();
     let backends = enabled_backends();
@@ -38,20 +48,16 @@ fn run_case(elf: &Path, reference: &Path, backend: Backend) -> Result<(), Failed
     if !ref_path.exists() || !elf_path.exists() {
         return Ok(());
     }
-    let result = rvr::test_support::arch_tests::run_test(
+    let result = support::run_test(
         elf_path.as_path(),
         ref_path.as_path(),
         timeout,
         &compiler,
         backend,
     );
-    match result.status {
-        rvr::test_support::riscv_tests::TestStatus::Pass => Ok(()),
-        rvr::test_support::riscv_tests::TestStatus::Skip => Ok(()),
-        rvr::test_support::riscv_tests::TestStatus::Fail => {
-            let msg = result.error.unwrap_or_else(|| "unknown failure".to_string());
-            Err(Failed::from(format!("{} failed: {}", result.name, msg)))
-        }
+    match result {
+        Ok(()) => Ok(()),
+        Err(err) => Err(Failed::from(err)),
     }
 }
 
@@ -86,13 +92,12 @@ fn maybe_rebuild_elfs() -> Result<(), Failed> {
         if bins.exists() {
             return;
         }
-        let toolchain = rvr::test_support::arch_tests::find_toolchain()
-            .unwrap_or_default();
+        let toolchain = support::find_toolchain().unwrap_or_default();
         if toolchain.is_empty() {
             return;
         }
-        let config = rvr::test_support::arch_tests::ArchBuildConfig::new(
-            rvr::test_support::arch_tests::ArchTestCategory::ALL.to_vec(),
+        let config = support::ArchBuildConfig::new(
+            support::ArchTestCategory::ALL.to_vec(),
         )
         .with_src_dir(root.join("programs/riscv-arch-test/riscv-test-suite"))
         .with_out_dir(root.join("bin/riscv-arch-test"))
@@ -100,11 +105,31 @@ fn maybe_rebuild_elfs() -> Result<(), Failed> {
         .with_toolchain(toolchain)
         .with_gen_refs(true);
 
-        if let Err(err) = rvr::test_support::arch_tests::build_tests(&config) {
+        if let Err(err) = support::build_tests(&config) {
             status = Err(Failed::from(format!("failed to build arch tests: {err}")));
         }
     });
     status
+}
+
+fn build_only() -> Result<(), String> {
+    let root = workspace_root();
+    let toolchain = support::find_toolchain().unwrap_or_default();
+    if toolchain.is_empty() {
+        return Err("RISC-V toolchain not found".to_string());
+    }
+    let gen_refs = std::env::var("RVR_GEN_REFS").is_ok();
+    let config = support::ArchBuildConfig::new(
+        support::ArchTestCategory::ALL.to_vec(),
+    )
+    .with_src_dir(root.join("programs/riscv-arch-test/riscv-test-suite"))
+    .with_out_dir(root.join("bin/riscv-arch-test"))
+    .with_refs_dir(root.join("bin/riscv-arch-test/references"))
+    .with_toolchain(toolchain)
+    .with_gen_refs(gen_refs);
+    support::build_tests(&config)
+        .map(|_| ())
+        .map_err(|err| format!("failed to build arch tests: {err}"))
 }
 
 fn collect_arch_tests() -> Vec<(PathBuf, PathBuf)> {

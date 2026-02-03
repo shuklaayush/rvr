@@ -2,16 +2,12 @@
 //!
 //! Each submodule handles a specific CLI command or group of commands.
 
-mod bench;
 mod build;
 mod compile;
 mod run;
-mod test;
+mod dev;
 
-use crate::cli::{
-    ArchTestCommands, BenchCommands, Cli, Commands, EXIT_SUCCESS, OutputFormat, RiscvTestCommands,
-    TestCommands,
-};
+use crate::cli::{Cli, Commands, DevCommands, OutputFormat};
 
 /// Dispatch CLI command to the appropriate handler.
 pub fn run_command(cli: &Cli) -> i32 {
@@ -121,106 +117,15 @@ pub fn run_command(cli: &Cli) -> i32 {
             *verbose,
             false, // not quiet
         ),
-        Commands::Bench { command } => match command {
-            BenchCommands::List => {
-                bench::bench_list();
-                EXIT_SUCCESS
-            }
-            BenchCommands::Report {
-                output,
-                runs,
-                no_libriscv,
-                no_host,
-                force,
-                compile,
-            } => bench::bench_report(output, *runs, *no_libriscv, *no_host, *force, compile),
-            BenchCommands::Build {
-                name,
-                arch,
-                no_host,
-            } => bench::bench_build(name.as_deref(), arch.as_deref(), *no_host),
-            BenchCommands::Compile {
-                name,
-                arch,
-                compile,
-            } => bench::bench_compile(name.as_deref(), arch.as_deref(), compile),
-            BenchCommands::Run {
-                name,
-                arch,
-                runs,
-                compare_host,
-                compare_libriscv,
-                force,
-                compile,
-            } => bench::bench_run(
-                name.as_deref(),
-                arch.as_deref(),
-                *runs,
-                *compare_host,
-                *compare_libriscv,
-                *force,
-                compile,
-            ),
-        },
-        Commands::Test { command } => match command {
-            TestCommands::Riscv { command } => match command {
-                RiscvTestCommands::Build {
-                    category,
-                    output,
-                    toolchain,
-                } => test::riscv_tests_build(category, output.clone(), toolchain.clone()),
-                RiscvTestCommands::Run {
-                    filter,
-                    verbose,
-                    timeout,
-                    cc,
-                    linker,
-                    backend,
-                } => test::riscv_tests_run(
-                    filter.clone(),
-                    *verbose,
-                    *timeout,
-                    cc,
-                    linker.as_deref(),
-                    (*backend).into(),
-                ),
-            },
-            TestCommands::Arch { command } => match command {
-                ArchTestCommands::Build {
-                    category,
-                    output,
-                    toolchain,
-                    no_refs,
-                } => test::arch_tests_build(category, output.clone(), toolchain.clone(), *no_refs),
-                ArchTestCommands::Run {
-                    filter,
-                    verbose,
-                    timeout,
-                    cc,
-                    linker,
-                    backend,
-                } => test::arch_tests_run(
-                    filter.clone(),
-                    *verbose,
-                    *timeout,
-                    cc,
-                    linker.as_deref(),
-                    (*backend).into(),
-                ),
-                ArchTestCommands::GenRefs {
-                    category,
-                    output,
-                    force,
-                } => test::arch_tests_gen_refs(category, output.clone(), *force),
-            },
-            TestCommands::Trace {
+        Commands::Dev { command } => match command {
+            DevCommands::Trace {
                 elf,
                 output,
                 cc,
                 stop_on_first,
                 isa,
                 timeout,
-            } => test::trace_compare(
+            } => dev::trace_compare(
                 elf,
                 output.clone(),
                 cc,
@@ -228,7 +133,7 @@ pub fn run_command(cli: &Cli) -> i32 {
                 *timeout,
                 *stop_on_first,
             ),
-            TestCommands::Diff {
+            DevCommands::Diff {
                 mode,
                 elf,
                 ref_backend,
@@ -241,19 +146,21 @@ pub fn run_command(cli: &Cli) -> i32 {
                 cc,
                 isa,
                 strict_mem,
-            } => test::diff_compare(
-                *mode,
-                *ref_backend,
-                *test_backend,
-                elf,
-                *granularity,
-                *max_instrs,
-                output.clone(),
-                ref_dir.clone(),
-                test_dir.clone(),
-                cc,
-                isa.clone(),
-                *strict_mem,
+            } => dev::diff_compare(
+                dev::DiffCompareArgs {
+                    mode: *mode,
+                    ref_backend: *ref_backend,
+                    test_backend: *test_backend,
+                    elf_path: elf,
+                    granularity_arg: *granularity,
+                    max_instrs: *max_instrs,
+                    output_dir: output.clone(),
+                    ref_dir: ref_dir.clone(),
+                    test_dir: test_dir.clone(),
+                    cc,
+                    isa: isa.clone(),
+                    strict_mem: *strict_mem,
+                },
             ),
         },
     }

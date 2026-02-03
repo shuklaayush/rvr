@@ -30,28 +30,8 @@ rvr compile program.elf -o output/ --tracer-header my_tracer.h
 # Lift to C source only (no compilation)
 rvr lift program.elf -o output/
 
-# Run riscv-tests
-rvr test riscv build                # build from source (requires riscv toolchain)
-rvr test riscv run                  # run all tests
-rvr test riscv run --filter rv64ui  # filtered
-
-# Run riscv-arch-test (official architecture compliance tests)
-rvr test arch build                 # build from source (requires riscv toolchain)
-rvr test arch build --category rv64i-I  # build specific category
-rvr test arch gen-refs              # generate reference signatures (requires Spike)
-rvr test arch run                   # run all tests
-rvr test arch run --filter add      # filtered
-
-# Benchmarks
-rvr bench list                       # List available benchmarks
-rvr bench build                      # Build all from source
-rvr bench compile                    # Compile all to native
-rvr bench run                        # Run all benchmarks
-
-# Single benchmark
-rvr bench build reth                 # Build reth ELF + host binary
-rvr bench compile reth               # Compile to native
-rvr bench run reth --compare-host    # Run with host comparison
+# Development benchmarks
+cargo bench -p rvr --bench riscv_benchmarks
 ```
 
 ## Repository Structure
@@ -60,12 +40,12 @@ rvr bench run reth --compare-host    # Run with host comparison
 rvr/
 ├── crates/
 │   ├── rvr/           # CLI and high-level API
-│   │   └── src/commands/
-│   │       ├── test/          # Test suite commands
-│   │       │   ├── riscv_tests/   # riscv-tests runner
-│   │       │   └── arch_tests/    # riscv-arch-test runner (includes harness files)
-│   │       └── bench/         # Benchmark commands
-│   │           └── coremark/  # CoreMark port files
+│   │   ├── benches/           # Development benchmarks
+│   │   │   ├── riscv_benchmarks.rs
+│   │   │   └── support/       # Benchmark harness files and helpers
+│   │   └── src/commands/      # CLI command implementations
+│   │   └── tests/             # Development test suites (riscv-tests, riscv-arch-test)
+│   │       └── support/       # Test harness files and helpers
 │   ├── rvr-elf/       # ELF parsing
 │   ├── rvr-isa/       # Decoder, lifter, extensions
 │   ├── rvr-ir/        # Intermediate representation
@@ -114,9 +94,12 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **No Warnings**: Code must compile without warnings. Use `#![deny(warnings)]` in crate roots.
 - **Delete Tech Debt**: Remove unused code immediately.
 - **Script Large Refactors**: For repetitive refactors, prefer writing a script over manual brute-force edits. Always commit or stash work before running scripts.
-- **Tests/Benches are First-Class**: New test/bench logic should live in `tests/`/`benches/` and be callable from CLI wrappers.
+- **Tests/Benches are First-Class**: New test/bench logic should live in `tests/`/`benches/`. The CLI is not for development-only suites.
 - **Data-Driven Tests**: Prefer per-ELF tests and avoid loops inside a single test.
 - **Sane Defaults**: Provide safe default concurrency for heavy suites so tests work without extra flags.
+- **Dev-Only Suites Stay in Tests**: riscv-tests and riscv-arch-test must live under `crates/rvr/tests/`; the CLI should not expose or depend on them.
+- **No Dev CLI Commands**: Do not add CLI commands for dev-only suites (tests/benches). Use `cargo test` / `cargo bench`.
+- **No Blanket Allows**: Avoid `#[allow(dead_code)]` or similar to hide issues; delete unused code instead.
 - **Platform Gating**: Guard asm-backend tests with `cfg(target_arch = "...")` to keep CI portable.
 
 ### Repository Maintenance
@@ -129,23 +112,21 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 
 Submodules in `programs/` contain upstream test suites and benchmarks. **Never modify submodules** for rvr-specific functionality - only update them to track upstream changes or fix upstream bugs.
 
-**Pattern for test/benchmark harnesses**: Keep rvr-specific harness files (linker scripts, model headers, port files) alongside the Rust code that uses them in `crates/rvr/src/commands/`:
+**Pattern for test/benchmark harnesses**: Keep rvr-specific harness files alongside the Rust code that uses them. Test harnesses live under `crates/rvr/tests/support/`, benchmark harnesses live under `crates/rvr/benches/support/`:
 
 ```text
-crates/rvr/src/commands/
-├── test/
-│   ├── riscv_tests/          # riscv-tests runner code
-│   └── arch_tests/           # riscv-arch-test runner code
-│       ├── mod.rs            # Test runner implementation
-│       ├── model_test.h      # RVMODEL_* macros for rvr target
-│       └── link.ld           # Linker script for rvr
-└── bench/
-    └── coremark/             # CoreMark benchmark
-        ├── mod.rs            # Build/run implementation
-        ├── host_portme.h     # Host port header
-        ├── host_portme.c     # Host port implementation
-        ├── riscv_portme.h    # RISC-V port header
-        └── riscv_portme.c    # RISC-V port implementation
+crates/rvr/tests/
+└── support/
+    └── riscv_arch_test_harness/   # riscv-arch-test harness files
+        ├── model_test.h      # RVMODEL_* macros for rvr target
+        └── link.ld           # Linker script for rvr
+crates/rvr/benches/support/
+└── coremark/                 # CoreMark benchmark
+    ├── mod.rs                # Build/run implementation
+    ├── host_portme.h         # Host port header
+    ├── host_portme.c         # Host port implementation
+    ├── riscv_portme.h        # RISC-V port header
+    └── riscv_portme.c        # RISC-V port implementation
 ```
 
 This pattern keeps harness files with the code that uses them, making it clear which files belong together. The upstream submodules remain unmodified.
@@ -202,6 +183,9 @@ cargo run -- test riscv run --filter rv64ui  # filtered
 
 # Run benchmarks
 cargo run -- bench run
+
+# Run cargo benches (uses benchmark registry)
+cargo bench -p rvr --bench riscv_benchmarks
 ```
 
 riscv-tests binaries are in `bin/riscv-tests/` (tracked with Git LFS).
@@ -210,11 +194,11 @@ Set `RVR_REBUILD_ELFS=1` when running `cargo test` to force rebuilding
 `bin/riscv-tests` and `bin/riscv-arch-test` from submodules before tests run.
 
 Heavy integration suites run under `cargo test -p rvr --test riscv_tests` and
-`cargo test -p rvr --test arch_tests`. Concurrency is capped internally.
+`cargo test -p rvr --test riscv_arch_test`. Concurrency is capped internally.
 
-**Backend Smoke Tests**: For quick backend checks, run a single riscv-test file with a specific backend, e.g.:
+**Backend Smoke Tests**: For quick backend checks, run a single riscv-test case with a specific backend, e.g.:
 ```bash
-./target/release/rvr test --backend arm64 bin/riscv-tests/rv64ui-p-add
+RVR_RUN_RISCV_TESTS=1 cargo test -p rvr --test riscv_tests -- backend_arm64::bin_riscv_tests_rv64ui_p_add
 ```
 
 ## Code Generation Backends

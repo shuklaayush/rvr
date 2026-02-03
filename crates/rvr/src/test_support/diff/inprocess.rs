@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use rvr::{RunError, Runner};
+use crate::{RunError, Runner};
 
 use super::executor::Executor;
 use super::state::DiffState;
@@ -69,12 +69,10 @@ impl Executor for InProcessExecutor {
                 let opcode = self.runner.diff_traced_opcode().unwrap_or(0);
                 let rd = self.runner.diff_traced_rd();
                 let rd_value = self.runner.diff_traced_rd_value();
-                let (mem_addr, mem_value, mem_width, is_write) = self
-                    .runner
-                    .diff_traced_mem()
-                    .map_or((None, None, None, false), |(addr, val, width, is_write)| {
-                        (Some(addr), Some(val), Some(width), is_write)
-                    });
+                let (mem_addr, mem_value, mem_width, is_write) = self.runner.diff_traced_mem().map_or(
+                    (None::<u64>, None::<u64>, None::<u8>, false),
+                    |(addr, val, width, is_write)| (Some(addr), Some(val), Some(width), is_write),
+                );
 
                 Some(DiffState {
                     pc: pc_before,
@@ -195,10 +193,10 @@ impl BufferedInProcessExecutor {
     /// Get entry at index from the capture buffer.
     pub fn get_entry(&self, index: usize) -> Option<DiffState> {
         let (pc, opcode, rd, rd_value, mem_access) = self.runner.buffered_diff_get(index)?;
-        let (mem_addr, mem_value, mem_width, is_write) = mem_access
-            .map_or((None, None, None, false), |(addr, val, width, is_write)| {
-                (Some(addr), Some(val), Some(width), is_write)
-            });
+        let (mem_addr, mem_value, mem_width, is_write) = mem_access.map_or(
+            (None::<u64>, None::<u64>, None::<u8>, false),
+            |(addr, val, width, is_write)| (Some(addr), Some(val), Some(width), is_write),
+        );
         Some(DiffState {
             pc,
             opcode,

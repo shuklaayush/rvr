@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 thiserror.workspace = true
 clap.workspace = true
@@ -50,8 +53,8 @@ path = "tests/riscv_tests.rs"
 harness = false
 
 [[test]]
-name = "arch_tests"
-path = "tests/arch_tests.rs"
+name = "riscv_arch_test"
+path = "tests/riscv_arch_test.rs"
 harness = false
 
 # Examples at workspace root

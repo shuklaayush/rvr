@@ -248,8 +248,8 @@ pub fn compare_block_vs_linear(
 /// This is much faster for the common case (no divergence) since it doesn't
 /// require per-instruction tracer overhead.
 pub fn compare_checkpoint(
-    ref_runner: &mut rvr::Runner,
-    test_runner: &mut rvr::Runner,
+    ref_runner: &mut crate::Runner,
+    test_runner: &mut crate::Runner,
     checkpoint_interval: u64,
     max_instrs: Option<u64>,
 ) -> CompareResult {
@@ -257,7 +257,7 @@ pub fn compare_checkpoint(
     let mut matched: u64 = 0;
 
     // Helper to compare register files
-    let regs_match = |ref_r: &rvr::Runner, test_r: &rvr::Runner| -> bool {
+    let regs_match = |ref_r: &crate::Runner, test_r: &crate::Runner| -> bool {
         for i in 0..ref_r.num_regs() {
             if ref_r.get_register(i) != test_r.get_register(i) {
                 return false;
@@ -409,7 +409,7 @@ pub fn compare_checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::test::diff::state::DiffState;
+    use crate::test_support::diff::state::DiffState;
 
     /// Mock executor for testing.
     struct MockExecutor {
