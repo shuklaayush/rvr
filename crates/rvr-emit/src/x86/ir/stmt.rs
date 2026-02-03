@@ -1,6 +1,6 @@
 use rvr_ir::{Stmt, WriteTarget, Xlen};
 
-use super::X86Emitter;
+use crate::x86::X86Emitter;
 use crate::x86::registers::reserved;
 
 impl<X: Xlen> X86Emitter<X> {

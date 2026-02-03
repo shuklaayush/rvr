@@ -1,6 +1,6 @@
 use rvr_ir::{InstrIR, Terminator, Xlen};
 
-use super::X86Emitter;
+use crate::x86::X86Emitter;
 use crate::x86::registers::reserved;
 use super::stmt_writes_to_exited;
 
