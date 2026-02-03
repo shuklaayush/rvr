@@ -100,6 +100,7 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **Dev-Only Suites Stay in Tests**: riscv-tests and riscv-arch-test must live under `crates/rvr/tests/`; the CLI should not expose or depend on them.
 - **No Dev CLI Commands**: Do not add CLI commands for dev-only suites (tests/benches). Use `cargo test` / `cargo bench`.
 - **No Blanket Allows**: Avoid `#[allow(dead_code)]` or similar to hide issues; delete unused code instead.
+- **No Unnecessary Clippy Allows**: Only use `#[allow(clippy::...)]` with a short justification and minimal scope; prefer fixing the lint.
 - **Platform Gating**: Guard asm-backend tests with `cfg(target_arch = "...")` to keep CI portable.
 
 ### Repository Maintenance
