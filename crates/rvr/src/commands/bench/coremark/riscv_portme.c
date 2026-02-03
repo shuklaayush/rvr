@@ -20,38 +20,46 @@ volatile ee_s32 seed4_volatile = ITERATIONS;
 volatile ee_s32 seed5_volatile = 0;
 ee_u32 default_num_contexts = 1;
 
-static inline ee_u64 rdcycle(void) {
-    ee_u64 val;
+typedef struct {
 #if __riscv_xlen == 64
-    __asm__ volatile ("rdcycle %0" : "=r"(val));
+    long tv_sec;
+    long tv_nsec;
 #else
-    ee_u32 lo, hi, hi2;
-    do {
-        __asm__ volatile ("rdcycleh %0" : "=r"(hi));
-        __asm__ volatile ("rdcycle %0" : "=r"(lo));
-        __asm__ volatile ("rdcycleh %0" : "=r"(hi2));
-    } while (hi != hi2);
-    val = ((ee_u64)hi << 32) | lo;
+    long long tv_sec;
+    long long tv_nsec;
 #endif
-    return val;
+} rv_timespec;
+
+static inline long syscall2(long n, long a0, long a1) {
+    register long _a0 __asm__("a0") = a0;
+    register long _a1 __asm__("a1") = a1;
+    register long _n __asm__("a7") = n;
+    __asm__ volatile ("ecall" : "+r"(_a0) : "r"(_a1), "r"(_n) : "memory");
+    return _a0;
+}
+
+#if __riscv_xlen == 64
+#define SYS_clock_gettime 113
+#else
+#define SYS_clock_gettime64 403
+#endif
+
+static inline ee_u64 now_nanos(void) {
+    rv_timespec ts;
+#if __riscv_xlen == 64
+    syscall2(SYS_clock_gettime, 1 /* CLOCK_MONOTONIC */, (long)&ts);
+#else
+    syscall2(SYS_clock_gettime64, 1 /* CLOCK_MONOTONIC */, (long)&ts);
+#endif
+    return ((ee_u64)ts.tv_sec * (ee_u64)1000000000ULL) + (ee_u64)ts.tv_nsec;
 }
 
 static CORE_TICKS start_time_val, stop_time_val;
 
-void start_time(void) { start_time_val = rdcycle(); }
-void stop_time(void) { stop_time_val = rdcycle(); }
+void start_time(void) { start_time_val = now_nanos(); }
+void stop_time(void) { stop_time_val = now_nanos(); }
 CORE_TICKS get_time(void) { return stop_time_val - start_time_val; }
-/* rdcycle returns instruction count in rvr, not actual cycles.
- * Use 10M as divisor so typical runs (~300M instrs) report ~30 seconds,
- * passing CoreMark's 10-second minimum validation requirement. */
-secs_ret time_in_secs(CORE_TICKS ticks) { return (secs_ret)(ticks / 10000000ULL); }
-
-static inline long syscall1(long n, long a0) {
-    register long _a0 __asm__("a0") = a0;
-    register long _n __asm__("a7") = n;
-    __asm__ volatile ("ecall" : "+r"(_a0) : "r"(_n) : "memory");
-    return _a0;
-}
+secs_ret time_in_secs(CORE_TICKS ticks) { return (secs_ret)(ticks / EE_TICKS_PER_SEC); }
 
 static inline long syscall3(long n, long a0, long a1, long a2) {
     register long _a0 __asm__("a0") = a0;
@@ -59,6 +67,13 @@ static inline long syscall3(long n, long a0, long a1, long a2) {
     register long _a2 __asm__("a2") = a2;
     register long _n __asm__("a7") = n;
     __asm__ volatile ("ecall" : "+r"(_a0) : "r"(_a1), "r"(_a2), "r"(_n) : "memory");
+    return _a0;
+}
+
+static inline long syscall1(long n, long a0) {
+    register long _a0 __asm__("a0") = a0;
+    register long _n __asm__("a7") = n;
+    __asm__ volatile ("ecall" : "+r"(_a0) : "r"(_n) : "memory");
     return _a0;
 }
 

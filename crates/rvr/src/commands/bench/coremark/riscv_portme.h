@@ -9,6 +9,7 @@
 #define USE_CLOCK 0
 #define HAS_STDIO 0
 #define HAS_PRINTF 0
+#define EE_TICKS_PER_SEC 1000000000ULL
 
 typedef unsigned long long CORE_TICKS;
 
