@@ -75,11 +75,11 @@ pub fn generate_c_compare<X: Xlen>(
         "uint64_t"
     };
 
+    let memory_size = 1u64 << config.memory_bits;
     let code = format!(
         r##"// Auto-generated pure C differential comparison program
 // Compares two backends instruction by instruction without Rust FFI overhead
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,21 +90,19 @@ pub fn generate_c_compare<X: Xlen>(
 #include <time.h>
 
 // Configuration
-#define ENTRY_POINT      0x{entry_point:x}ULL
-#define MAX_INSTRS       {max_instrs}ULL
-#define CHECKPOINT_INTERVAL {checkpoint_interval}ULL
-#define MEMORY_BITS      {memory_bits}
-#define MEMORY_SIZE      (1ULL << MEMORY_BITS)
-#define NUM_REGS         {num_regs}
-#define NUM_CSRS         4096
-#define INITIAL_BRK      0x{initial_brk:x}ULL
-#define INITIAL_SP       0x{initial_sp:x}ULL
-#define INITIAL_GP       0x{initial_gp:x}ULL
+static const uint64_t kEntryPoint = 0x{entry_point:x}ULL;
+static const uint64_t kMaxInstrs = {max_instrs}ULL;
+static const uint64_t kCheckpointInterval = {checkpoint_interval}ULL;
+static const uint64_t kMemorySize = {memory_size}ULL;
+static const uint64_t kInitialBrk = 0x{initial_brk:x}ULL;
+static const uint64_t kInitialSp = 0x{initial_sp:x}ULL;
+static const uint64_t kInitialGp = 0x{initial_gp:x}ULL;
+enum {{ kNumRegs = {num_regs}, kNumCsrs = 4096 }};
 
 // RvState struct - must match the generated code layout exactly
 // This is the ABI contract between the comparison and the backends
 typedef struct {{
-    {reg_type} regs[NUM_REGS];
+    {reg_type} regs[kNumRegs];
     {reg_type} pc;
     uint64_t instret;
 {target_instret_field}
@@ -117,7 +115,7 @@ typedef struct {{
     {reg_type} start_brk;
     uint8_t* memory;
     // Note: CSRs and tracer fields follow but we don't access them
-    {reg_type} csrs[NUM_CSRS];
+    {reg_type} csrs[kNumCsrs];
 }} RvState;
 
 // Function pointer type for rv_execute_from
@@ -152,7 +150,7 @@ static bool load_backend(Backend* b, const char* path, const char* name) {{
     }}
 
     // Allocate memory
-    b->memory = mmap(NULL, MEMORY_SIZE, PROT_READ | PROT_WRITE,
+    b->memory = mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (b->memory == MAP_FAILED) {{
         fprintf(stderr, "Failed to allocate memory for %s\\n", name);
@@ -162,11 +160,11 @@ static bool load_backend(Backend* b, const char* path, const char* name) {{
 
     // Initialize state
     memset(&b->state, 0, sizeof(b->state));
-    b->state.pc = ENTRY_POINT;
-    b->state.brk = INITIAL_BRK;
-    b->state.start_brk = INITIAL_BRK;
-    if (INITIAL_SP) b->state.regs[2] = INITIAL_SP;
-    if (INITIAL_GP) b->state.regs[3] = INITIAL_GP;
+    b->state.pc = kEntryPoint;
+    b->state.brk = kInitialBrk;
+    b->state.start_brk = kInitialBrk;
+    if (kInitialSp) b->state.regs[2] = kInitialSp;
+    if (kInitialGp) b->state.regs[3] = kInitialGp;
     b->state.memory = b->memory;
 
     return true;
@@ -180,7 +178,7 @@ static void load_segments(Backend* b) {{
 // Unload backend
 static void unload_backend(Backend* b) {{
     if (b->memory && b->memory != MAP_FAILED) {{
-        munmap(b->memory, MEMORY_SIZE);
+        munmap(b->memory, kMemorySize);
     }}
     if (b->handle) {{
         dlclose(b->handle);
@@ -190,7 +188,7 @@ static void unload_backend(Backend* b) {{
 // Compare two states, return true if they match
 static bool states_match(const RvState* ref, const RvState* test) {{
     if (ref->pc != test->pc) return false;
-    for (int i = 0; i < NUM_REGS; i++) {{
+    for (int i = 0; i < kNumRegs; i++) {{
         if (ref->regs[i] != test->regs[i]) return false;
     }}
     return true;
@@ -202,7 +200,7 @@ static void print_divergence(uint64_t instr, const RvState* ref, const RvState* 
     fprintf(stderr, "Reference PC: 0x%016llx\\n", (unsigned long long)ref->pc);
     fprintf(stderr, "Test PC:      0x%016llx\\n", (unsigned long long)test->pc);
 
-    for (int i = 0; i < NUM_REGS; i++) {{
+    for (int i = 0; i < kNumRegs; i++) {{
         if (ref->regs[i] != test->regs[i]) {{
             fprintf(stderr, "  x%d: ref=0x%016llx test=0x%016llx\\n",
                     i, (unsigned long long)ref->regs[i],
@@ -214,20 +212,20 @@ static void print_divergence(uint64_t instr, const RvState* ref, const RvState* 
 // Reset backend state and memory to initial image
 static bool reset_backend(Backend* b) {{
     if (b->memory && b->memory != MAP_FAILED) {{
-        munmap(b->memory, MEMORY_SIZE);
+        munmap(b->memory, kMemorySize);
     }}
-    b->memory = mmap(NULL, MEMORY_SIZE, PROT_READ | PROT_WRITE,
+    b->memory = mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (b->memory == MAP_FAILED) {{
         fprintf(stderr, "Failed to allocate memory for %s\\n", b->name);
         return false;
     }}
     memset(&b->state, 0, sizeof(b->state));
-    b->state.pc = ENTRY_POINT;
-    b->state.brk = INITIAL_BRK;
-    b->state.start_brk = INITIAL_BRK;
-    if (INITIAL_SP) b->state.regs[2] = INITIAL_SP;
-    if (INITIAL_GP) b->state.regs[3] = INITIAL_GP;
+    b->state.pc = kEntryPoint;
+    b->state.brk = kInitialBrk;
+    b->state.start_brk = kInitialBrk;
+    if (kInitialSp) b->state.regs[2] = kInitialSp;
+    if (kInitialGp) b->state.regs[3] = kInitialGp;
     b->state.memory = b->memory;
     load_segments(b);
     return true;
@@ -258,14 +256,14 @@ static int step_and_compare(Backend* ref, Backend* test, uint64_t* matched) {{
 
 // Fast checkpoint + binary search to first mismatch
 static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* matched) {{
-    uint64_t limit = MAX_INSTRS;
+    uint64_t limit = kMaxInstrs;
     uint64_t last_match = 0;
     uint64_t mismatch_hi = 0;
     *matched = 0;
 
     while (last_match < limit) {{
         uint64_t remaining = limit - last_match;
-        uint64_t batch = (remaining < CHECKPOINT_INTERVAL) ? remaining : CHECKPOINT_INTERVAL;
+        uint64_t batch = (remaining < kCheckpointInterval) ? remaining : kCheckpointInterval;
 
         ref->state.target_instret = ref->state.instret + batch;
         test->state.target_instret = test->state.instret + batch;
@@ -363,8 +361,8 @@ int main(int argc, char** argv) {{
     load_segments(&ref);
     load_segments(&test);
 
-    printf("Starting comparison at PC=0x%llx\\n", (unsigned long long)ENTRY_POINT);
-    printf("Checkpoint: %llu instructions\\n", (unsigned long long)CHECKPOINT_INTERVAL);
+    printf("Starting comparison at PC=0x%llx\\n", (unsigned long long)kEntryPoint);
+    printf("Checkpoint: %llu instructions\\n", (unsigned long long)kCheckpointInterval);
 
     // Run comparison
     double start = get_time();
@@ -394,7 +392,7 @@ int main(int argc, char** argv) {{
         entry_point = config.entry_point,
         max_instrs = config.max_instrs,
         checkpoint_interval = config.checkpoint_interval,
-        memory_bits = config.memory_bits,
+        memory_size = memory_size,
         num_regs = config.num_regs,
         initial_brk = config.initial_brk,
         initial_sp = config.initial_sp,
@@ -459,7 +457,7 @@ fn generate_segment_load<X: Xlen>(segments: &[MemorySegment<X>]) -> String {
         if !seg.data.is_empty() {
             // Copy file data - mask address to fit within memory
             code.push_str(&format!(
-                "    memcpy(b->memory + (segment_{}_addr & (MEMORY_SIZE - 1)), segment_{}_data, segment_{}_size);\n",
+                "    memcpy(b->memory + (segment_{}_addr & (kMemorySize - 1)), segment_{}_data, segment_{}_size);\n",
                 i, i, i
             ));
         }
@@ -469,7 +467,7 @@ fn generate_segment_load<X: Xlen>(segments: &[MemorySegment<X>]) -> String {
             let bss_start = vaddr + filesz;
             let bss_size = memsz - filesz;
             code.push_str(&format!(
-                "    memset(b->memory + (0x{:x}ULL & (MEMORY_SIZE - 1)), 0, {});\n",
+                "    memset(b->memory + (0x{:x}ULL & (kMemorySize - 1)), 0, {});\n",
                 bss_start, bss_size
             ));
         }

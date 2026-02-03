@@ -107,6 +107,7 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **Question Before Optimizing**: Don't optimize complexity that shouldn't exist. Before adding prefixes like `rv32_`/`rv64_` or separate types, ask: can this be unified? A single generic type is better than duplicated code paths.
 - **No Bloat**: KISS principle. Only create abstractions when there's actual logic or variation.
 - **No Magic Constants**: Use `const` with descriptive names.
+- **Prefer constexpr**: Use `constexpr` for constants where supported.
 - **No Constant Duplication**: For shared addresses like the HTIF `tohost` location, define a single `TOHOST_ADDR` constant in a shared location and reuse it instead of re-declaring the value across modules.
 - **No Preprocessor Macros in Generated C**: Generated C sources must not contain preprocessor macros (`#if`, `#ifdef`, `#define`, etc.). Keep generated C plain and macro-free.
 - **No Warnings**: Code must compile without warnings. Use `#![deny(warnings)]` in crate roots.
