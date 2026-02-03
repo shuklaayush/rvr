@@ -158,6 +158,10 @@ impl BufferedInProcessExecutor {
         self.runner.buffered_diff_reset();
         self.buffer_index = 0;
 
+        // Run a single block at a time by setting a small instret target.
+        let target = self.runner.instret().saturating_add(1);
+        let _ = self.runner.set_target_instret(target);
+
         let pc = self.runner.get_pc();
         self.runner.clear_exit();
 
