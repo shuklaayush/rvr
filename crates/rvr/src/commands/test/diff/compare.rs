@@ -314,9 +314,13 @@ pub fn compare_checkpoint(
         let test_pc = test_runner.get_pc();
         let test_result = test_runner.execute_from(test_pc);
 
-        // Check for execution errors
-        let ref_exited = ref_result.is_err() || ref_runner.exit_code() != 0;
-        let test_exited = test_result.is_err() || test_runner.exit_code() != 0;
+        // Check exit status and errors
+        let ref_has_exited = ref_runner.has_exited();
+        let test_has_exited = test_runner.has_exited();
+        let ref_exit_code = ref_runner.exit_code();
+        let test_exit_code = test_runner.exit_code();
+        let ref_error = ref_result.is_err();
+        let test_error = test_result.is_err();
 
         // Get actual instructions executed
         let ref_executed = ref_runner.instret() - ref_start_instret;
@@ -326,15 +330,18 @@ pub fn compare_checkpoint(
         let ref_pc_after = ref_runner.get_pc();
         let test_pc_after = test_runner.get_pc();
 
-        if ref_pc_after == test_pc_after
-            && ref_executed == test_executed
+        if ref_executed == test_executed
             && regs_match(ref_runner, test_runner)
-            && ref_exited == test_exited
+            && ref_has_exited == test_has_exited
+            && ref_exit_code == test_exit_code
+            && !ref_error
+            && !test_error
+            && (ref_has_exited || ref_pc_after == test_pc_after)
         {
             // States match - continue to next checkpoint
             matched += ref_executed;
 
-            if ref_exited || test_exited {
+            if ref_has_exited || test_has_exited {
                 break;
             }
             continue;
@@ -350,21 +357,21 @@ pub fn compare_checkpoint(
                 expected: DiffState {
                     pc: ref_pc_after,
                     instret: ref_runner.instret(),
-                    is_exit: ref_exited,
+                    is_exit: ref_has_exited,
                     ..Default::default()
                 },
                 actual: DiffState {
                     pc: test_pc_after,
                     instret: test_runner.instret(),
-                    is_exit: test_exited,
+                    is_exit: test_has_exited,
                     ..Default::default()
                 },
                 kind: if ref_pc_after != test_pc_after {
                     DivergenceKind::Pc
                 } else if !regs_match(ref_runner, test_runner) {
                     DivergenceKind::RegValue
-                } else if ref_exited != test_exited {
-                    if ref_exited {
+                } else if ref_has_exited != test_has_exited {
+                    if ref_has_exited {
                         DivergenceKind::ActualTail
                     } else {
                         DivergenceKind::ExpectedTail

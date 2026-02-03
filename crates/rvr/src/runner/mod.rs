@@ -427,6 +427,11 @@ impl Runner {
         self.inner.exit_code()
     }
 
+    /// Check if the VM has exited.
+    pub fn has_exited(&self) -> bool {
+        self.inner.has_exited()
+    }
+
     /// Get a register value.
     pub fn get_register(&self, reg: usize) -> u64 {
         self.inner.get_register(reg)

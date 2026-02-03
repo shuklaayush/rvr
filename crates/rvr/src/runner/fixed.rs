@@ -94,6 +94,10 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for FixedAddrRunner<X, NUM_REGS>
         self.state().exit_code
     }
 
+    fn has_exited(&self) -> bool {
+        self.state().has_exited != 0
+    }
+
     fn entry_point(&self) -> u64 {
         X::to_u64(self.elf_image.entry_point)
     }

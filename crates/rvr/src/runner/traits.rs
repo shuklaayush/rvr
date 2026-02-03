@@ -22,6 +22,9 @@ pub trait RunnerImpl {
     /// Get exit code.
     fn exit_code(&self) -> u8;
 
+    /// Check if the VM has exited.
+    fn has_exited(&self) -> bool;
+
     /// Get entry point from ELF.
     fn entry_point(&self) -> u64;
 
