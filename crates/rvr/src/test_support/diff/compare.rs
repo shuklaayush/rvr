@@ -266,6 +266,48 @@ pub fn compare_checkpoint(
         true
     };
 
+    struct RunSnapshot {
+        state: DiffState,
+        has_exited: bool,
+        exit_code: u8,
+        error: bool,
+    }
+
+    let run_to_target = |runner: &mut crate::Runner, target_instret: u64| -> RunSnapshot {
+        let result = runner.reset_and_run_to_instret(target_instret);
+        RunSnapshot {
+            state: DiffState {
+                pc: runner.get_pc(),
+                instret: runner.instret(),
+                is_exit: runner.has_exited(),
+                ..Default::default()
+            },
+            has_exited: runner.has_exited(),
+            exit_code: runner.exit_code(),
+            error: result.is_err(),
+        }
+    };
+
+    let checkpoint_match = |ref_snap: &RunSnapshot,
+                            test_snap: &RunSnapshot,
+                            ref_r: &crate::Runner,
+                            test_r: &crate::Runner,
+                            target_instret: u64|
+     -> bool {
+        let executed_ok =
+            ref_snap.state.instret == target_instret && test_snap.state.instret == target_instret;
+        let both_exited = ref_snap.has_exited && test_snap.has_exited;
+        let exit_match = ref_snap.exit_code == test_snap.exit_code;
+        let errors_ok = !(ref_snap.error || test_snap.error) || (both_exited && exit_match);
+
+        executed_ok
+            && regs_match(ref_r, test_r)
+            && ref_snap.has_exited == test_snap.has_exited
+            && exit_match
+            && errors_ok
+            && (ref_snap.has_exited || ref_snap.state.pc == test_snap.state.pc)
+    };
+
     // Initial alignment: run a small number of instructions to synchronize PCs
     // Different backends may start at slightly different PCs
     let ref_pc = ref_runner.get_pc();
@@ -350,52 +392,59 @@ pub fn compare_checkpoint(
             continue;
         }
 
-        // States differ - need to find exact divergence point
-        // For now, report at checkpoint granularity
-        // TODO: Implement binary search to find exact instruction
-        eprintln!(
-            "Checkpoint mismatch: ref_pc=0x{ref_pc_after:016x} test_pc=0x{test_pc_after:016x} ref_instret={} test_instret={} ref_executed={} test_executed={} ref_exited={} test_exited={} ref_exit_code={} test_exit_code={} ref_error={} test_error={}",
-            ref_runner.instret(),
-            test_runner.instret(),
-            ref_executed,
-            test_executed,
-            ref_has_exited,
-            test_has_exited,
-            ref_exit_code,
-            test_exit_code,
-            ref_error,
-            test_error
-        );
+        // States differ - find exact divergence point via binary search
+        let start_instret = matched;
+        let max_steps = ref_executed.min(test_executed).min(batch_size);
+        let mut low = 0u64;
+        let mut high = max_steps;
+
+        while low < high {
+            let mid = (low + high + 1) / 2;
+            let target = start_instret + mid;
+            let ref_snap = run_to_target(ref_runner, target);
+            let test_snap = run_to_target(test_runner, target);
+
+            if checkpoint_match(&ref_snap, &test_snap, ref_runner, test_runner, target) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        let divergence_at = matched + low;
+        let target = start_instret + low + 1;
+        let ref_snap = run_to_target(ref_runner, target);
+        let test_snap = run_to_target(test_runner, target);
+
+        let kind = if ref_snap.state.pc != test_snap.state.pc {
+            DivergenceKind::Pc
+        } else if !regs_match(ref_runner, test_runner) {
+            DivergenceKind::RegValue
+        } else if ref_snap.has_exited != test_snap.has_exited
+            || ref_snap.exit_code != test_snap.exit_code
+        {
+            if ref_snap.has_exited {
+                DivergenceKind::ActualTail
+            } else {
+                DivergenceKind::ExpectedTail
+            }
+        } else if ref_snap.state.instret != target || test_snap.state.instret != target {
+            if ref_snap.state.instret < test_snap.state.instret {
+                DivergenceKind::ActualTail
+            } else {
+                DivergenceKind::ExpectedTail
+            }
+        } else {
+            DivergenceKind::Pc
+        };
 
         return CompareResult {
-            matched: matched as usize,
+            matched: divergence_at as usize,
             divergence: Some(Divergence {
-                index: matched as usize,
-                expected: DiffState {
-                    pc: ref_pc_after,
-                    instret: ref_runner.instret(),
-                    is_exit: ref_has_exited,
-                    ..Default::default()
-                },
-                actual: DiffState {
-                    pc: test_pc_after,
-                    instret: test_runner.instret(),
-                    is_exit: test_has_exited,
-                    ..Default::default()
-                },
-                kind: if ref_pc_after != test_pc_after {
-                    DivergenceKind::Pc
-                } else if !regs_match(ref_runner, test_runner) {
-                    DivergenceKind::RegValue
-                } else if ref_has_exited != test_has_exited || ref_exit_code != test_exit_code {
-                    if ref_has_exited {
-                        DivergenceKind::ActualTail
-                    } else {
-                        DivergenceKind::ExpectedTail
-                    }
-                } else {
-                    DivergenceKind::Pc // Fallback
-                },
+                index: divergence_at as usize,
+                expected: ref_snap.state,
+                actual: test_snap.state,
+                kind,
             }),
         };
     }

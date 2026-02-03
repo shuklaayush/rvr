@@ -139,16 +139,9 @@ impl std::fmt::Display for Compiler {
 /// Only RSP and RBP are callee-saved.
 /// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
 ///
-/// TODO: File LLVM bug - using all 12 causes register allocation failure during LTO.
-///
-/// Error: `ld.lld-21: error: <unknown>:0:0: ran out of registers during register
-/// allocation in function 'B_...'`
-///
-/// preserve_none + 12 register args + musttail creates extreme register pressure.
-/// At tail call sites, we need 12 args + scratch for dispatch table + computed index.
-/// LTO transforms may create points where all values must be live simultaneously.
-/// This shouldn't be a hard error - LLVM should always be able to spill pure C code.
-/// Workaround: use 11 slots instead of 12.
+/// Using all 12 args with preserve_none + musttail can exhaust LLVM's register allocator
+/// under LTO (e.g., lld reports "ran out of registers during register allocation").
+/// We reserve one slot to keep register pressure manageable at tail-call sites.
 pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 11;
 
 /// AArch64 preserve_none: 24 argument registers.

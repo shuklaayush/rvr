@@ -64,8 +64,7 @@ pub fn elf_to_isa(elf_path: &Path) -> std::io::Result<String> {
     // Check class (32 or 64 bit)
     let is_64 = elf_data[4] == 2;
 
-    // For now, assume standard extensions
-    // TODO: Parse ELF attributes to determine actual extensions
+    // Assume standard extensions when ELF attributes are unavailable.
     Ok(if is_64 {
         "rv64imac".to_string()
     } else {

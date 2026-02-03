@@ -598,6 +598,19 @@ impl Runner {
         }
     }
 
+    pub(crate) fn reset_and_run_to_instret(
+        &mut self,
+        target_instret: u64,
+    ) -> Result<(std::time::Duration, u64), RunError> {
+        self.inner.load_segments();
+        self.inner.reset();
+        self.setup_initial_regs();
+        self.inner.set_target_instret(target_instret);
+        self.clear_exit();
+        let entry_point = self.inner.entry_point();
+        self.execute_from(entry_point)
+    }
+
     /// Run the program and return the result.
     pub fn run(&mut self) -> Result<RunResult, RunError> {
         // Save target_instret before reset (reset() disables the suspender)
