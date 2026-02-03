@@ -168,9 +168,8 @@ impl<X: Xlen> Pipeline<X> {
             .filter(|seg| seg.is_executable())
             .collect();
 
-        // Fallback: if no segments have PF_X, check section flags (SHF_EXECINSTR)
-        // This handles buggy linker scripts that use section flags instead of program header flags
-        // TODO: Fix upstream riscv-tests/benchmarks/common/test.ld to use FLAGS(5) instead of FLAGS(SHF_ALLOC | SHF_EXECINSTR)
+        // Fallback: if no segments have PF_X, check section flags (SHF_EXECINSTR).
+        // This handles linker scripts that set only section flags instead of program header flags.
         if exec_segments.is_empty() {
             exec_segments = self
                 .image
