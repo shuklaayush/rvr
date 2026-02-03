@@ -1,5 +1,3 @@
-#![feature(test)]
-
 extern crate test;
 
 use std::path::PathBuf;
@@ -7,16 +5,25 @@ use std::path::PathBuf;
 use test::Bencher;
 
 use rvr::bench::{self, Arch};
-#[path = "support/mod.rs"]
+use rvr::{AddressMode, CompileOptions, Compiler, InstretMode, SyscallMode};
+use rvr_emit::Backend;
+
+#[path = "mod.rs"]
 mod bench_support;
 
 use bench_support::{
     coremark, find_project_root, libriscv, polkavm, riscv_tests, rust_bench, BenchmarkInfo,
     BenchmarkSource,
 };
-use bench_support::registry::find_benchmark;
-use rvr::{AddressMode, CompileOptions, Compiler, InstretMode, SyscallMode};
-use rvr_emit::Backend;
+
+pub fn bench_case(name: &str, b: &mut Bencher) {
+    let info = bench_support::registry::find_benchmark(name)
+        .unwrap_or_else(|| panic!("unknown benchmark: {}", name));
+    let _ = run_once(info);
+    b.iter(|| {
+        let _ = run_once(info);
+    });
+}
 
 fn parse_backend() -> Backend {
     match std::env::var("RVR_BENCH_BACKEND").as_deref() {
@@ -103,7 +110,11 @@ fn ensure_compiled(
     backend: Backend,
 ) -> Result<PathBuf, String> {
     let out_dir = bench_output_dir(project_dir, info, arch, backend);
-    let so_path = out_dir.join(format!("lib{}.{}", info.name, if cfg!(target_os = "macos") { "dylib" } else { "so" }));
+    let so_path = out_dir.join(format!(
+        "lib{}.{}",
+        info.name,
+        if cfg!(target_os = "macos") { "dylib" } else { "so" }
+    ));
     if so_path.exists() && !should_recompile() {
         return Ok(out_dir);
     }
@@ -126,36 +137,3 @@ fn run_once(info: &BenchmarkInfo) -> Result<(), String> {
     let _ = bench::run_bench_auto(&out_dir, &elf_path, 1)?;
     Ok(())
 }
-
-fn bench_case(name: &str, b: &mut Bencher) {
-    let info = find_benchmark(name).unwrap_or_else(|| panic!("unknown benchmark: {}", name));
-    let _ = run_once(info);
-    b.iter(|| {
-        let _ = run_once(info);
-    });
-}
-
-macro_rules! bench_entry {
-    ($fn_name:ident, $name:expr) => {
-        #[bench]
-        fn $fn_name(b: &mut Bencher) {
-            bench_case($name, b);
-        }
-    };
-}
-
-bench_entry!(bench_towers, "towers");
-bench_entry!(bench_qsort, "qsort");
-bench_entry!(bench_rsort, "rsort");
-bench_entry!(bench_median, "median");
-bench_entry!(bench_multiply, "multiply");
-bench_entry!(bench_vvadd, "vvadd");
-bench_entry!(bench_memcpy, "memcpy");
-bench_entry!(bench_dhrystone, "dhrystone");
-bench_entry!(bench_fib, "fib");
-bench_entry!(bench_fib_asm, "fib-asm");
-bench_entry!(bench_coremark, "coremark");
-bench_entry!(bench_minimal, "minimal");
-bench_entry!(bench_prime_sieve, "prime-sieve");
-bench_entry!(bench_pinky, "pinky");
-bench_entry!(bench_reth, "reth");
