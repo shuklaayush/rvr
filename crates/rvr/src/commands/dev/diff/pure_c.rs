@@ -5,7 +5,7 @@ use rvr_ir::Xlen;
 
 use rvr::test_support::diff;
 
-use super::compile::compile_for_checkpoint;
+use rvr::Compiler;
 
 /// Run pure-C comparison: generates and runs a standalone C comparison program.
 ///
@@ -15,6 +15,7 @@ pub(super) fn run_pure_c_comparison(
     output_dir: &Path,
     ref_backend: Backend,
     test_backend: Backend,
+    compiler: &Compiler,
     cc: &str,
     max_instrs: Option<u64>,
 ) -> diff::CompareResult {
@@ -49,8 +50,8 @@ pub(super) fn run_pure_c_comparison(
     // Compile both backends
     let ref_dir = output_dir.join("ref");
     eprintln!("Compiling reference ({:?})...", ref_backend);
-    if !compile_for_checkpoint(elf_path, &ref_dir, ref_backend, cc) {
-        eprintln!("Error: Failed to compile reference");
+    if let Err(err) = diff::compile_for_checkpoint(elf_path, &ref_dir, ref_backend, compiler) {
+        eprintln!("Error: {}", err);
         return diff::CompareResult {
             matched: 0,
             divergence: None,
@@ -59,8 +60,8 @@ pub(super) fn run_pure_c_comparison(
 
     let test_dir = output_dir.join("test");
     eprintln!("Compiling test ({:?})...", test_backend);
-    if !compile_for_checkpoint(elf_path, &test_dir, test_backend, cc) {
-        eprintln!("Error: Failed to compile test");
+    if let Err(err) = diff::compile_for_checkpoint(elf_path, &test_dir, test_backend, compiler) {
+        eprintln!("Error: {}", err);
         return diff::CompareResult {
             matched: 0,
             divergence: None,

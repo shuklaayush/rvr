@@ -6,11 +6,8 @@ use rvr_emit::Backend;
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
 use rvr::test_support::{diff, trace};
-
-mod compile;
 mod pure_c;
 
-use compile::{compile_for_checkpoint, compile_for_diff, compile_for_diff_block};
 use pure_c::run_pure_c_comparison;
 
 #[derive(Clone, Copy, Debug)]
@@ -68,7 +65,7 @@ fn resolve_diff_backends(
     }
 
     if let Some(backend) = ref_backend.as_backend()
-        && !backend_supports_diff(backend)
+        && !diff::backend_supports_diff(backend)
     {
         return Err(format!(
             "backend {:?} does not support diff tracing",
@@ -76,7 +73,7 @@ fn resolve_diff_backends(
         ));
     }
     if let Some(backend) = test_backend.as_backend()
-        && !backend_supports_diff(backend)
+        && !diff::backend_supports_diff(backend)
     {
         return Err(format!(
             "backend {:?} does not support diff tracing",
@@ -89,14 +86,6 @@ fn resolve_diff_backends(
 
 fn should_skip_test(name: &str) -> bool {
     matches!(name, "rv32ui-p-fence_i" | "rv64ui-p-fence_i")
-}
-
-fn backend_supports_diff(backend: Backend) -> bool {
-    matches!(backend, Backend::C | Backend::ARM64Asm | Backend::X86Asm)
-}
-
-fn backend_supports_buffered_diff(backend: Backend) -> bool {
-    matches!(backend, Backend::C)
 }
 
 // ============================================================================
@@ -221,8 +210,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
     let use_block_comparison = block_requested
         && matches!(ref_backend, DiffBackend::Backend(_))
         && matches!(test_backend, DiffBackend::Backend(_))
-        && backend_supports_buffered_diff(ref_backend.as_backend().unwrap())
-        && backend_supports_buffered_diff(test_backend.as_backend().unwrap());
+        && diff::backend_supports_buffered_diff(ref_backend.as_backend().unwrap())
+        && diff::backend_supports_buffered_diff(test_backend.as_backend().unwrap());
     if block_requested && !use_block_comparison {
         eprintln!(
             "Warning: block/hybrid requested but buffered diff not supported for this pair; falling back to instruction mode."
@@ -250,6 +239,14 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
         );
     }
 
+    let compiler: rvr::Compiler = match cc.parse() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: invalid compiler: {}", e);
+            return EXIT_FAILURE;
+        }
+    };
+
     // Determine what to compile based on mode and granularity
     let result = if use_pure_c {
         // Pure-C comparison: generates a standalone C program
@@ -258,6 +255,7 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
             &output_dir,
             ref_backend.as_backend().unwrap(),
             test_backend.as_backend().unwrap(),
+            &compiler,
             cc,
             max_instrs,
         )
@@ -275,8 +273,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
                 "Compiling block executor ({:?} with buffered-diff)...",
                 backend
             );
-            if !compile_for_diff_block(elf_path, &dir, backend, cc) {
-                eprintln!("Error: Failed to compile block executor");
+            if let Err(err) = diff::compile_for_diff_block(elf_path, &dir, backend, &compiler) {
+                eprintln!("Error: {}", err);
                 return EXIT_FAILURE;
             }
             dir
@@ -289,8 +287,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
             let dir = output_dir.join("linear");
             let backend = test_backend.as_backend().unwrap();
             eprintln!("Compiling linear executor ({:?} with diff)...", backend);
-            if !compile_for_diff(elf_path, &dir, backend, cc) {
-                eprintln!("Error: Failed to compile linear executor");
+            if let Err(err) = diff::compile_for_diff(elf_path, &dir, backend, &compiler) {
+                eprintln!("Error: {}", err);
                 return EXIT_FAILURE;
             }
             dir
@@ -332,8 +330,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
             let dir = output_dir.join("ref");
             let backend = ref_backend.as_backend().unwrap();
             eprintln!("Compiling reference ({:?} for checkpoint)...", backend);
-            if !compile_for_checkpoint(elf_path, &dir, backend, cc) {
-                eprintln!("Error: Failed to compile reference");
+            if let Err(err) = diff::compile_for_checkpoint(elf_path, &dir, backend, &compiler) {
+                eprintln!("Error: {}", err);
                 return EXIT_FAILURE;
             }
             dir
@@ -345,8 +343,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
             let dir = output_dir.join("test");
             let backend = test_backend.as_backend().unwrap();
             eprintln!("Compiling test ({:?} for checkpoint)...", backend);
-            if !compile_for_checkpoint(elf_path, &dir, backend, cc) {
-                eprintln!("Error: Failed to compile test");
+            if let Err(err) = diff::compile_for_checkpoint(elf_path, &dir, backend, &compiler) {
+                eprintln!("Error: {}", err);
                 return EXIT_FAILURE;
             }
             dir
@@ -388,8 +386,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
         } else if let Some(backend) = ref_backend.as_backend() {
             let dir = output_dir.join("ref");
             eprintln!("Compiling reference ({:?})...", backend);
-            if !compile_for_diff(elf_path, &dir, backend, cc) {
-                eprintln!("Error: Failed to compile reference");
+            if let Err(err) = diff::compile_for_diff(elf_path, &dir, backend, &compiler) {
+                eprintln!("Error: {}", err);
                 return EXIT_FAILURE;
             }
             dir
@@ -403,8 +401,8 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
         } else if let Some(backend) = test_backend.as_backend() {
             let dir = output_dir.join("test");
             eprintln!("Compiling test ({:?})...", backend);
-            if !compile_for_diff(elf_path, &dir, backend, cc) {
-                eprintln!("Error: Failed to compile test");
+            if let Err(err) = diff::compile_for_diff(elf_path, &dir, backend, &compiler) {
+                eprintln!("Error: {}", err);
                 return EXIT_FAILURE;
             }
             dir
