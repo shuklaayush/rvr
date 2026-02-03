@@ -330,12 +330,15 @@ pub fn compare_checkpoint(
         let ref_pc_after = ref_runner.get_pc();
         let test_pc_after = test_runner.get_pc();
 
+        let both_exited = ref_has_exited && test_has_exited;
+        let exit_match = ref_exit_code == test_exit_code;
+        let errors_ok = !(ref_error || test_error) || (both_exited && exit_match);
+
         if ref_executed == test_executed
             && regs_match(ref_runner, test_runner)
             && ref_has_exited == test_has_exited
-            && ref_exit_code == test_exit_code
-            && !ref_error
-            && !test_error
+            && exit_match
+            && errors_ok
             && (ref_has_exited || ref_pc_after == test_pc_after)
         {
             // States match - continue to next checkpoint
@@ -350,6 +353,20 @@ pub fn compare_checkpoint(
         // States differ - need to find exact divergence point
         // For now, report at checkpoint granularity
         // TODO: Implement binary search to find exact instruction
+        eprintln!(
+            "Checkpoint mismatch: ref_pc=0x{ref_pc_after:016x} test_pc=0x{test_pc_after:016x} ref_instret={} test_instret={} ref_executed={} test_executed={} ref_exited={} test_exited={} ref_exit_code={} test_exit_code={} ref_error={} test_error={}",
+            ref_runner.instret(),
+            test_runner.instret(),
+            ref_executed,
+            test_executed,
+            ref_has_exited,
+            test_has_exited,
+            ref_exit_code,
+            test_exit_code,
+            ref_error,
+            test_error
+        );
+
         return CompareResult {
             matched: matched as usize,
             divergence: Some(Divergence {
@@ -370,7 +387,7 @@ pub fn compare_checkpoint(
                     DivergenceKind::Pc
                 } else if !regs_match(ref_runner, test_runner) {
                     DivergenceKind::RegValue
-                } else if ref_has_exited != test_has_exited {
+                } else if ref_has_exited != test_has_exited || ref_exit_code != test_exit_code {
                     if ref_has_exited {
                         DivergenceKind::ActualTail
                     } else {
@@ -475,7 +492,7 @@ mod tests {
 
         assert_eq!(result.matched, 0);
         assert!(result.divergence.is_some());
-        assert_eq!(result.divergence.unwrap().kind, DivergenceKind::Pc);
+        assert_eq!(result.divergence.unwrap().kind, DivergenceKind::ActualTail);
     }
 
     #[test]
