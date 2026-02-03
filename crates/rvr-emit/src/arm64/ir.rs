@@ -136,11 +136,6 @@ impl<X: Xlen> Arm64Emitter<X> {
                 let target_pc = target
                     .map(|t| self.inputs.resolve_address(X::to_u64(t)))
                     .unwrap_or(fall_pc);
-                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
                 if target_pc != current_pc {
                     self.emit_store_next_pc_imm(target_pc);
                 } else {
@@ -150,11 +145,6 @@ impl<X: Xlen> Arm64Emitter<X> {
             }
             Terminator::Jump { target } => {
                 let target_pc = self.inputs.resolve_address(X::to_u64(*target));
-                if !self.inputs.is_valid_address(target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
                 self.emit_store_next_pc_imm(target_pc);
                 self.emit("b asm_exit");
             }
@@ -179,16 +169,6 @@ impl<X: Xlen> Arm64Emitter<X> {
                 let fall_target_pc = fall
                     .map(|f| self.inputs.resolve_address(X::to_u64(f)))
                     .unwrap_or(fall_pc);
-                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
-                if !self.inputs.is_valid_address(target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
 
                 let target_label = self.next_label("instret_target");
                 let done_label = self.next_label("instret_done");
@@ -231,11 +211,6 @@ impl<X: Xlen> Arm64Emitter<X> {
                 let target_pc = target
                     .map(|t| self.inputs.resolve_address(X::to_u64(t)))
                     .unwrap_or(fall_pc);
-                if target.is_some() && !self.inputs.is_valid_address(target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
                 if target_pc != current_pc {
                     self.emit_store_next_pc_imm(target_pc);
                 } else {
@@ -245,11 +220,6 @@ impl<X: Xlen> Arm64Emitter<X> {
             }
             Terminator::Jump { target } => {
                 let target_pc = self.inputs.resolve_address(X::to_u64(*target));
-                if !self.inputs.is_valid_address(target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
                 self.emit_store_next_pc_imm(target_pc);
                 self.emit("b asm_exit");
             }
@@ -274,16 +244,6 @@ impl<X: Xlen> Arm64Emitter<X> {
                 let fall_target_pc = fall
                     .map(|f| self.inputs.resolve_address(X::to_u64(f)))
                     .unwrap_or(fall_pc);
-                if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
-                if !self.inputs.is_valid_address(target_pc) {
-                    self.emit("b asm_trap");
-                    self.emit_label(&continue_label);
-                    return;
-                }
 
                 let target_label = self.next_label("instret_target");
                 let done_label = self.next_label("instret_done");

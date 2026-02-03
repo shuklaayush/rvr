@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 rvr-ir = { path = "../rvr-ir" }
 rvr-elf = { path = "../rvr-elf" }
