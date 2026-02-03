@@ -154,11 +154,7 @@ reg_t rv_sys_clock_gettime(RvState* restrict state, reg_t clk_id, reg_t tp) {{
     (void)clk_id;
     (void)state;
     struct timespec ts;
-#if defined(CLOCK_REALTIME)
     clock_gettime(CLOCK_REALTIME, &ts);
-#else
-    timespec_get(&ts, TIME_UTC);
-#endif
     uint64_t secs = (uint64_t)ts.tv_sec;
     uint64_t nsecs = (uint64_t)ts.tv_nsec;
     {wr_mem_secs}

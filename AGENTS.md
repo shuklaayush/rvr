@@ -108,6 +108,7 @@ The **lifter** decodes RISC-V instructions into a typed IR with a modular extens
 - **No Bloat**: KISS principle. Only create abstractions when there's actual logic or variation.
 - **No Magic Constants**: Use `const` with descriptive names.
 - **No Constant Duplication**: For shared addresses like the HTIF `tohost` location, define a single `TOHOST_ADDR` constant in a shared location and reuse it instead of re-declaring the value across modules.
+- **No Preprocessor Macros in Generated C**: Generated C sources must not contain preprocessor macros (`#if`, `#ifdef`, `#define`, etc.). Keep generated C plain and macro-free.
 - **No Warnings**: Code must compile without warnings. Use `#![deny(warnings)]` in crate roots.
 - **Delete Tech Debt**: Remove unused code immediately.
 - **Script Large Refactors**: For repetitive refactors, prefer writing a script over manual brute-force edits. Always commit or stash work before running scripts.
