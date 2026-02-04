@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use rvr_emit::Backend;
 use rvr::{CompileOptions, Compiler, Runner, build_utils, compile_with_options};
+use rvr_emit::Backend;
 
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[
@@ -53,11 +53,10 @@ pub fn run_test(
         .with_compiler(compiler.clone())
         .with_backend(backend);
 
-    compile_with_options(elf_path, &out_dir, options)
+    compile_with_options(elf_path, &out_dir, &options)
         .map_err(|e| format!("compile failed: {e}"))?;
 
-    run_with_timeout(&out_dir, elf_path, timeout)
-        .map_err(|e| format!("{name} failed: {e}"))
+    run_with_timeout(&out_dir, elf_path, timeout).map_err(|e| format!("{name} failed: {e}"))
 }
 
 fn run_with_timeout(lib_dir: &Path, elf_path: &Path, timeout: Duration) -> Result<(), String> {
@@ -120,7 +119,7 @@ pub enum TestCategory {
 }
 
 impl TestCategory {
-    pub const ALL: &'static [TestCategory] = &[
+    pub const ALL: &'static [Self] = &[
         Self::Rv32ui,
         Self::Rv32um,
         Self::Rv32ua,
@@ -143,7 +142,7 @@ impl TestCategory {
         Self::Rv64e,
     ];
 
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Rv32ui => "rv32ui",
             Self::Rv32um => "rv32um",
@@ -168,23 +167,19 @@ impl TestCategory {
         }
     }
 
-    pub fn march_mabi(&self) -> (&'static str, &'static str) {
+    pub const fn march_mabi(self) -> (&'static str, &'static str) {
         match self {
             Self::Rv32ui => ("rv32i", "ilp32"),
-            Self::Rv32um => ("rv32im", "ilp32"),
             Self::Rv32ua => ("rv32ima", "ilp32"),
             Self::Rv32uc => ("rv32imac", "ilp32"),
-            Self::Rv32mi => ("rv32im", "ilp32"),
-            Self::Rv32si => ("rv32im", "ilp32"),
+            Self::Rv32um | Self::Rv32mi | Self::Rv32si => ("rv32im", "ilp32"),
             Self::Rv32uzba => ("rv32im_zba", "ilp32"),
             Self::Rv32uzbb => ("rv32im_zbb", "ilp32"),
             Self::Rv32uzbs => ("rv32im_zbs", "ilp32"),
             Self::Rv64ui => ("rv64i", "lp64"),
-            Self::Rv64um => ("rv64im", "lp64"),
             Self::Rv64ua => ("rv64ima", "lp64"),
             Self::Rv64uc => ("rv64imac", "lp64"),
-            Self::Rv64mi => ("rv64im", "lp64"),
-            Self::Rv64si => ("rv64im", "lp64"),
+            Self::Rv64um | Self::Rv64mi | Self::Rv64si => ("rv64im", "lp64"),
             Self::Rv64uzba => ("rv64im_zba", "lp64"),
             Self::Rv64uzbb => ("rv64im_zbb", "lp64"),
             Self::Rv64uzbs => ("rv64im_zbs", "lp64"),
@@ -202,7 +197,7 @@ pub struct BuildConfig {
 }
 
 impl BuildConfig {
-    pub fn new(categories: Vec<TestCategory>) -> Self {
+    pub const fn new(categories: Vec<TestCategory>) -> Self {
         Self {
             categories,
             src_dir: PathBuf::new(),
@@ -248,7 +243,7 @@ pub fn build_tests(config: &BuildConfig) -> Result<(), String> {
     }
 
     if failures > 0 {
-        Err(format!("{} categories failed", failures))
+        Err(format!("{failures} categories failed"))
     } else {
         Ok(())
     }
@@ -281,17 +276,16 @@ fn build_category(category: TestCategory, config: &BuildConfig) -> Result<(), St
             continue;
         }
 
-        let stem = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s,
-            None => continue,
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
         };
 
-        let out_name = format!("{}-p-{}", cat_name, stem);
+        let out_name = format!("{cat_name}-p-{stem}");
         let out_path = out_dir.join(&out_name);
 
         let status = Command::new(&gcc)
-            .arg(format!("-march={}", march))
-            .arg(format!("-mabi={}", mabi))
+            .arg(format!("-march={march}"))
+            .arg(format!("-mabi={mabi}"))
             .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
             .args(["-nostdlib", "-nostartfiles"])
             .arg(format!("-I{}", env_p.display()))

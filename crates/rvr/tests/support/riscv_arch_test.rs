@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use rvr_emit::Backend;
 use rvr::{CompileOptions, Compiler, Runner, build_utils, compile_with_options};
+use rvr_emit::Backend;
 
 /// Maximum signature region size (64KB should be enough for any test).
 const MAX_SIG_SIZE: usize = 0x10000;
@@ -14,13 +14,14 @@ const MAX_SIG_SIZE: usize = 0x10000;
 /// Tests to skip (not compatible with static recompilation).
 const SKIP_TESTS: &[&str] = &[
     // fence.i tests self-modifying code
-    "fence_i",
-    "fence-01",
+    "fence_i", "fence-01",
 ];
 
 /// Harness files location.
-const HARNESS_DIR: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/riscv_arch_test_harness");
+const HARNESS_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/support/riscv_arch_test_harness"
+);
 
 /// RISC-V architecture test category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,7 +41,7 @@ pub enum ArchTestCategory {
 }
 
 impl ArchTestCategory {
-    pub const ALL: &'static [ArchTestCategory] = &[
+    pub const ALL: &'static [Self] = &[
         Self::Rv64iI,
         Self::Rv64iM,
         Self::Rv64iA,
@@ -55,7 +56,7 @@ impl ArchTestCategory {
         Self::Rv32iZicond,
     ];
 
-    pub fn src_subdir(&self) -> &'static str {
+    pub const fn src_subdir(self) -> &'static str {
         match self {
             Self::Rv64iI => "rv64i_m/I",
             Self::Rv64iM => "rv64i_m/M",
@@ -72,7 +73,7 @@ impl ArchTestCategory {
         }
     }
 
-    pub fn out_subdir(&self) -> &'static str {
+    pub const fn out_subdir(self) -> &'static str {
         match self {
             Self::Rv64iI => "rv64i_m-I",
             Self::Rv64iM => "rv64i_m-M",
@@ -89,20 +90,16 @@ impl ArchTestCategory {
         }
     }
 
-    pub fn march_mabi(&self) -> (&'static str, &'static str) {
+    pub const fn march_mabi(self) -> (&'static str, &'static str) {
         match self {
-            Self::Rv64iI => ("rv64imac_zicsr_zicond", "lp64"),
-            Self::Rv64iM => ("rv64imac_zicsr_zicond", "lp64"),
-            Self::Rv64iA => ("rv64imac_zicsr_zicond", "lp64"),
-            Self::Rv64iC => ("rv64imac_zicsr_zicond", "lp64"),
             Self::Rv64iB => ("rv64imac_zicsr_zicond_zba_zbb_zbs", "lp64"),
-            Self::Rv64iZicond => ("rv64imac_zicsr_zicond", "lp64"),
-            Self::Rv32iI => ("rv32imac_zicsr_zicond", "ilp32"),
-            Self::Rv32iM => ("rv32imac_zicsr_zicond", "ilp32"),
-            Self::Rv32iA => ("rv32imac_zicsr_zicond", "ilp32"),
-            Self::Rv32iC => ("rv32imac_zicsr_zicond", "ilp32"),
+            Self::Rv64iI | Self::Rv64iM | Self::Rv64iA | Self::Rv64iC | Self::Rv64iZicond => {
+                ("rv64imac_zicsr_zicond", "lp64")
+            }
             Self::Rv32iB => ("rv32imac_zicsr_zicond_zba_zbb_zbs", "ilp32"),
-            Self::Rv32iZicond => ("rv32imac_zicsr_zicond", "ilp32"),
+            Self::Rv32iI | Self::Rv32iM | Self::Rv32iA | Self::Rv32iC | Self::Rv32iZicond => {
+                ("rv32imac_zicsr_zicond", "ilp32")
+            }
         }
     }
 }
@@ -117,7 +114,7 @@ pub struct ArchBuildConfig {
 }
 
 impl ArchBuildConfig {
-    pub fn new(categories: Vec<ArchTestCategory>) -> Self {
+    pub const fn new(categories: Vec<ArchTestCategory>) -> Self {
         Self {
             categories,
             src_dir: PathBuf::new(),
@@ -148,7 +145,7 @@ impl ArchBuildConfig {
         self
     }
 
-    pub fn with_gen_refs(mut self, gen_refs: bool) -> Self {
+    pub const fn with_gen_refs(mut self, gen_refs: bool) -> Self {
         self.gen_refs = gen_refs;
         self
     }
@@ -163,7 +160,7 @@ pub fn find_spike() -> Option<String> {
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join("spike");
         if candidate.is_file() {
-            return candidate.to_str().map(|s| s.to_string());
+            return candidate.to_str().map(std::string::ToString::to_string);
         }
     }
     None
@@ -199,12 +196,12 @@ pub fn run_test(
         .with_compiler(compiler.clone())
         .with_backend(backend);
 
-    compile_with_options(elf_path, &out_dir, options)
+    compile_with_options(elf_path, &out_dir, &options)
         .map_err(|e| format!("compile failed: {e}"))?;
 
     let signature = run_and_extract_signature(&out_dir, elf_path, timeout)?;
-    let reference = fs::read_to_string(ref_path)
-        .map_err(|e| format!("failed to read reference: {e}"))?;
+    let reference =
+        fs::read_to_string(ref_path).map_err(|e| format!("failed to read reference: {e}"))?;
 
     if compare_signatures(&signature, &reference) {
         Ok(())
@@ -264,7 +261,7 @@ fn extract_signature_from_runner(runner: &Runner) -> Result<String, String> {
         return Err("invalid signature bounds".to_string());
     }
 
-    let sig_size = (sig_end - sig_start) as usize;
+    let sig_size = usize::try_from(sig_end - sig_start).unwrap_or(usize::MAX);
     if sig_size > MAX_SIG_SIZE {
         return Err(format!("signature too large: {sig_size} bytes"));
     }
@@ -274,9 +271,9 @@ fn extract_signature_from_runner(runner: &Runner) -> Result<String, String> {
     let mut buf = [0u8; 4];
     for i in 0..num_words {
         let addr = sig_start + (i as u64 * 4);
-        runner.read_memory(addr, &mut buf);
+        let _ = runner.read_memory(addr, &mut buf);
         let word = u32::from_le_bytes(buf);
-        lines.push(format!("{:08x}", word));
+        lines.push(format!("{word:08x}"));
     }
 
     Ok(lines.join("\n"))
@@ -285,12 +282,12 @@ fn extract_signature_from_runner(runner: &Runner) -> Result<String, String> {
 fn compare_signatures(actual: &str, reference: &str) -> bool {
     let actual_lines: Vec<&str> = actual
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
     let reference_lines: Vec<&str> = reference
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
 
@@ -318,7 +315,7 @@ pub fn build_tests(config: &ArchBuildConfig) -> Result<(), String> {
     }
 
     if failures > 0 {
-        Err(format!("{} categories failed", failures))
+        Err(format!("{failures} categories failed"))
     } else {
         Ok(())
     }
@@ -354,17 +351,16 @@ fn build_category(category: ArchTestCategory, config: &ArchBuildConfig) -> Resul
             continue;
         }
 
-        let stem = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s,
-            None => continue,
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
         };
 
         let out_name = format!("{}-{}", category.out_subdir(), stem);
         let out_path = out_dir.join(&out_name);
 
         let status = Command::new(&gcc)
-            .arg(format!("-march={}", march))
-            .arg(format!("-mabi={}", mabi))
+            .arg(format!("-march={march}"))
+            .arg(format!("-mabi={mabi}"))
             .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
             .args(["-nostdlib", "-nostartfiles"])
             .arg(format!("-I{}", harness_dir.display()))
@@ -383,9 +379,9 @@ fn build_category(category: ArchTestCategory, config: &ArchBuildConfig) -> Resul
         }
 
         if config.gen_refs {
-            let ref_path = refs_dir.join(format!("{}.sig", out_name));
+            let ref_path = refs_dir.join(format!("{out_name}.sig"));
             if let Err(e) = generate_reference(&out_path, &ref_path, category) {
-                eprintln!("  {}: {}", out_name, e);
+                eprintln!("  {out_name}: {e}");
                 failed += 1;
             }
         }
@@ -398,12 +394,16 @@ fn build_category(category: ArchTestCategory, config: &ArchBuildConfig) -> Resul
     }
 }
 
-fn generate_reference(elf_path: &Path, ref_path: &Path, category: ArchTestCategory) -> Result<(), String> {
+fn generate_reference(
+    elf_path: &Path,
+    ref_path: &Path,
+    category: ArchTestCategory,
+) -> Result<(), String> {
     let spike = find_spike().ok_or("Spike not found")?;
     let isa = category_to_spike_isa(category);
 
     let output = Command::new(spike)
-        .arg(format!("--isa={}", isa))
+        .arg(format!("--isa={isa}"))
         .arg("--signature")
         .arg(ref_path)
         .arg(elf_path)
@@ -417,7 +417,7 @@ fn generate_reference(elf_path: &Path, ref_path: &Path, category: ArchTestCatego
     }
 }
 
-fn category_to_spike_isa(category: ArchTestCategory) -> &'static str {
+const fn category_to_spike_isa(category: ArchTestCategory) -> &'static str {
     match category {
         ArchTestCategory::Rv64iI
         | ArchTestCategory::Rv64iM

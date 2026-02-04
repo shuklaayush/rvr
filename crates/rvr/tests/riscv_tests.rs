@@ -5,9 +5,9 @@ use std::time::Duration;
 use libtest_mimic::{Arguments, Failed, Trial};
 use rvr_emit::Backend;
 
-mod test_utils;
 #[path = "support/riscv_tests.rs"]
 mod support;
+mod test_utils;
 
 fn main() {
     let mut args = Arguments::from_args();
@@ -46,12 +46,7 @@ fn run_case(path: &Path, backend: Backend) -> Result<(), Failed> {
     if !full_path.exists() {
         return Ok(());
     }
-    let result = support::run_test(
-        full_path.as_path(),
-        timeout,
-        &compiler,
-        backend,
-    );
+    let result = support::run_test(full_path.as_path(), timeout, &compiler, backend);
     match result {
         Ok(()) => Ok(()),
         Err(err) => Err(Failed::from(err)),
@@ -71,7 +66,7 @@ fn enabled_backends() -> Vec<Backend> {
     backends
 }
 
-fn backend_label(backend: Backend) -> &'static str {
+const fn backend_label(backend: Backend) -> &'static str {
     match backend {
         Backend::C => "backend_c",
         Backend::ARM64Asm => "backend_arm64",
@@ -93,12 +88,10 @@ fn maybe_rebuild_elfs() -> Result<(), Failed> {
         if toolchain.is_empty() {
             return;
         }
-        let config = support::BuildConfig::new(
-            support::TestCategory::ALL.to_vec(),
-        )
-        .with_src_dir(root.join("programs/riscv-tests/isa"))
-        .with_out_dir(root.join("bin/riscv-tests"))
-        .with_toolchain(toolchain);
+        let config = support::BuildConfig::new(support::TestCategory::ALL.to_vec())
+            .with_src_dir(root.join("programs/riscv-tests/isa"))
+            .with_out_dir(root.join("bin/riscv-tests"))
+            .with_toolchain(toolchain);
 
         if let Err(err) = support::build_tests(&config) {
             status = Err(Failed::from(format!("failed to build riscv-tests: {err}")));
@@ -113,15 +106,11 @@ fn build_only() -> Result<(), String> {
     if toolchain.is_empty() {
         return Err("RISC-V toolchain not found".to_string());
     }
-    let config = support::BuildConfig::new(
-        support::TestCategory::ALL.to_vec(),
-    )
-    .with_src_dir(root.join("programs/riscv-tests/isa"))
-    .with_out_dir(root.join("bin/riscv-tests"))
-    .with_toolchain(toolchain);
-    support::build_tests(&config)
-        .map(|_| ())
-        .map_err(|err| format!("failed to build riscv-tests: {err}"))
+    let config = support::BuildConfig::new(support::TestCategory::ALL.to_vec())
+        .with_src_dir(root.join("programs/riscv-tests/isa"))
+        .with_out_dir(root.join("bin/riscv-tests"))
+        .with_toolchain(toolchain);
+    support::build_tests(&config).map_err(|err| format!("failed to build riscv-tests: {err}"))
 }
 
 fn collect_riscv_tests() -> Vec<PathBuf> {
@@ -167,7 +156,7 @@ fn ident_from_path(path: &Path) -> String {
             s.push('_');
         }
     }
-    if s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    if s.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         s.insert(0, '_');
     }
     s
