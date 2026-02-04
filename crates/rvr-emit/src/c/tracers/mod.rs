@@ -14,14 +14,6 @@ mod preflight;
 mod spike;
 mod stats;
 
-fn expand_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut result = template.replace("{{", "{").replace("}}", "}");
-    for (from, to) in replacements {
-        result = result.replace(from, to);
-    }
-    result
-}
-
 pub fn gen_tracer_header<X: Xlen>(kind: TracerKind) -> String {
     match kind {
         TracerKind::None => none::gen_tracer_none::<X>(),

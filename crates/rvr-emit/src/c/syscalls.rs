@@ -7,29 +7,7 @@ use rvr_ir::Xlen;
 
 use super::signature::{MEMORY_FIXED_REF, reg_type};
 
-const SYSCALLS_TEMPLATE: &str = r#"#include "@BASE_NAME@.h"
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-
-int clock_gettime(int clk_id, struct timespec* tp);
-static const int kClockRealtime = 0;
-
-/* Minimal Linux syscall helpers for recompiled guests */
-
-typedef @RTYPE@ reg_t;
-
-static inline reg_t align_up(reg_t value, reg_t alignment) {
-    return (value + alignment - 1) & ~(alignment - 1);
-}
-
-static inline uint8_t* guest_ptr(RvState* restrict state, reg_t addr) {
-    (void)state;
-    @GUEST_PTR_IMPL@
-}
-
+const SYSCALLS_BODY: &str = r"
 reg_t rv_sys_write(RvState* restrict state, reg_t fd, reg_t buf, reg_t count) {
     if (fd == 1 || fd == 2) {
         FILE* out = (fd == 1) ? stdout : stderr;
@@ -115,26 +93,33 @@ reg_t rv_sys_getrandom(RvState* restrict state, reg_t buf, reg_t len, reg_t flag
     }
     return (reg_t)len;
 }
+";
 
-reg_t rv_sys_clock_gettime(RvState* restrict state, reg_t clk_id, reg_t tp) {
-    (void)clk_id;
-    (void)state;
-    struct timespec ts;
-    clock_gettime(kClockRealtime, &ts);
-    uint64_t secs = (uint64_t)ts.tv_sec;
-    uint64_t nsecs = (uint64_t)ts.tv_nsec;
-    @WRITE_MEM_SECS@
-    @WRITE_MEM_NSECS@
-    return 0;
+fn push_syscalls_header(out: &mut String, base_name: &str, rtype: &str, guest_ptr_impl: &str) {
+    use std::fmt::Write;
+
+    out.push_str("#include \"");
+    out.push_str(base_name);
+    out.push_str(
+        ".h\"\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <time.h>\n\nint clock_gettime(int clk_id, struct timespec* tp);\nstatic const int kClockRealtime = 0;\n\n/* Minimal Linux syscall helpers for recompiled guests */\n\ntypedef ",
+    );
+    out.push_str(rtype);
+    out.push_str(
+        " reg_t;\n\nstatic inline reg_t align_up(reg_t value, reg_t alignment) {\n    return (value + alignment - 1) & ~(alignment - 1);\n}\n\nstatic inline uint8_t* guest_ptr(RvState* restrict state, reg_t addr) {\n    (void)state;\n    ",
+    );
+    out.push_str(guest_ptr_impl);
+    writeln!(out, "\n}}").expect("formatting guest_ptr");
 }
-"#;
 
-fn expand_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut result = template.replace("{{", "{").replace("}}", "}");
-    for (from, to) in replacements {
-        result = result.replace(from, to);
-    }
-    result
+fn push_syscalls_clock(out: &mut String, write_secs_stmt: &str, write_nsec_stmt: &str) {
+    use std::fmt::Write;
+
+    out.push_str(
+        "\nreg_t rv_sys_clock_gettime(RvState* restrict state, reg_t clk_id, reg_t tp) {\n    (void)clk_id;\n    (void)state;\n    struct timespec ts;\n    clock_gettime(kClockRealtime, &ts);\n    uint64_t secs = (uint64_t)ts.tv_sec;\n    uint64_t nsecs = (uint64_t)ts.tv_nsec;\n    ",
+    );
+    writeln!(out, "{write_secs_stmt}").expect("formatting clock_gettime secs");
+    writeln!(out, "{write_nsec_stmt}").expect("formatting clock_gettime nsecs");
+    out.push_str("    return 0;\n}\n");
 }
 
 /// Syscall runtime generation configuration.
@@ -170,14 +155,9 @@ pub fn gen_syscalls_source<X: Xlen>(cfg: &SyscallsConfig) -> String {
     let write_mem_secs_stmt = format!("wr_mem_u64({mem_arg}tp, 0, secs);");
     let write_mem_nsec_stmt = format!("wr_mem_u64({mem_arg}tp, 8, nsecs);");
 
-    expand_template(
-        SYSCALLS_TEMPLATE,
-        &[
-            ("@BASE_NAME@", &cfg.base_name),
-            ("@RTYPE@", rtype),
-            ("@GUEST_PTR_IMPL@", &guest_ptr_impl),
-            ("@WRITE_MEM_SECS@", &write_mem_secs_stmt),
-            ("@WRITE_MEM_NSECS@", &write_mem_nsec_stmt),
-        ],
-    )
+    let mut out = String::new();
+    push_syscalls_header(&mut out, &cfg.base_name, rtype, &guest_ptr_impl);
+    out.push_str(SYSCALLS_BODY);
+    push_syscalls_clock(&mut out, &write_mem_secs_stmt, &write_mem_nsec_stmt);
+    out
 }

@@ -1,26 +1,38 @@
-use super::{HeaderConfig, STATE_FIXED_REF, Xlen, expand_template, reg_type};
+use super::{HeaderConfig, STATE_FIXED_REF, Xlen, reg_type};
 
-const CSR_TEMPLATE: &str = r"/* CSR access */
-__attribute__((hot, pure, @NONNULL@always_inline))
-static inline @RTYPE@ rd_csr(@STATE_PARAM_RD@uint32_t csr@INSTRET_PARAM@) {
+const CSR_HEADER_PREFIX: &str = r"/* CSR access */
+__attribute__((hot, pure, ";
+const CSR_HEADER_MID: &str = r"always_inline))
+static inline ";
+const CSR_HEADER_SWITCH: &str = r" rd_csr(";
+const CSR_HEADER_SWITCH_CLOSE: &str = r"uint32_t csr";
+const CSR_HEADER_BODY_PREFIX: &str = r") {
     switch (csr) {
         case CSR_MCYCLE:
         case CSR_CYCLE:
         case CSR_MINSTRET:
         case CSR_INSTRET:
-            return (@RTYPE@)(@INSTRET_VAL@);
+            return (";
+const CSR_HEADER_BODY_MID: &str = r")(";
+const CSR_HEADER_BODY_MID2: &str = r");
         case CSR_MCYCLEH:
         case CSR_CYCLEH:
         case CSR_MINSTRETH:
         case CSR_INSTRETH:
-            return (@RTYPE@)(@INSTRET_VAL@ >> 32);
+            return (";
+const CSR_HEADER_BODY_MID3: &str = r")(";
+const CSR_HEADER_BODY_SUFFIX: &str = r") >> 32);
         default:
-            return @STATE_REF@->csrs[csr];
+            return ";
+const CSR_HEADER_BODY_END: &str = r"->csrs[csr];
     }
 }
 
-__attribute__((hot, @NONNULL@always_inline))
-static inline void wr_csr(@STATE_PARAM_WR@uint32_t csr, @RTYPE@ val) {
+__attribute__((hot, ";
+const CSR_HEADER_WRITE_PREFIX: &str = r"always_inline))
+static inline void wr_csr(";
+const CSR_HEADER_WRITE_MID: &str = r"uint32_t csr, ";
+const CSR_HEADER_WRITE_BODY: &str = r" val) {
     switch (csr) {
         case CSR_MCYCLE:
         case CSR_MCYCLEH:
@@ -32,11 +44,14 @@ static inline void wr_csr(@STATE_PARAM_WR@uint32_t csr, @RTYPE@ val) {
         case CSR_INSTRETH:
             return;
         default:
-            @STATE_REF@->csrs[csr] = val;
+            ";
+const CSR_HEADER_WRITE_SUFFIX: &str = r"->csrs[csr] = val;
     }
 }
 
-/* Division helpers with RISC-V semantics */
+";
+
+const CSR_DIV_HELPERS: &str = r"/* Division helpers with RISC-V semantics */
 static inline uint32_t rv_div(int32_t a, int32_t b) {
     if (b == 0) return RV_DIV_BY_ZERO;
     if (a == RV_INT32_MIN && b == -1) return (uint32_t)RV_INT32_MIN;
@@ -59,7 +74,9 @@ static inline uint32_t rv_remu(uint32_t a, uint32_t b) {
     return a % b;
 }
 
-/* 64-bit division helpers for RV64 */
+";
+
+const CSR_DIV64_HELPERS: &str = r"/* 64-bit division helpers for RV64 */
 static inline uint64_t rv_div64(int64_t a, int64_t b) {
     if (b == 0) return UINT64_MAX;
     if (a == INT64_MIN && b == -1) return (uint64_t)INT64_MIN;
@@ -82,7 +99,9 @@ static inline uint64_t rv_remu64(uint64_t a, uint64_t b) {
     return a % b;
 }
 
-/* Multiply-high helpers */
+";
+
+const CSR_MUL_HELPERS: &str = r"/* Multiply-high helpers */
 static inline uint32_t rv_mulh(int32_t a, int32_t b) {
     return (uint32_t)(((int64_t)a * (int64_t)b) >> 32);
 }
@@ -110,7 +129,9 @@ static inline uint64_t rv_mulhu64(uint64_t a, uint64_t b) {
     return (uint64_t)(prod >> 64);
 }
 
-/* RV64 word-width division helpers */
+";
+
+const CSR_WORD_DIV_HELPERS: &str = r"/* RV64 word-width division helpers */
 static inline uint64_t rv_divw(int32_t a, int32_t b) {
     if (b == 0) return UINT64_MAX;
     if (a == INT32_MIN && b == -1) return (uint64_t)(int64_t)INT32_MIN;
@@ -134,6 +155,46 @@ static inline uint64_t rv_remuw(uint32_t a, uint32_t b) {
 }
 ";
 
+struct CsrHeaderArgs<'a> {
+    rtype: &'a str,
+    instret_param: &'a str,
+    state_param_rd: &'a str,
+    state_param_wr: &'a str,
+    state_ref: &'a str,
+    nonnull: &'a str,
+    instret_val: &'a str,
+}
+
+fn push_csr_header(out: &mut String, args: &CsrHeaderArgs<'_>) {
+    out.push_str(CSR_HEADER_PREFIX);
+    out.push_str(args.nonnull);
+    out.push_str(CSR_HEADER_MID);
+    out.push_str(args.rtype);
+    out.push_str(CSR_HEADER_SWITCH);
+    out.push_str(args.state_param_rd);
+    out.push_str(CSR_HEADER_SWITCH_CLOSE);
+    out.push_str(args.instret_param);
+    out.push_str(CSR_HEADER_BODY_PREFIX);
+    out.push_str(args.rtype);
+    out.push_str(CSR_HEADER_BODY_MID);
+    out.push_str(args.instret_val);
+    out.push_str(CSR_HEADER_BODY_MID2);
+    out.push_str(args.rtype);
+    out.push_str(CSR_HEADER_BODY_MID3);
+    out.push_str(args.instret_val);
+    out.push_str(CSR_HEADER_BODY_SUFFIX);
+    out.push_str(args.state_ref);
+    out.push_str(CSR_HEADER_BODY_END);
+    out.push_str(args.nonnull);
+    out.push_str(CSR_HEADER_WRITE_PREFIX);
+    out.push_str(args.state_param_wr);
+    out.push_str(CSR_HEADER_WRITE_MID);
+    out.push_str(args.rtype);
+    out.push_str(CSR_HEADER_WRITE_BODY);
+    out.push_str(args.state_ref);
+    out.push_str(CSR_HEADER_WRITE_SUFFIX);
+}
+
 pub(super) fn gen_csr_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let rtype = reg_type::<X>();
     let instret_param = if cfg.instret_mode.counts() {
@@ -142,7 +203,6 @@ pub(super) fn gen_csr_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
         ""
     };
 
-    // Conditional parts based on fixed address mode
     let (state_param_rd, state_param_wr, state_ref, nonnull, instret_val) =
         if cfg.fixed_addresses.is_some() {
             let instret = if cfg.instret_mode.counts() {
@@ -166,16 +226,20 @@ pub(super) fn gen_csr_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
             )
         };
 
-    expand_template(
-        CSR_TEMPLATE,
-        &[
-            ("@RTYPE@", rtype),
-            ("@INSTRET_PARAM@", instret_param),
-            ("@STATE_PARAM_RD@", state_param_rd),
-            ("@STATE_PARAM_WR@", state_param_wr),
-            ("@STATE_REF@", state_ref),
-            ("@NONNULL@", nonnull),
-            ("@INSTRET_VAL@", &instret_val),
-        ],
-    )
+    let mut out = String::new();
+    let args = CsrHeaderArgs {
+        rtype,
+        instret_param,
+        state_param_rd,
+        state_param_wr,
+        state_ref,
+        nonnull,
+        instret_val: &instret_val,
+    };
+    push_csr_header(&mut out, &args);
+    out.push_str(CSR_DIV_HELPERS);
+    out.push_str(CSR_DIV64_HELPERS);
+    out.push_str(CSR_MUL_HELPERS);
+    out.push_str(CSR_WORD_DIV_HELPERS);
+    out
 }
