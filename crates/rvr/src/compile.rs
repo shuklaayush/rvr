@@ -17,20 +17,8 @@ pub struct CompileOptions {
     pub backend: Backend,
     /// Analysis mode (full CFG or linear scan).
     pub analysis_mode: AnalysisMode,
-    /// Use backend defaults for analysis mode (CFG for C, linear for asm).
-    pub analysis_mode_auto: bool,
     /// Address translation mode.
     pub address_mode: AddressMode,
-    /// Enable HTIF (Host-Target Interface) for riscv-tests.
-    pub htif: bool,
-    /// Print HTIF stdout (guest console output).
-    pub htif_verbose: bool,
-    /// Emit #line directives with source locations (requires debug info in ELF).
-    /// Defaults to true (matching EmitConfig).
-    pub line_info: bool,
-    /// Export functions mode: compile for calling exported functions rather than running from entry point.
-    /// Adds all function symbols as entry points for CFG analysis.
-    pub export_functions: bool,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
     /// Number of parallel compile jobs (0 = auto-detect based on CPU count).
@@ -41,133 +29,239 @@ pub struct CompileOptions {
     pub syscall_mode: SyscallMode,
     /// C compiler to use.
     pub compiler: Compiler,
-    /// Suppress compilation output (make commands, etc).
-    pub quiet: bool,
     /// Fixed addresses for state and memory (optional).
     /// When set, state/memory are accessed via compile-time constant addresses.
     pub fixed_addresses: Option<FixedAddressConfig>,
-    /// Perf mode (disable instret/CSR reads).
-    pub perf_mode: bool,
-    /// Enable superblock formation (merging fall-through blocks after branches).
-    /// Disable for differential testing to ensure dispatch works at all block boundaries.
-    pub enable_superblock: bool,
+    /// Compile-time flags for toggles and optional features.
+    pub flags: CompileFlags,
+}
+
+/// Toggle flags for compile options.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CompileFlags(u16);
+
+impl CompileFlags {
+    const ANALYSIS_MODE_AUTO: u16 = 1 << 0;
+    const HTIF: u16 = 1 << 1;
+    const HTIF_VERBOSE: u16 = 1 << 2;
+    const LINE_INFO: u16 = 1 << 3;
+    const EXPORT_FUNCTIONS: u16 = 1 << 4;
+    const QUIET: u16 = 1 << 5;
+    const PERF_MODE: u16 = 1 << 6;
+    const SUPERBLOCK: u16 = 1 << 7;
+
+    const fn set_flag(&mut self, flag: u16, enabled: bool) {
+        if enabled {
+            self.0 |= flag;
+        } else {
+            self.0 &= !flag;
+        }
+    }
+
+    const fn has_flag(self, flag: u16) -> bool {
+        (self.0 & flag) != 0
+    }
+
+    #[must_use]
+    pub const fn analysis_mode_auto(self) -> bool {
+        self.has_flag(Self::ANALYSIS_MODE_AUTO)
+    }
+
+    pub const fn set_analysis_mode_auto(&mut self, enabled: bool) {
+        self.set_flag(Self::ANALYSIS_MODE_AUTO, enabled);
+    }
+
+    #[must_use]
+    pub const fn htif(self) -> bool {
+        self.has_flag(Self::HTIF)
+    }
+
+    pub const fn set_htif(&mut self, enabled: bool) {
+        self.set_flag(Self::HTIF, enabled);
+    }
+
+    #[must_use]
+    pub const fn htif_verbose(self) -> bool {
+        self.has_flag(Self::HTIF_VERBOSE)
+    }
+
+    pub const fn set_htif_verbose(&mut self, enabled: bool) {
+        self.set_flag(Self::HTIF_VERBOSE, enabled);
+    }
+
+    #[must_use]
+    pub const fn line_info(self) -> bool {
+        self.has_flag(Self::LINE_INFO)
+    }
+
+    pub const fn set_line_info(&mut self, enabled: bool) {
+        self.set_flag(Self::LINE_INFO, enabled);
+    }
+
+    #[must_use]
+    pub const fn export_functions(self) -> bool {
+        self.has_flag(Self::EXPORT_FUNCTIONS)
+    }
+
+    pub const fn set_export_functions(&mut self, enabled: bool) {
+        self.set_flag(Self::EXPORT_FUNCTIONS, enabled);
+    }
+
+    #[must_use]
+    pub const fn quiet(self) -> bool {
+        self.has_flag(Self::QUIET)
+    }
+
+    pub const fn set_quiet(&mut self, enabled: bool) {
+        self.set_flag(Self::QUIET, enabled);
+    }
+
+    #[must_use]
+    pub const fn perf_mode(self) -> bool {
+        self.has_flag(Self::PERF_MODE)
+    }
+
+    pub const fn set_perf_mode(&mut self, enabled: bool) {
+        self.set_flag(Self::PERF_MODE, enabled);
+    }
+
+    #[must_use]
+    pub const fn enable_superblock(self) -> bool {
+        self.has_flag(Self::SUPERBLOCK)
+    }
+
+    pub const fn set_enable_superblock(&mut self, enabled: bool) {
+        self.set_flag(Self::SUPERBLOCK, enabled);
+    }
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
+        let mut flags = CompileFlags::default();
+        flags.set_analysis_mode_auto(true);
+        flags.set_line_info(true);
+        flags.set_enable_superblock(true);
         Self {
             backend: Backend::default(),
             analysis_mode: AnalysisMode::default(),
-            analysis_mode_auto: true,
             address_mode: AddressMode::default(),
-            htif: false,
-            htif_verbose: false,
-            line_info: true, // Match EmitConfig default
-            export_functions: false,
             instret_mode: InstretMode::default(),
             jobs: 0,
             tracer_config: TracerConfig::default(),
             syscall_mode: SyscallMode::default(),
             compiler: Compiler::default(),
-            quiet: false,
             fixed_addresses: None,
-            perf_mode: false,
-            enable_superblock: true, // Enabled by default for performance
+            flags,
         }
     }
 }
 
 impl CompileOptions {
     /// Create default options.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set code generation backend.
-    pub fn with_backend(mut self, backend: Backend) -> Self {
+    #[must_use]
+    pub const fn with_backend(mut self, backend: Backend) -> Self {
         self.backend = backend;
         self
     }
 
     /// Set analysis mode.
-    pub fn with_analysis_mode(mut self, mode: AnalysisMode) -> Self {
+    #[must_use]
+    pub const fn with_analysis_mode(mut self, mode: AnalysisMode) -> Self {
         self.analysis_mode = mode;
-        self.analysis_mode_auto = false;
+        self.flags.set_analysis_mode_auto(false);
         self
     }
 
     /// Use backend defaults for analysis mode (CFG for C, linear for asm).
-    pub fn with_analysis_mode_auto(mut self, enabled: bool) -> Self {
-        self.analysis_mode_auto = enabled;
+    #[must_use]
+    pub const fn with_analysis_mode_auto(mut self, enabled: bool) -> Self {
+        self.flags.set_analysis_mode_auto(enabled);
         self
     }
 
     /// Set address translation mode.
-    pub fn with_address_mode(mut self, mode: AddressMode) -> Self {
+    #[must_use]
+    pub const fn with_address_mode(mut self, mode: AddressMode) -> Self {
         self.address_mode = mode;
         self
     }
 
     /// Set HTIF enabled.
-    pub fn with_htif(mut self, enabled: bool) -> Self {
-        self.htif = enabled;
+    #[must_use]
+    pub const fn with_htif(mut self, enabled: bool) -> Self {
+        self.flags.set_htif(enabled);
         self
     }
 
     /// Set HTIF verbose (print guest stdout).
-    pub fn with_htif_verbose(mut self, verbose: bool) -> Self {
-        self.htif_verbose = verbose;
+    #[must_use]
+    pub const fn with_htif_verbose(mut self, verbose: bool) -> Self {
+        self.flags.set_htif_verbose(verbose);
         self
     }
 
-    /// Set line_info enabled (for #line directives).
-    pub fn with_line_info(mut self, enabled: bool) -> Self {
-        self.line_info = enabled;
+    /// Set `line_info` enabled (for `#line` directives).
+    #[must_use]
+    pub const fn with_line_info(mut self, enabled: bool) -> Self {
+        self.flags.set_line_info(enabled);
         self
     }
 
     /// Set instret mode.
-    pub fn with_instret_mode(mut self, mode: InstretMode) -> Self {
+    #[must_use]
+    pub const fn with_instret_mode(mut self, mode: InstretMode) -> Self {
         self.instret_mode = mode;
         self
     }
 
     /// Set number of parallel compile jobs (0 = auto-detect).
-    pub fn with_jobs(mut self, jobs: usize) -> Self {
+    #[must_use]
+    pub const fn with_jobs(mut self, jobs: usize) -> Self {
         self.jobs = jobs;
         self
     }
 
     /// Set tracer configuration.
-    pub fn with_tracer_config(mut self, config: TracerConfig) -> Self {
-        self.tracer_config = config;
+    #[must_use]
+    pub fn with_tracer_config(mut self, tracer_config: TracerConfig) -> Self {
+        self.tracer_config = tracer_config;
         self
     }
 
     /// Set syscall handling mode.
-    pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
+    #[must_use]
+    pub const fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
         self.syscall_mode = mode;
         self
     }
 
     /// Set the C compiler to use.
+    #[must_use]
     pub fn with_compiler(mut self, compiler: Compiler) -> Self {
         self.compiler = compiler;
         self
     }
 
     /// Suppress compilation output.
-    pub fn with_quiet(mut self, quiet: bool) -> Self {
-        self.quiet = quiet;
+    #[must_use]
+    pub const fn with_quiet(mut self, quiet: bool) -> Self {
+        self.flags.set_quiet(quiet);
         self
     }
 
     /// Enable export functions mode for calling exported functions.
     ///
     /// When enabled, all function symbols are added as CFG entry points,
-    /// and RV_EXPORT_FUNCTIONS metadata is set in the compiled library.
-    pub fn with_export_functions(mut self, enabled: bool) -> Self {
-        self.export_functions = enabled;
+    /// and `RV_EXPORT_FUNCTIONS` metadata is set in the compiled library.
+    #[must_use]
+    pub const fn with_export_functions(mut self, enabled: bool) -> Self {
+        self.flags.set_export_functions(enabled);
         self
     }
 
@@ -175,14 +269,16 @@ impl CompileOptions {
     ///
     /// When enabled, state/memory are accessed via compile-time constant addresses
     /// instead of function arguments. Requires runtime to map at these addresses.
-    pub fn with_fixed_addresses(mut self, config: FixedAddressConfig) -> Self {
+    #[must_use]
+    pub const fn with_fixed_addresses(mut self, config: FixedAddressConfig) -> Self {
         self.fixed_addresses = Some(config);
         self
     }
 
     /// Enable perf mode (disable instret/CSR reads).
-    pub fn with_perf_mode(mut self, enabled: bool) -> Self {
-        self.perf_mode = enabled;
+    #[must_use]
+    pub const fn with_perf_mode(mut self, enabled: bool) -> Self {
+        self.flags.set_perf_mode(enabled);
         if enabled {
             self.instret_mode = InstretMode::Off;
         }
@@ -193,15 +289,16 @@ impl CompileOptions {
     ///
     /// Superblocks merge fall-through blocks after branches for better performance,
     /// but prevent dispatch to mid-block addresses. Disable for differential testing.
-    pub fn with_superblock(mut self, enabled: bool) -> Self {
-        self.enable_superblock = enabled;
+    #[must_use]
+    pub const fn with_superblock(mut self, enabled: bool) -> Self {
+        self.flags.set_enable_superblock(enabled);
         self
     }
 
-    /// Apply options to EmitConfig.
+    /// Apply options to `EmitConfig`.
     fn apply<X: Xlen>(&self, config: &mut EmitConfig<X>) {
         config.backend = self.backend;
-        config.analysis_mode = if self.analysis_mode_auto {
+        config.analysis_mode = if self.flags.analysis_mode_auto() {
             match self.backend {
                 Backend::C => AnalysisMode::FullCfg,
                 _ => AnalysisMode::Basic,
@@ -210,17 +307,17 @@ impl CompileOptions {
             self.analysis_mode
         };
         config.address_mode = self.address_mode;
-        config.htif_enabled = self.htif;
-        config.htif_verbose = self.htif_verbose;
-        config.emit_line_info = self.line_info;
+        config.flags.set_htif_enabled(self.flags.htif());
+        config.flags.set_htif_verbose(self.flags.htif_verbose());
+        config.flags.set_emit_line_info(self.flags.line_info());
         config.instret_mode = self.instret_mode;
         config.tracer_config = self.tracer_config.clone();
         config.compiler = self.compiler.clone();
         config.syscall_mode = self.syscall_mode;
         config.fixed_addresses = self.fixed_addresses;
-        config.perf_mode = self.perf_mode;
-        config.enable_superblock = self.enable_superblock;
-        if self.perf_mode {
+        config.perf_mode = self.flags.perf_mode();
+        config.enable_superblock = self.flags.enable_superblock();
+        if self.flags.perf_mode() {
             config.instret_mode = InstretMode::Off;
         }
         // Re-compute hot registers based on backend (x86 has different slot count than C)
@@ -228,21 +325,39 @@ impl CompileOptions {
     }
 
     /// Check if line info is enabled.
-    pub fn has_line_info(&self) -> bool {
-        self.line_info
+    #[must_use]
+    pub const fn has_line_info(&self) -> bool {
+        self.flags.line_info()
+    }
+
+    #[must_use]
+    pub const fn quiet(&self) -> bool {
+        self.flags.quiet()
+    }
+
+    #[must_use]
+    pub const fn export_functions(&self) -> bool {
+        self.flags.export_functions()
     }
 }
 
 /// Compile an ELF file, auto-detecting XLEN from the ELF header.
+///
+/// # Errors
+/// Returns an error if the ELF cannot be read or compilation fails.
 pub fn compile(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
-    compile_with_options(elf_path, output_dir, CompileOptions::default())
+    let options = CompileOptions::default();
+    compile_with_options(elf_path, output_dir, &options)
 }
 
 /// Compile an ELF file with options, auto-detecting XLEN from the ELF header.
+///
+/// # Errors
+/// Returns an error if the ELF cannot be read or compilation fails.
 pub fn compile_with_options(
     elf_path: &Path,
     output_dir: &Path,
-    options: CompileOptions,
+    options: &CompileOptions,
 ) -> Result<std::path::PathBuf> {
     let data = std::fs::read(elf_path)?;
     let xlen = rvr_elf::get_elf_xlen(&data)?;
@@ -253,31 +368,38 @@ pub fn compile_with_options(
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
             let recompiler = Recompiler::<Rv32>::new(config)
-                .with_quiet(options.quiet)
-                .with_export_functions(options.export_functions);
+                .with_quiet(options.quiet())
+                .with_export_functions(options.export_functions());
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
             let recompiler = Recompiler::<Rv64>::new(config)
-                .with_quiet(options.quiet)
-                .with_export_functions(options.export_functions);
+                .with_quiet(options.quiet())
+                .with_export_functions(options.export_functions());
             recompiler.compile(elf_path, output_dir, options.jobs)
         },
     )
 }
 
 /// Lift an ELF file to C source code, auto-detecting XLEN.
+///
+/// # Errors
+/// Returns an error if the ELF cannot be read or lifting fails.
 pub fn lift_to_c(elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
-    lift_to_c_with_options(elf_path, output_dir, CompileOptions::default())
+    let options = CompileOptions::default();
+    lift_to_c_with_options(elf_path, output_dir, &options)
 }
 
 /// Lift an ELF file to C source code with options, auto-detecting XLEN.
+///
+/// # Errors
+/// Returns an error if the ELF cannot be read or lifting fails.
 pub fn lift_to_c_with_options(
     elf_path: &Path,
     output_dir: &Path,
-    options: CompileOptions,
+    options: &CompileOptions,
 ) -> Result<std::path::PathBuf> {
     let data = std::fs::read(elf_path)?;
     let xlen = rvr_elf::get_elf_xlen(&data)?;
@@ -288,14 +410,14 @@ pub fn lift_to_c_with_options(
             let mut config = EmitConfig::<Rv32>::default();
             options.apply(&mut config);
             let recompiler =
-                Recompiler::<Rv32>::new(config).with_export_functions(options.export_functions);
+                Recompiler::<Rv32>::new(config).with_export_functions(options.export_functions());
             recompiler.lift(elf_path, output_dir)
         },
         || {
             let mut config = EmitConfig::<Rv64>::default();
             options.apply(&mut config);
             let recompiler =
-                Recompiler::<Rv64>::new(config).with_export_functions(options.export_functions);
+                Recompiler::<Rv64>::new(config).with_export_functions(options.export_functions());
             recompiler.lift(elf_path, output_dir)
         },
     )

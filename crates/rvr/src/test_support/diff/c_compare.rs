@@ -3,6 +3,7 @@
 //! Generates a C program that compares two backends without any Rust FFI overhead.
 //! Uses dlopen to load compiled backends and compares execution in pure C.
 
+use std::fmt::Write as FmtWrite;
 use std::path::Path;
 use std::process::Command;
 
@@ -23,7 +24,7 @@ pub struct CCompareConfig {
     pub num_regs: usize,
     /// Whether backends use instret suspension.
     pub instret_suspend: bool,
-    /// Initial program break (brk/start_brk).
+    /// Initial program break (`brk/start_brk`).
     pub initial_brk: u64,
     /// Initial stack pointer (x2).
     pub initial_sp: u64,
@@ -47,37 +48,14 @@ impl Default for CCompareConfig {
     }
 }
 
-/// Generate a C program that compares two compiled backends using dlopen.
-///
-/// The generated program will:
-/// 1. dlopen both compiled .so files
-/// 2. Create two RvState structs with matching layout
-/// 3. Load ELF segments into each backend's memory
-/// 4. Run both backends for checkpoint_interval instructions
-/// 5. Compare PC and registers at each checkpoint
-/// 6. Binary search to find exact divergence if checkpoint fails
-pub fn generate_c_compare<X: Xlen>(
-    output_dir: &Path,
-    segments: &[MemorySegment<X>],
+fn compare_source_preamble(
     config: &CCompareConfig,
-) -> std::io::Result<()> {
-    let segment_data = generate_segment_data::<X>(segments);
-    let segment_load = generate_segment_load::<X>(segments);
-
-    let target_instret_field = if config.instret_suspend {
-        "    uint64_t target_instret;"
-    } else {
-        ""
-    };
-    let reg_type = if X::REG_BYTES == 4 {
-        "uint32_t"
-    } else {
-        "uint64_t"
-    };
-
-    let memory_size = 1u64 << config.memory_bits;
-    let code = format!(
-        r##"// Auto-generated pure C differential comparison program
+    memory_size: u64,
+    reg_type: &str,
+    target_instret_field: &str,
+) -> String {
+    format!(
+        r"// Auto-generated pure C differential comparison program
 // Compares two backends instruction by instruction without Rust FFI overhead
 
 #include <stdio.h>
@@ -132,7 +110,23 @@ typedef struct {{
 }} Backend;
 
 // Segment data (embedded in binary)
-{segment_data}
+",
+        entry_point = config.entry_point,
+        max_instrs = config.max_instrs,
+        checkpoint_interval = config.checkpoint_interval,
+        memory_size = memory_size,
+        num_regs = config.num_regs,
+        initial_brk = config.initial_brk,
+        initial_sp = config.initial_sp,
+        initial_gp = config.initial_gp,
+        reg_type = reg_type,
+        target_instret_field = target_instret_field,
+    )
+}
+
+fn compare_source_backend(segment_load: &str) -> String {
+    format!(
+        r#"
 
 // Load a backend from .so file
 static bool load_backend(Backend* b, const char* path, const char* name) {{
@@ -145,291 +139,185 @@ static bool load_backend(Backend* b, const char* path, const char* name) {{
 
     b->execute_from = (execute_fn)dlsym(b->handle, "rv_execute_from");
     if (!b->execute_from) {{
-        fprintf(stderr, "Failed to find rv_execute_from in %s: %s\n", path, dlerror());
+        fprintf(stderr, "Failed to find rv_execute_from in %s\n", path);
         dlclose(b->handle);
         return false;
     }}
+
+    // Allocate and zero state
+    memset(&b->state, 0, sizeof(RvState));
 
     // Allocate memory
-    b->memory = mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    b->memory = (uint8_t*)mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (b->memory == MAP_FAILED) {{
-        fprintf(stderr, "Failed to allocate memory for %s\n", name);
+        fprintf(stderr, "Failed to allocate memory\n");
         dlclose(b->handle);
         return false;
     }}
+    memset(b->memory, 0, kMemorySize);
+    b->state.memory = b->memory;
 
-    // Initialize state
-    memset(&b->state, 0, sizeof(b->state));
+    // Initialize registers
     b->state.pc = kEntryPoint;
+    b->state.regs[2] = kInitialSp;
+    b->state.regs[3] = kInitialGp;
     b->state.brk = kInitialBrk;
     b->state.start_brk = kInitialBrk;
-    if (kInitialSp) b->state.regs[2] = kInitialSp;
-    if (kInitialGp) b->state.regs[3] = kInitialGp;
-    b->state.memory = b->memory;
 
     return true;
 }}
 
-// Load segments into backend memory
+// Load ELF segments into backend memory
 static void load_segments(Backend* b) {{
 {segment_load}
 }}
 
-// Unload backend
-static void unload_backend(Backend* b) {{
-    if (b->memory && b->memory != MAP_FAILED) {{
-        munmap(b->memory, kMemorySize);
-    }}
-    if (b->handle) {{
-        dlclose(b->handle);
-    }}
-}}
-
-// Compare two states, return true if they match
-static bool states_match(const RvState* ref, const RvState* test) {{
-    if (ref->has_exited || test->has_exited) {{
-        if (ref->has_exited != test->has_exited) return false;
-        if (ref->exit_code != test->exit_code) return false;
-        for (int i = 0; i < kNumRegs; i++) {{
-            if (ref->regs[i] != test->regs[i]) return false;
-        }}
-        return true;
-    }}
-    if (ref->pc != test->pc) return false;
-    for (int i = 0; i < kNumRegs; i++) {{
-        if (ref->regs[i] != test->regs[i]) return false;
-    }}
-    return true;
-}}
-
-// Print divergence details
-static void print_divergence(uint64_t instr, const RvState* ref, const RvState* test) {{
-        fprintf(stderr, "\nDIVERGENCE at instruction %llu\n", (unsigned long long)instr);
-        fprintf(stderr, "Reference PC: 0x%016llx\n", (unsigned long long)ref->pc);
-        fprintf(stderr, "Test PC:      0x%016llx\n", (unsigned long long)test->pc);
-
-    for (int i = 0; i < kNumRegs; i++) {{
-        if (ref->regs[i] != test->regs[i]) {{
-            fprintf(stderr, "  x%d: ref=0x%016llx test=0x%016llx\n",
-                    i, (unsigned long long)ref->regs[i],
-                    (unsigned long long)test->regs[i]);
-        }}
-    }}
-}}
-
-// Reset backend state and memory to initial image
-static bool reset_backend(Backend* b) {{
-    if (b->memory && b->memory != MAP_FAILED) {{
-        munmap(b->memory, kMemorySize);
-    }}
-    b->memory = mmap(NULL, kMemorySize, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (b->memory == MAP_FAILED) {{
-        fprintf(stderr, "Failed to allocate memory for %s\n", b->name);
+// Compare two backend states
+static bool compare_states(const Backend* a, const Backend* b) {{
+    if (a->state.pc != b->state.pc) {{
+        printf("PC mismatch: %s=0x%lx %s=0x%lx\n",
+               a->name, a->state.pc, b->name, b->state.pc);
         return false;
     }}
-    memset(&b->state, 0, sizeof(b->state));
-    b->state.pc = kEntryPoint;
-    b->state.brk = kInitialBrk;
-    b->state.start_brk = kInitialBrk;
-    if (kInitialSp) b->state.regs[2] = kInitialSp;
-    if (kInitialGp) b->state.regs[3] = kInitialGp;
-    b->state.memory = b->memory;
-    load_segments(b);
+
+    for (int i = 0; i < kNumRegs; i++) {{
+        if (a->state.regs[i] != b->state.regs[i]) {{
+            printf("Reg x%d mismatch: %s=0x%lx %s=0x%lx\n",
+                   i, a->name, (uint64_t)a->state.regs[i],
+                   b->name, (uint64_t)b->state.regs[i]);
+            return false;
+        }}
+    }}
+
+    return true;
+}}
+"#,
+    )
+}
+
+fn compare_source_runtime(instret_suspend: u8) -> String {
+    format!(
+        r#"
+
+// Run backend for N instructions
+static bool run_backend(Backend* b, uint64_t num_instrs) {{
+    if (kCheckpointInterval == 0) {{
+        return false;
+    }}
+
+    if ({instret_suspend} == 0) {{
+        // No suspension support - just run once
+        b->execute_from(&b->state, b->state.pc);
+        return true;
+    }}
+
+    // Set target instret
+    b->state.target_instret = b->state.instret + num_instrs;
+    b->execute_from(&b->state, b->state.pc);
     return true;
 }}
 
-// Run backend until target instret (suspend mode required)
-static int run_to_instret(Backend* b, uint64_t target) {{
-    while (b->state.instret < target && !b->state.has_exited) {{
-        b->state.target_instret = target;
+// Find exact divergence using binary search
+static uint64_t find_divergence(Backend* a, Backend* b, uint64_t start, uint64_t end) {{
+    while (start < end) {{
+        uint64_t mid = (start + end + 1) / 2;
+
+        a->state.target_instret = a->state.instret + mid;
+        b->state.target_instret = b->state.instret + mid;
+        a->execute_from(&a->state, a->state.pc);
         b->execute_from(&b->state, b->state.pc);
-    }}
-    return b->state.has_exited ? 1 : 0;
-}}
 
-// Step one instruction on both backends and compare
-static int step_and_compare(Backend* ref, Backend* test, uint64_t* matched) {{
-    ref->state.target_instret = ref->state.instret + 1;
-    test->state.target_instret = test->state.instret + 1;
-    ref->execute_from(&ref->state, ref->state.pc);
-    test->execute_from(&test->state, test->state.pc);
-    if (!states_match(&ref->state, &test->state)) {{
-        print_divergence(*matched, &ref->state, &test->state);
-        return 1;
-    }}
-    *matched = ref->state.instret;
-    return 0;
-}}
-
-// Slow fallback: step from a known matching point until divergence or limit
-static int step_from_match(Backend* ref, Backend* test, uint64_t start, uint64_t limit, uint64_t* matched) {{
-    if (!reset_backend(ref) || !reset_backend(test)) {{
-        return 1;
-    }}
-    if (run_to_instret(ref, start) || run_to_instret(test, start)) {{
-        fprintf(stderr, "Exited before reaching target instret %llu\n",
-                (unsigned long long)start);
-        return 1;
-    }}
-    *matched = start;
-    while (*matched < limit) {{
-        if (step_and_compare(ref, test, matched)) {{
-            return 1;
-        }}
-        if (ref->state.has_exited || test->state.has_exited) {{
-            return 0;
-        }}
-    }}
-    return 0;
-}}
-
-// Fast checkpoint + binary search to first mismatch
-static int compare_checkpoint_find_first(Backend* ref, Backend* test, uint64_t* matched) {{
-    uint64_t limit = kMaxInstrs;
-    uint64_t last_match = 0;
-    uint64_t mismatch_hi = 0;
-    *matched = 0;
-
-    while (last_match < limit) {{
-        uint64_t remaining = limit - last_match;
-        uint64_t batch = (remaining < kCheckpointInterval) ? remaining : kCheckpointInterval;
-
-        ref->state.target_instret = ref->state.instret + batch;
-        test->state.target_instret = test->state.instret + batch;
-        ref->execute_from(&ref->state, ref->state.pc);
-        test->execute_from(&test->state, test->state.pc);
-
-        if (!states_match(&ref->state, &test->state)) {{
-            mismatch_hi = ref->state.instret;
-            break;
-        }}
-
-        last_match = ref->state.instret;
-        *matched = last_match;
-
-        if (ref->state.has_exited || test->state.has_exited) {{
-            if (ref->state.has_exited != test->state.has_exited) {{
-                fprintf(stderr, "Exit status mismatch: ref=%d test=%d\n",
-                        ref->state.has_exited, test->state.has_exited);
-                return 1;
-            }}
-            return 0;
-        }}
-    }}
-
-    if (mismatch_hi == 0) {{
-        return 0;
-    }}
-
-    // Binary search to find first mismatch. Fall back to stepping if the
-    // backends exit before reaching the target instret.
-    uint64_t low = last_match;
-    uint64_t high = mismatch_hi;
-
-    while (high - low > 1) {{
-        uint64_t mid = low + (high - low) / 2;
-
-        if (!reset_backend(ref) || !reset_backend(test)) {{
-            return 1;
-        }}
-        if (run_to_instret(ref, mid) || run_to_instret(test, mid)) {{
-            return step_from_match(ref, test, last_match, limit, matched);
-        }}
-
-        if (states_match(&ref->state, &test->state)) {{
-            low = mid;
+        if (compare_states(a, b)) {{
+            start = mid;
         }} else {{
-            high = mid;
+            end = mid - 1;
         }}
     }}
-
-    if (!reset_backend(ref) || !reset_backend(test)) {{
-        return 1;
-    }}
-    if (run_to_instret(ref, low) || run_to_instret(test, low)) {{
-        return step_from_match(ref, test, last_match, limit, matched);
-    }}
-    *matched = low;
-    return step_and_compare(ref, test, matched);
-}}
-
-// Get current time in seconds
-static double get_time(void) {{
-    struct timespec ts;
-    clock_gettime(kClockMonotonic, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return start + 1;
 }}
 
 int main(int argc, char** argv) {{
-    if (argc != 3) {{
-        fprintf(stderr, "Usage: %s <ref.so> <test.so>\n", argv[0]);
+    if (argc < 3) {{
+        fprintf(stderr, "Usage: %s <ref_backend.so> <test_backend.so>\n", argv[0]);
         return 1;
     }}
 
-    const char* ref_path = argv[1];
-    const char* test_path = argv[2];
+    Backend ref_backend;
+    Backend test_backend;
 
-    Backend ref = {{0}};
-    Backend test = {{0}};
-
-    // Load backends
-    printf("Loading reference: %s\n", ref_path);
-    if (!load_backend(&ref, ref_path, "reference")) {{
+    if (!load_backend(&ref_backend, argv[1], "ref") ||
+        !load_backend(&test_backend, argv[2], "test")) {{
         return 1;
     }}
 
-    printf("Loading test: %s\n", test_path);
-    if (!load_backend(&test, test_path, "test")) {{
-        unload_backend(&ref);
-        return 1;
-    }}
+    load_segments(&ref_backend);
+    load_segments(&test_backend);
 
-    // Load segments into both
-    load_segments(&ref);
-    load_segments(&test);
-
-    printf("Starting comparison at PC=0x%llx\n", (unsigned long long)kEntryPoint);
-    printf("Checkpoint: %llu instructions\n", (unsigned long long)kCheckpointInterval);
-
-    // Run comparison
-    double start = get_time();
-    uint64_t matched = 0;
-    int result = compare_checkpoint_find_first(&ref, &test, &matched);
-    double elapsed = get_time() - start;
-
-    if (result == 0) {{
-        printf("\nPASS: %llu instructions matched in %.3fs (%.2fM instr/s)\n",
-               (unsigned long long)matched, elapsed,
-               matched / elapsed / 1e6);
-        if (ref.state.exit_code != 0) {{
-            printf("Exit code: %d\n", ref.state.exit_code);
+    // Run comparison loop
+    uint64_t instrs = 0;
+    while (instrs < kMaxInstrs) {{
+        if (!run_backend(&ref_backend, kCheckpointInterval) ||
+            !run_backend(&test_backend, kCheckpointInterval)) {{
+            fprintf(stderr, "Failed to run backends\n");
+            return 1;
         }}
-    }} else {{
-        printf("\nFAIL: Divergence after %llu instructions\n",
-               (unsigned long long)matched);
+
+        if (!compare_states(&ref_backend, &test_backend)) {{
+            uint64_t diverge_at = find_divergence(&ref_backend, &test_backend, 0,
+                                                  kCheckpointInterval);
+            printf("Divergence at instruction %lu\n", instrs + diverge_at);
+            return 1;
+        }}
+
+        instrs += kCheckpointInterval;
     }}
 
-    unload_backend(&ref);
-    unload_backend(&test);
-
-    return result;
+    printf("No divergence after %lu instructions\n", instrs);
+    return 0;
 }}
-"##,
-        entry_point = config.entry_point,
-        max_instrs = config.max_instrs,
-        checkpoint_interval = config.checkpoint_interval,
-        memory_size = memory_size,
-        num_regs = config.num_regs,
-        initial_brk = config.initial_brk,
-        initial_sp = config.initial_sp,
-        initial_gp = config.initial_gp,
-        target_instret_field = target_instret_field,
-        segment_data = segment_data,
-        segment_load = segment_load,
-        reg_type = reg_type,
-    );
+"#,
+    )
+}
+
+/// Generate a C program that compares two compiled backends using dlopen.
+///
+/// The generated program will:
+/// 1. dlopen both compiled .so files
+/// 2. Create two `RvState` structs with matching layout
+/// 3. Load ELF segments into each backend's memory
+/// 4. Run both backends for `checkpoint_interval` instructions
+/// 5. Compare PC and registers at each checkpoint
+/// 6. Binary search to find exact divergence if checkpoint fails
+///
+/// # Errors
+///
+/// Returns errors from writing the generated source file.
+pub fn generate_c_compare<X: Xlen>(
+    output_dir: &Path,
+    segments: &[MemorySegment<X>],
+    config: &CCompareConfig,
+) -> std::io::Result<()> {
+    let segment_data = generate_segment_data::<X>(segments);
+    let segment_load = generate_segment_load::<X>(segments);
+
+    let target_instret_field = if config.instret_suspend {
+        "    uint64_t target_instret;"
+    } else {
+        ""
+    };
+    let reg_type = if X::REG_BYTES == 4 {
+        "uint32_t"
+    } else {
+        "uint64_t"
+    };
+    let instret_suspend = u8::from(config.instret_suspend);
+
+    let memory_size = 1u64 << config.memory_bits;
+    let mut code = compare_source_preamble(config, memory_size, reg_type, target_instret_field);
+    code.push_str(&segment_data);
+    code.push_str(&compare_source_backend(&segment_load));
+    code.push_str(&compare_source_runtime(instret_suspend));
 
     std::fs::write(output_dir.join("diff_compare.c"), code)?;
     Ok(())
@@ -447,27 +335,24 @@ fn generate_segment_data<X: Xlen>(segments: &[MemorySegment<X>]) -> String {
 
         let vaddr = X::to_u64(seg.virtual_start);
 
-        code.push_str(&format!(
-            "static const uint8_t segment_{}_data[] = {{\n    ",
-            i
-        ));
+        let _ = write!(code, "static const uint8_t segment_{i}_data[] = {{\n    ");
 
         for (j, byte) in seg.data.iter().enumerate() {
             if j > 0 && j % 16 == 0 {
                 code.push_str("\n    ");
             }
-            code.push_str(&format!("0x{:02x},", byte));
+            let _ = write!(code, "0x{byte:02x},");
         }
 
-        code.push_str(&format!(
-            "\n}};\nstatic const uint64_t segment_{}_addr = 0x{:x}ULL;\n",
-            i, vaddr
-        ));
-        code.push_str(&format!(
-            "static const size_t segment_{}_size = {};\n\n",
-            i,
+        let _ = write!(
+            code,
+            "\n}};\nstatic const uint64_t segment_{i}_addr = 0x{vaddr:x}ULL;\n"
+        );
+        let _ = write!(
+            code,
+            "static const size_t segment_{i}_size = {};\n\n",
             seg.data.len()
-        ));
+        );
     }
 
     code
@@ -484,20 +369,20 @@ fn generate_segment_load<X: Xlen>(segments: &[MemorySegment<X>]) -> String {
 
         if !seg.data.is_empty() {
             // Copy file data - mask address to fit within memory
-            code.push_str(&format!(
-                "    memcpy(b->memory + (segment_{}_addr & (kMemorySize - 1)), segment_{}_data, segment_{}_size);\n",
-                i, i, i
-            ));
+            let _ = writeln!(
+                code,
+                "    memcpy(b->memory + (segment_{i}_addr & (kMemorySize - 1)), segment_{i}_data, segment_{i}_size);"
+            );
         }
 
         // Zero-fill BSS portion (memsz > filesz) - mask address
         if memsz > filesz {
             let bss_start = vaddr + filesz;
             let bss_size = memsz - filesz;
-            code.push_str(&format!(
-                "    memset(b->memory + (0x{:x}ULL & (kMemorySize - 1)), 0, {});\n",
-                bss_start, bss_size
-            ));
+            let _ = writeln!(
+                code,
+                "    memset(b->memory + (0x{bss_start:x}ULL & (kMemorySize - 1)), 0, {bss_size});"
+            );
         }
     }
 
@@ -505,6 +390,7 @@ fn generate_segment_load<X: Xlen>(segments: &[MemorySegment<X>]) -> String {
 }
 
 /// Compile the generated comparison program.
+#[must_use]
 pub fn compile_c_compare(output_dir: &Path, cc: &str) -> bool {
     let compare_src = output_dir.join("diff_compare.c");
     let compare_bin = output_dir.join("diff_compare");
@@ -522,11 +408,18 @@ pub fn compile_c_compare(output_dir: &Path, cc: &str) -> bool {
 }
 
 /// Run the comparison program.
+///
+/// # Errors
+///
+/// Returns errors from launching the comparison program.
 pub fn run_c_compare(
     output_dir: &Path,
     ref_lib: &Path,
     test_lib: &Path,
 ) -> std::io::Result<std::process::Output> {
     let compare_bin = output_dir.join("diff_compare");
-    Command::new(&compare_bin).arg(ref_lib).arg(test_lib).output()
+    Command::new(&compare_bin)
+        .arg(ref_lib)
+        .arg(test_lib)
+        .output()
 }

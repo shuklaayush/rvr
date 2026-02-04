@@ -22,6 +22,10 @@ pub struct InProcessExecutor {
 
 impl InProcessExecutor {
     /// Create a new in-process executor from a compiled library directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from loading the compiled library or missing suspend support.
     pub fn new(lib_dir: &Path, elf_path: &Path) -> Result<Self, RunError> {
         let mut runner = Runner::load(lib_dir, elf_path)?;
 
@@ -58,48 +62,45 @@ impl Executor for InProcessExecutor {
         self.runner.set_target_instret(current + 1);
         self.runner.clear_exit();
 
-        match self.runner.execute_from(pc_before) {
-            Ok(_) => {
-                let is_exit = self.runner.exit_code() != 0;
-                if is_exit {
-                    self.has_exited = true;
-                }
+        if self.runner.execute_from(pc_before).is_ok() {
+            let is_exit = self.runner.exit_code() != 0;
+            if is_exit {
+                self.has_exited = true;
+            }
 
-                // Capture state from diff tracer if available
-                let opcode = self.runner.diff_traced_opcode().unwrap_or(0);
-                let rd = self.runner.diff_traced_rd();
-                let rd_value = self.runner.diff_traced_rd_value();
-                let (mem_addr, mem_value, mem_width, is_write) = self.runner.diff_traced_mem().map_or(
-                    (None::<u64>, None::<u64>, None::<u8>, false),
-                    |(addr, val, width, is_write)| (Some(addr), Some(val), Some(width), is_write),
-                );
+            // Capture state from diff tracer if available
+            let opcode = self.runner.diff_traced_opcode().unwrap_or(0);
+            let rd = self.runner.diff_traced_rd();
+            let rd_value = self.runner.diff_traced_rd_value();
+            let (mem_addr, mem_value, mem_width, is_write) = self.runner.diff_traced_mem().map_or(
+                (None::<u64>, None::<u64>, None::<u8>, false),
+                |(addr, val, width, is_write)| (Some(addr), Some(val), Some(width), is_write),
+            );
 
+            Some(DiffState {
+                pc: pc_before,
+                opcode,
+                instret: instret_before + 1,
+                rd,
+                rd_value,
+                mem_addr,
+                mem_value,
+                mem_width,
+                is_write,
+                is_exit,
+            })
+        } else {
+            // Execution error - check if it's a normal exit
+            self.has_exited = true;
+            if self.runner.exit_code() == 0 {
+                None
+            } else {
                 Some(DiffState {
                     pc: pc_before,
-                    opcode,
                     instret: instret_before + 1,
-                    rd,
-                    rd_value,
-                    mem_addr,
-                    mem_value,
-                    mem_width,
-                    is_write,
-                    is_exit,
+                    is_exit: true,
+                    ..Default::default()
                 })
-            }
-            Err(_) => {
-                // Execution error - check if it's a normal exit
-                self.has_exited = true;
-                if self.runner.exit_code() == 0 {
-                    None
-                } else {
-                    Some(DiffState {
-                        pc: pc_before,
-                        instret: instret_before + 1,
-                        is_exit: true,
-                        ..Default::default()
-                    })
-                }
             }
         }
     }
@@ -121,6 +122,10 @@ impl BufferedInProcessExecutor {
     /// Create a new buffered in-process executor from a compiled library directory.
     ///
     /// The library must have been compiled with `--tracer buffered-diff`.
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from loading the compiled library or missing buffered diff support.
     pub fn new(lib_dir: &Path, elf_path: &Path) -> Result<Self, RunError> {
         let mut runner = Runner::load(lib_dir, elf_path)?;
 
@@ -165,36 +170,36 @@ impl BufferedInProcessExecutor {
         let pc = self.runner.get_pc();
         self.runner.clear_exit();
 
-        match self.runner.execute_from(pc) {
-            Ok(_) => {
-                if self.runner.exit_code() != 0 {
-                    self.has_exited = true;
-                }
-                self.runner.buffered_diff_count().unwrap_or(0)
-            }
-            Err(_) => {
+        if self.runner.execute_from(pc).is_ok() {
+            if self.runner.exit_code() != 0 {
                 self.has_exited = true;
-                self.runner.buffered_diff_count().unwrap_or(0)
             }
+        } else {
+            self.has_exited = true;
         }
+        self.runner.buffered_diff_count().unwrap_or(0)
     }
 
     /// Get the number of entries captured in the buffer.
+    #[must_use]
     pub fn captured_count(&self) -> usize {
         self.runner.buffered_diff_count().unwrap_or(0)
     }
 
     /// Check if any entries were dropped due to buffer overflow.
+    #[must_use]
     pub fn has_overflow(&self) -> bool {
         self.runner.buffered_diff_has_overflow().unwrap_or(false)
     }
 
     /// Get the number of entries dropped due to overflow.
+    #[must_use]
     pub fn dropped_count(&self) -> u32 {
         self.runner.buffered_diff_dropped().unwrap_or(0)
     }
 
     /// Get entry at index from the capture buffer.
+    #[must_use]
     pub fn get_entry(&self, index: usize) -> Option<DiffState> {
         let (pc, opcode, rd, rd_value, mem_access) = self.runner.buffered_diff_get(index)?;
         let (mem_addr, mem_value, mem_width, is_write) = mem_access.map_or(
@@ -216,14 +221,15 @@ impl BufferedInProcessExecutor {
     }
 
     /// Check if the program has exited.
-    pub fn has_exited(&self) -> bool {
+    #[must_use]
+    pub const fn has_exited(&self) -> bool {
         self.has_exited
     }
 }
 
-/// Iterator adapter for BufferedInProcessExecutor that yields DiffStates one at a time.
+/// Iterator adapter for `BufferedInProcessExecutor` that yields `DiffStates` one at a time.
 ///
-/// This allows using BufferedInProcessExecutor through the Executor trait interface
+/// This allows using `BufferedInProcessExecutor` through the Executor trait interface
 /// for block-level comparison.
 impl Executor for BufferedInProcessExecutor {
     fn step(&mut self) -> Option<DiffState> {

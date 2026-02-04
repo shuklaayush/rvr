@@ -33,6 +33,9 @@ pub enum GdbError {
 
     #[error("Runner error: {0}")]
     Runner(#[from] crate::runner::RunError),
+
+    #[error("State error: {0}")]
+    State(String),
 }
 
 /// Execution mode for the target.
@@ -97,14 +100,12 @@ impl GdbTargetCore {
                     self.runner.clear_exit();
                     return StopReason::DoneStep;
                 }
-                // Program exited
-                StopReason::Exited(self.runner.exit_code())
             } else {
                 // No suspend support - run until exit (fallback behavior)
                 let pc = self.runner.get_pc();
                 let _ = self.runner.execute_from(pc);
-                StopReason::Exited(self.runner.exit_code())
             }
+            StopReason::Exited(self.runner.exit_code())
         } else {
             // Continue mode - run until exit or breakpoint
             if self.runner.supports_suspend() {
@@ -181,7 +182,7 @@ impl SingleThreadBase for GdbTarget64 {
     }
 
     fn write_addrs(&mut self, start_addr: u64, data: &[u8]) -> TargetResult<(), Self> {
-        self.core.runner.write_memory(start_addr, data);
+        let _ = self.core.runner.write_memory(start_addr, data);
         Ok(())
     }
 
@@ -237,7 +238,7 @@ impl BlockingEventLoop for GdbEventLoop64 {
         target: &mut GdbTarget64,
         conn: &mut Self::Connection,
     ) -> Result<Event<Self::StopReason>, WaitForStopReasonError<GdbError, std::io::Error>> {
-        let mut poll_incoming_data = || conn.peek().map(|b| b.is_some()).unwrap_or(false);
+        let mut poll_incoming_data = || conn.peek().is_ok_and(|b| b.is_some());
 
         if poll_incoming_data() {
             let byte = conn.read().map_err(WaitForStopReasonError::Connection)?;
@@ -296,9 +297,17 @@ impl SingleThreadBase for GdbTarget32 {
         regs: &mut gdbstub_arch::riscv::reg::RiscvCoreRegs<u32>,
     ) -> TargetResult<(), Self> {
         for i in 0..32 {
-            regs.x[i] = self.core.runner.get_register(i) as u32;
+            regs.x[i] = u32::try_from(self.core.runner.get_register(i)).map_err(|_| {
+                gdbstub::target::TargetError::Fatal(GdbError::State(format!(
+                    "register x{i} does not fit in u32"
+                )))
+            })?;
         }
-        regs.pc = self.core.runner.get_pc() as u32;
+        regs.pc = u32::try_from(self.core.runner.get_pc()).map_err(|_| {
+            gdbstub::target::TargetError::Fatal(GdbError::State(
+                "pc does not fit in u32".to_string(),
+            ))
+        })?;
         Ok(())
     }
 
@@ -307,19 +316,19 @@ impl SingleThreadBase for GdbTarget32 {
         regs: &gdbstub_arch::riscv::reg::RiscvCoreRegs<u32>,
     ) -> TargetResult<(), Self> {
         for i in 1..32 {
-            self.core.runner.set_register(i, regs.x[i] as u64);
+            self.core.runner.set_register(i, u64::from(regs.x[i]));
         }
-        self.core.runner.set_pc(regs.pc as u64);
+        self.core.runner.set_pc(u64::from(regs.pc));
         Ok(())
     }
 
     fn read_addrs(&mut self, start_addr: u32, data: &mut [u8]) -> TargetResult<usize, Self> {
-        let bytes_read = self.core.runner.read_memory(start_addr as u64, data);
+        let bytes_read = self.core.runner.read_memory(u64::from(start_addr), data);
         Ok(bytes_read)
     }
 
     fn write_addrs(&mut self, start_addr: u32, data: &[u8]) -> TargetResult<(), Self> {
-        self.core.runner.write_memory(start_addr as u64, data);
+        let _ = self.core.runner.write_memory(u64::from(start_addr), data);
         Ok(())
     }
 
@@ -354,12 +363,12 @@ impl Breakpoints for GdbTarget32 {
 
 impl SwBreakpoint for GdbTarget32 {
     fn add_sw_breakpoint(&mut self, addr: u32, _kind: usize) -> TargetResult<bool, Self> {
-        self.core.breakpoints.insert(addr as u64);
+        self.core.breakpoints.insert(u64::from(addr));
         Ok(true)
     }
 
     fn remove_sw_breakpoint(&mut self, addr: u32, _kind: usize) -> TargetResult<bool, Self> {
-        Ok(self.core.breakpoints.remove(&(addr as u64)))
+        Ok(self.core.breakpoints.remove(&u64::from(addr)))
     }
 }
 
@@ -375,7 +384,7 @@ impl BlockingEventLoop for GdbEventLoop32 {
         target: &mut GdbTarget32,
         conn: &mut Self::Connection,
     ) -> Result<Event<Self::StopReason>, WaitForStopReasonError<GdbError, std::io::Error>> {
-        let mut poll_incoming_data = || conn.peek().map(|b| b.is_some()).unwrap_or(false);
+        let mut poll_incoming_data = || conn.peek().is_ok_and(|b| b.is_some());
 
         if poll_incoming_data() {
             let byte = conn.read().map_err(WaitForStopReasonError::Connection)?;
@@ -409,31 +418,36 @@ pub struct GdbServer {
 
 impl GdbServer {
     /// Create a new GDB server wrapping a runner.
-    pub fn new(runner: Runner) -> Self {
+    #[must_use]
+    pub const fn new(runner: Runner) -> Self {
         Self { runner }
     }
 
     /// Run the GDB server, blocking until the client disconnects.
     ///
     /// `addr` should be in the format `:port` or `host:port`.
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from socket setup or the GDB stub.
     pub fn run(self, addr: &str) -> Result<(), GdbError> {
         // Parse address - if it starts with ":", prepend "127.0.0.1"
         let addr = if addr.starts_with(':') {
-            format!("127.0.0.1{}", addr)
+            format!("127.0.0.1{addr}")
         } else {
             addr.to_string()
         };
 
         // Bind and wait for connection
         let listener = TcpListener::bind(&addr)?;
-        eprintln!("Waiting for GDB connection on {}...", addr);
+        eprintln!("Waiting for GDB connection on {addr}...");
 
         let (stream, peer) = listener.accept()?;
-        eprintln!("GDB connected from {}", peer);
+        eprintln!("GDB connected from {peer}");
 
         // Dispatch based on XLEN
         let xlen = self.runner.xlen();
-        eprintln!("Target architecture: RV{}", xlen);
+        eprintln!("Target architecture: RV{xlen}");
 
         if xlen == 32 {
             self.run_rv32(stream)
@@ -448,8 +462,11 @@ impl GdbServer {
 
         let gdb = GdbStub::new(stream);
         match gdb.run_blocking::<GdbEventLoop64>(&mut target) {
-            Ok(reason) => Self::handle_disconnect(reason),
-            Err(e) => Err(GdbError::GdbStub(format!("{:?}", e))),
+            Ok(reason) => {
+                Self::handle_disconnect(reason);
+                Ok(())
+            }
+            Err(e) => Err(GdbError::GdbStub(format!("{e:?}"))),
         }
     }
 
@@ -459,26 +476,26 @@ impl GdbServer {
 
         let gdb = GdbStub::new(stream);
         match gdb.run_blocking::<GdbEventLoop32>(&mut target) {
-            Ok(reason) => Self::handle_disconnect(reason),
-            Err(e) => Err(GdbError::GdbStub(format!("{:?}", e))),
+            Ok(reason) => {
+                Self::handle_disconnect(reason);
+                Ok(())
+            }
+            Err(e) => Err(GdbError::GdbStub(format!("{e:?}"))),
         }
     }
 
-    fn handle_disconnect(reason: DisconnectReason) -> Result<(), GdbError> {
-        eprintln!("GDB session ended: {:?}", reason);
+    fn handle_disconnect(reason: DisconnectReason) {
+        eprintln!("GDB session ended: {reason:?}");
         match reason {
-            DisconnectReason::Disconnect => Ok(()),
+            DisconnectReason::Disconnect => {}
             DisconnectReason::TargetExited(code) => {
-                eprintln!("Target exited with code {}", code);
-                Ok(())
+                eprintln!("Target exited with code {code}");
             }
             DisconnectReason::TargetTerminated(sig) => {
-                eprintln!("Target terminated with signal {:?}", sig);
-                Ok(())
+                eprintln!("Target terminated with signal {sig:?}");
             }
             DisconnectReason::Kill => {
                 eprintln!("Target killed by GDB");
-                Ok(())
             }
         }
     }

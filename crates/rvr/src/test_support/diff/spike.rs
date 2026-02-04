@@ -24,13 +24,11 @@ pub struct SpikeExecutor {
 
 impl SpikeExecutor {
     fn needs_smrnmi(elf: &Path) -> bool {
-        let bytes = match std::fs::read(elf) {
-            Ok(data) => data,
-            Err(_) => return false,
-        };
-
         // csrwi mnstatus, 0x8 => 0x74445073 (little-endian in ELF)
         const MNSTATUS_CSRWI: [u8; 4] = [0x73, 0x50, 0x44, 0x74];
+        let Ok(bytes) = std::fs::read(elf) else {
+            return false;
+        };
         bytes
             .windows(MNSTATUS_CSRWI.len())
             .any(|w| w == MNSTATUS_CSRWI)
@@ -39,6 +37,10 @@ impl SpikeExecutor {
     /// Start Spike with the given ELF and ISA.
     ///
     /// Uses `--log=/dev/stdout` to stream output through a pipe.
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from spawning Spike or wiring up the pipe.
     pub fn start(elf: &Path, isa: &str, entry_point: u64) -> std::io::Result<Self> {
         let mut isa_arg = isa.to_string();
         if Self::needs_smrnmi(elf) && !isa_arg.contains("smrnmi") {
@@ -46,7 +48,7 @@ impl SpikeExecutor {
         }
 
         let mut cmd = Command::new("spike");
-        cmd.arg(format!("--isa={}", isa_arg))
+        cmd.arg(format!("--isa={isa_arg}"))
             .arg("--log-commits")
             .arg("--log=/dev/stdout")
             .arg(elf)
@@ -103,7 +105,7 @@ impl SpikeExecutor {
         }
     }
 
-    /// Parse a Spike trace line into DiffState.
+    /// Parse a Spike trace line into `DiffState`.
     fn parse_line(line: &str) -> Option<DiffState> {
         let line = line.trim();
         if !line.starts_with("core") {
@@ -164,16 +166,13 @@ impl Executor for SpikeExecutor {
             return None;
         }
 
-        match self.read_next() {
-            Some(mut state) => {
-                self.instret += 1;
-                state.instret = self.instret;
-                Some(state)
-            }
-            None => {
-                self.has_exited = true;
-                None
-            }
+        if let Some(mut state) = self.read_next() {
+            self.instret += 1;
+            state.instret = self.instret;
+            Some(state)
+        } else {
+            self.has_exited = true;
+            None
         }
     }
 }
@@ -184,18 +183,13 @@ static REG_PATTERN: OnceLock<Regex> = OnceLock::new();
 static MEM_PATTERN: OnceLock<Regex> = OnceLock::new();
 
 /// Find Spike executable in PATH.
+#[must_use]
 pub fn find_spike() -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .filter_map(|dir| {
-                let full_path = dir.join("spike");
-                if full_path.is_file() {
-                    Some(full_path)
-                } else {
-                    None
-                }
-            })
-            .next()
+        std::env::split_paths(&paths).find_map(|dir| {
+            let full_path = dir.join("spike");
+            full_path.is_file().then_some(full_path)
+        })
     })
 }
 
@@ -208,8 +202,8 @@ mod tests {
         let line = "core   0: 3 0x0000000080000050 (0x00000093) x1 0x0000000000000000";
         let state = SpikeExecutor::parse_line(line).unwrap();
 
-        assert_eq!(state.pc, 0x80000050);
-        assert_eq!(state.opcode, 0x00000093);
+        assert_eq!(state.pc, 0x8000_0050);
+        assert_eq!(state.opcode, 0x0000_0093);
         assert_eq!(state.rd, Some(1));
         assert_eq!(state.rd_value, Some(0));
         assert!(state.mem_addr.is_none());
@@ -220,10 +214,10 @@ mod tests {
         let line = "core   0: 3 0x000000008000010c (0x0182b283) x5 0x0000000080000000 mem 0x0000000000001018";
         let state = SpikeExecutor::parse_line(line).unwrap();
 
-        assert_eq!(state.pc, 0x8000010c);
-        assert_eq!(state.opcode, 0x0182b283);
+        assert_eq!(state.pc, 0x8000_010c);
+        assert_eq!(state.opcode, 0x0182_b283);
         assert_eq!(state.rd, Some(5));
-        assert_eq!(state.rd_value, Some(0x80000000));
+        assert_eq!(state.rd_value, Some(0x8000_0000));
         assert_eq!(state.mem_addr, Some(0x1018));
     }
 
@@ -232,8 +226,8 @@ mod tests {
         let line = "core   0: 3 0x0000000080000000 (0x0500006f)";
         let state = SpikeExecutor::parse_line(line).unwrap();
 
-        assert_eq!(state.pc, 0x80000000);
-        assert_eq!(state.opcode, 0x0500006f);
+        assert_eq!(state.pc, 0x8000_0000);
+        assert_eq!(state.opcode, 0x0500_006f);
         assert!(state.rd.is_none());
         assert!(state.rd_value.is_none());
     }

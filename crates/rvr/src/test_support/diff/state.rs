@@ -3,7 +3,7 @@
 //! Defines the state captured after each instruction and comparison algorithms.
 
 /// Effects observed for one instruction execution.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiffState {
     /// Program counter.
     pub pc: u64,
@@ -29,7 +29,8 @@ pub struct DiffState {
 
 impl DiffState {
     /// Check if this state represents program exit.
-    pub fn is_exit(&self) -> bool {
+    #[must_use]
+    pub const fn is_exit(&self) -> bool {
         self.is_exit
     }
 }
@@ -62,7 +63,7 @@ impl std::str::FromStr for DiffGranularity {
             "hybrid" | "h" => Ok(Self::Hybrid),
             "checkpoint" | "ckpt" | "c" | "fast" => Ok(Self::Checkpoint),
             "purec" | "pure-c" | "native" | "n" => Ok(Self::PureC),
-            _ => Err(format!("unknown granularity: {}", s)),
+            _ => Err(format!("unknown granularity: {s}")),
         }
     }
 }
@@ -152,8 +153,9 @@ impl Default for CompareConfig {
 /// - Always ignore x0 writes (both sides).
 /// - PC and opcode must match exactly.
 /// - Register writes: if either has a write (non-x0), compare.
-/// - Memory: only compare if strict_mem_access is true.
-pub fn compare_states(
+/// - Memory: only compare if `strict_mem_access` is true.
+#[must_use]
+pub const fn compare_states(
     expected: &DiffState,
     actual: &DiffState,
     config: &CompareConfig,
@@ -229,7 +231,7 @@ mod tests {
         let config = CompareConfig::default();
         let s1 = DiffState {
             pc: 0x1000,
-            opcode: 0x00000013, // NOP
+            opcode: 0x0000_0013, // NOP
             rd: Some(1),
             rd_value: Some(42),
             ..Default::default()

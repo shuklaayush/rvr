@@ -6,6 +6,7 @@ use std::process::Command;
 ///
 /// Searches for common RISC-V GCC toolchain prefixes in PATH.
 /// Returns the prefix (e.g., "riscv64-unknown-elf-") if found.
+#[must_use]
 pub fn find_toolchain() -> Option<String> {
     const PREFIXES: &[&str] = &[
         "riscv64-unknown-elf-",
@@ -15,12 +16,11 @@ pub fn find_toolchain() -> Option<String> {
     ];
 
     for prefix in PREFIXES {
-        let gcc = format!("{}gcc", prefix);
+        let gcc = format!("{prefix}gcc");
         if Command::new("which")
             .arg(&gcc)
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
         {
             return Some(prefix.to_string());
         }

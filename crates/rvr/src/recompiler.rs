@@ -20,7 +20,8 @@ pub struct Recompiler<X: Xlen> {
 
 impl<X: Xlen> Recompiler<X> {
     /// Create a new recompiler with the given configuration.
-    pub fn new(config: EmitConfig<X>) -> Self {
+    #[must_use]
+    pub const fn new(config: EmitConfig<X>) -> Self {
         Self {
             config,
             quiet: false,
@@ -30,24 +31,28 @@ impl<X: Xlen> Recompiler<X> {
     }
 
     /// Create a recompiler with default configuration.
+    #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(EmitConfig::default())
     }
 
     /// Set syscall handling mode.
-    pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
+    #[must_use]
+    pub const fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
         self.config.syscall_mode = mode;
         self
     }
 
     /// Set the C compiler to use (clang or gcc).
+    #[must_use]
     pub fn with_compiler(mut self, compiler: Compiler) -> Self {
         self.config.compiler = compiler;
         self
     }
 
     /// Suppress compilation output.
-    pub fn with_quiet(mut self, quiet: bool) -> Self {
+    #[must_use]
+    pub const fn with_quiet(mut self, quiet: bool) -> Self {
         self.quiet = quiet;
         self
     }
@@ -55,21 +60,27 @@ impl<X: Xlen> Recompiler<X> {
     /// Enable export functions mode for calling exported functions.
     ///
     /// When enabled, all function symbols are added as CFG entry points,
-    /// and RV_EXPORT_FUNCTIONS metadata is set in the compiled library.
-    pub fn with_export_functions(mut self, enabled: bool) -> Self {
+    /// and `RV_EXPORT_FUNCTIONS` metadata is set in the compiled library.
+    #[must_use]
+    pub const fn with_export_functions(mut self, enabled: bool) -> Self {
         self.export_functions = enabled;
         self.config.export_functions = enabled;
         self
     }
 
     /// Get the configuration.
-    pub fn config(&self) -> &EmitConfig<X> {
+    #[must_use]
+    pub const fn config(&self) -> &EmitConfig<X> {
         &self.config
     }
 
     /// Compile an ELF file to a shared library.
     ///
     /// If `jobs` is 0, auto-detects based on CPU count.
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from lifting or compiling the output.
     pub fn compile(
         &self,
         elf_path: &Path,
@@ -106,11 +117,15 @@ impl<X: Xlen> Recompiler<X> {
             }
         }
 
-        let lib_path = output_dir.join(format!("lib{}.so", lib_name));
+        let lib_path = output_dir.join(format!("lib{lib_name}.so"));
         Ok(lib_path)
     }
 
     /// Lift an ELF file to source code (C or x86 assembly, depending on backend).
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from parsing or lifting the ELF.
     pub fn lift(&self, elf_path: &Path, output_dir: &Path) -> Result<std::path::PathBuf> {
         let _span = info_span!(
             "lift",
@@ -162,7 +177,7 @@ impl<X: Xlen> Recompiler<X> {
         // to enable mid-block resume (dispatch table entry for every instruction PC)
         match self.config.backend {
             Backend::C if self.config.instret_mode.per_instruction() => {
-                pipeline.lift_to_ir_as_single_blocks()?
+                pipeline.lift_to_ir_as_single_blocks()?;
             }
             Backend::C => pipeline.lift_to_ir()?,
             _ => pipeline.lift_to_ir_linear()?,
@@ -177,7 +192,7 @@ impl<X: Xlen> Recompiler<X> {
         match self.config.backend {
             Backend::C => {
                 // Load debug info for #line directives (if enabled and ELF has debug info)
-                if self.config.emit_line_info
+                if self.config.emit_line_info()
                     && let Some(path_str) = elf_path.to_str()
                     && let Err(e) = pipeline.load_debug_info(path_str)
                 {
@@ -185,15 +200,15 @@ impl<X: Xlen> Recompiler<X> {
                 }
 
                 pipeline.emit_c(output_dir, base_name)?;
-                Ok(output_dir.join(format!("{}_part0.c", base_name)))
+                Ok(output_dir.join(format!("{base_name}_part0.c")))
             }
             Backend::X86Asm => {
                 pipeline.emit_x86(output_dir, base_name)?;
-                Ok(output_dir.join(format!("{}.s", base_name)))
+                Ok(output_dir.join(format!("{base_name}.s")))
             }
             Backend::ARM64Asm => {
                 pipeline.emit_arm64(output_dir, base_name)?;
-                Ok(output_dir.join(format!("{}.s", base_name)))
+                Ok(output_dir.join(format!("{base_name}.s")))
             }
         }
     }
@@ -232,7 +247,7 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()
 
     let output = cmd.output().map_err(|e| {
         error!(error = %e, "failed to run make");
-        Error::CompilationFailed(format!("Failed to run make: {}", e))
+        Error::CompilationFailed(format!("Failed to run make: {e}"))
     })?;
 
     if !output.status.success() {
@@ -254,8 +269,7 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()
             .or_else(|| stdout.lines().next())
             .unwrap_or("unknown error");
         return Err(Error::CompilationFailed(format!(
-            "make failed: {}",
-            first_error
+            "make failed: {first_error}"
         )));
     } else if !quiet {
         // In non-quiet mode, show stdout (compilation progress)
@@ -265,6 +279,157 @@ fn compile_c_to_shared(output_dir: &Path, jobs: usize, quiet: bool) -> Result<()
                 debug!("{}", line);
             }
         }
+    }
+
+    Ok(())
+}
+
+fn configure_asm_command(cmd: &mut Command, needs_cross: bool, target_triple: &str) {
+    if needs_cross {
+        cmd.args([
+            format!("--target={target_triple}"),
+            "-c".to_string(),
+            "-fPIC".to_string(),
+        ]);
+    } else {
+        cmd.args(["-c", "-fPIC"]);
+    }
+}
+
+fn configure_c_command(cmd: &mut Command, needs_cross: bool, target_triple: &str) {
+    if needs_cross {
+        cmd.args([
+            format!("--target={target_triple}"),
+            "-c".to_string(),
+            "-fPIC".to_string(),
+            "-O2".to_string(),
+            "-std=c23".to_string(),
+        ]);
+    } else {
+        cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
+    }
+}
+
+fn assemble_asm(
+    cc: &str,
+    asm_path: &Path,
+    obj_path: &Path,
+    needs_cross: bool,
+    target_triple: &str,
+) -> Result<()> {
+    let mut asm_cmd = Command::new(cc);
+    configure_asm_command(&mut asm_cmd, needs_cross, target_triple);
+    asm_cmd.arg("-o").arg(obj_path).arg(asm_path);
+
+    let asm_output = {
+        let _span = info_span!("assemble").entered();
+        asm_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to run {cc}: {e}")))?
+    };
+
+    if !asm_output.status.success() {
+        let stderr = String::from_utf8_lossy(&asm_output.stderr);
+        error!(stderr = %stderr, "assembly failed");
+        let first_line = stderr.lines().next().unwrap_or("unknown error");
+        return Err(Error::CompilationFailed(format!(
+            "Assembly failed: {first_line}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn compile_optional_c(
+    cc: &str,
+    output_dir: &Path,
+    base_name: &str,
+    suffix: &str,
+    needs_cross: bool,
+    target_triple: &str,
+) -> Result<Option<std::path::PathBuf>> {
+    let c_path = output_dir.join(format!("{base_name}_{suffix}.c"));
+    if !c_path.exists() {
+        return Ok(None);
+    }
+
+    let obj_path = output_dir.join(format!("{base_name}_{suffix}.o"));
+    let mut cmd = Command::new(cc);
+    configure_c_command(&mut cmd, needs_cross, target_triple);
+    cmd.arg("-I")
+        .arg(output_dir)
+        .arg("-o")
+        .arg(&obj_path)
+        .arg(&c_path);
+
+    let output = {
+        let _span = info_span!("compile_support_c", suffix = suffix).entered();
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to compile {suffix}: {e}")))?
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(stderr = %stderr, "{suffix} compilation failed");
+        let first_line = stderr.lines().next().unwrap_or("unknown error");
+        return Err(Error::CompilationFailed(format!(
+            "{suffix} compilation failed: {first_line}"
+        )));
+    }
+
+    Ok(Some(obj_path))
+}
+
+fn link_shared(
+    cc: &str,
+    obj_files: &[std::path::PathBuf],
+    lib_path: &Path,
+    compiler: &Compiler,
+    needs_cross: bool,
+    target_triple: &str,
+) -> Result<()> {
+    let mut link_cmd = Command::new(cc);
+
+    if needs_cross {
+        link_cmd.args([
+            format!("--target={target_triple}"),
+            "-fuse-ld=lld".to_string(),
+            "-nostdlib".to_string(),
+            "-shared".to_string(),
+            "-Wl,-z,noexecstack".to_string(),
+        ]);
+    } else {
+        link_cmd.args(["-shared", "-Wl,-z,noexecstack"]);
+        if let Some(linker) = compiler.linker() {
+            link_cmd.arg(format!("-fuse-ld={linker}"));
+        }
+    }
+
+    link_cmd.arg("-o").arg(lib_path);
+    for obj in obj_files {
+        link_cmd.arg(obj);
+    }
+
+    let link_output = {
+        let _span = info_span!("link_shared").entered();
+        link_cmd
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| Error::CompilationFailed(format!("Failed to link: {e}")))?
+    };
+
+    if !link_output.status.success() {
+        let stderr = String::from_utf8_lossy(&link_output.stderr);
+        error!(stderr = %stderr, "linking failed");
+        let first_line = stderr.lines().next().unwrap_or("unknown error");
+        return Err(Error::CompilationFailed(format!(
+            "Linking failed: {first_line}"
+        )));
     }
 
     Ok(())
@@ -284,9 +449,9 @@ fn compile_x86_to_shared(
 ) -> Result<()> {
     let _span = info_span!("compile_x86").entered();
 
-    let asm_path = output_dir.join(format!("{}.s", base_name));
-    let obj_path = output_dir.join(format!("{}.o", base_name));
-    let lib_path = output_dir.join(format!("lib{}.so", base_name));
+    let asm_path = output_dir.join(format!("{base_name}.s"));
+    let obj_path = output_dir.join(format!("{base_name}.o"));
+    let lib_path = output_dir.join(format!("lib{base_name}.so"));
 
     if !asm_path.exists() {
         return Err(Error::CompilationFailed(format!(
@@ -299,8 +464,8 @@ fn compile_x86_to_shared(
     let is_x86_host = cfg!(target_arch = "x86_64") || cfg!(target_arch = "x86");
     let needs_cross = !is_x86_host;
 
+    let target_triple = "x86_64-unknown-linux-gnu";
     let cc = if needs_cross {
-        // On non-x86 hosts, must use clang for cross-compilation
         "clang"
     } else {
         compiler.command()
@@ -308,178 +473,40 @@ fn compile_x86_to_shared(
 
     debug!(asm = %asm_path.display(), compiler = %cc, cross = %needs_cross, "assembling");
 
-    // Assemble: cc -c -fPIC -o foo.o foo.s
-    let mut asm_cmd = Command::new(cc);
-
-    if needs_cross {
-        // Cross-compilation: use clang with explicit x86 target
-        asm_cmd.args(["--target=x86_64-unknown-linux-gnu", "-c", "-fPIC"]);
-    } else {
-        // AT&T syntax works with both GCC and LLVM's integrated assembler
-        asm_cmd.args(["-c", "-fPIC"]);
-    }
-
-    asm_cmd.arg("-o").arg(&obj_path).arg(&asm_path);
-
-    let asm_output = {
-        let _span = info_span!("assemble").entered();
-        asm_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?
-    };
-
-    if !asm_output.status.success() {
-        let stderr = String::from_utf8_lossy(&asm_output.stderr);
-        error!(stderr = %stderr, "assembly failed");
-        return Err(Error::CompilationFailed(format!(
-            "Assembly failed: {}",
-            stderr.lines().next().unwrap_or("unknown error")
-        )));
-    }
+    assemble_asm(cc, &asm_path, &obj_path, needs_cross, target_triple)?;
 
     debug!(obj = %obj_path.display(), "linking");
 
-    // Collect object files to link
-    let mut obj_files = vec![obj_path.clone()];
-
-    // Check for syscalls.c and compile it if present
-    let syscalls_c_path = output_dir.join(format!("{}_syscalls.c", base_name));
-    if syscalls_c_path.exists() {
-        let syscalls_obj_path = output_dir.join(format!("{}_syscalls.o", base_name));
-        let mut syscalls_cmd = Command::new(cc);
-
-        if needs_cross {
-            syscalls_cmd.args([
-                "--target=x86_64-unknown-linux-gnu",
-                "-c",
-                "-fPIC",
-                "-O2",
-                "-std=c23",
-            ]);
-        } else {
-            syscalls_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
-        }
-
-        syscalls_cmd
-            .arg("-I")
-            .arg(output_dir)
-            .arg("-o")
-            .arg(&syscalls_obj_path)
-            .arg(&syscalls_c_path);
-
-        let syscalls_output = {
-            let _span = info_span!("compile_syscalls").entered();
-            syscalls_cmd
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|e| {
-                    Error::CompilationFailed(format!("Failed to compile syscalls: {}", e))
-                })?
-        };
-
-        if !syscalls_output.status.success() {
-            let stderr = String::from_utf8_lossy(&syscalls_output.stderr);
-            error!(stderr = %stderr, "syscalls compilation failed");
-            return Err(Error::CompilationFailed(format!(
-                "Syscalls compilation failed: {}",
-                stderr.lines().next().unwrap_or("unknown error")
-            )));
-        }
-
-        obj_files.push(syscalls_obj_path);
+    let mut obj_files = vec![obj_path];
+    if let Some(path) = compile_optional_c(
+        cc,
+        output_dir,
+        base_name,
+        "syscalls",
+        needs_cross,
+        target_triple,
+    )? {
+        obj_files.push(path);
+    }
+    if let Some(path) = compile_optional_c(
+        cc,
+        output_dir,
+        base_name,
+        "htif",
+        needs_cross,
+        target_triple,
+    )? {
+        obj_files.push(path);
     }
 
-    // Check for htif.c and compile it if present (for HTIF syscall support)
-    let htif_c_path = output_dir.join(format!("{}_htif.c", base_name));
-    if htif_c_path.exists() {
-        let htif_obj_path = output_dir.join(format!("{}_htif.o", base_name));
-        let mut htif_cmd = Command::new(cc);
-
-        if needs_cross {
-            htif_cmd.args([
-                "--target=x86_64-unknown-linux-gnu",
-                "-c",
-                "-fPIC",
-                "-O2",
-                "-std=c23",
-            ]);
-        } else {
-            htif_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
-        }
-
-        htif_cmd
-            .arg("-I")
-            .arg(output_dir)
-            .arg("-o")
-            .arg(&htif_obj_path)
-            .arg(&htif_c_path);
-
-        let htif_output = {
-            let _span = info_span!("compile_htif").entered();
-            htif_cmd
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .map_err(|e| Error::CompilationFailed(format!("Failed to compile htif: {}", e)))?
-        };
-
-        if !htif_output.status.success() {
-            let stderr = String::from_utf8_lossy(&htif_output.stderr);
-            error!(stderr = %stderr, "htif compilation failed");
-            return Err(Error::CompilationFailed(format!(
-                "HTIF compilation failed: {}",
-                stderr.lines().next().unwrap_or("unknown error")
-            )));
-        }
-
-        obj_files.push(htif_obj_path);
-    }
-
-    // Link to shared library
-    let mut link_cmd = Command::new(cc);
-
-    if needs_cross {
-        // Cross-linking: use lld and no stdlib (our code is self-contained)
-        link_cmd.args([
-            "--target=x86_64-unknown-linux-gnu",
-            "-fuse-ld=lld",
-            "-nostdlib",
-            "-shared",
-            "-Wl,-z,noexecstack",
-        ]);
-    } else {
-        link_cmd.args(["-shared", "-Wl,-z,noexecstack"]);
-        // Use configured linker for clang (e.g., lld, lld-20)
-        if let Some(linker) = compiler.linker() {
-            link_cmd.arg(format!("-fuse-ld={}", linker));
-        }
-    }
-
-    link_cmd.arg("-o").arg(&lib_path);
-    for obj in &obj_files {
-        link_cmd.arg(obj);
-    }
-
-    let link_output = {
-        let _span = info_span!("link_shared").entered();
-        link_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to link: {}", e)))?
-    };
-
-    if !link_output.status.success() {
-        let stderr = String::from_utf8_lossy(&link_output.stderr);
-        error!(stderr = %stderr, "linking failed");
-        return Err(Error::CompilationFailed(format!(
-            "Linking failed: {}",
-            stderr.lines().next().unwrap_or("unknown error")
-        )));
-    }
+    link_shared(
+        cc,
+        &obj_files,
+        &lib_path,
+        compiler,
+        needs_cross,
+        target_triple,
+    )?;
 
     if !quiet {
         debug!(lib = %lib_path.display(), cross = %needs_cross, "compiled x86 shared library");
@@ -502,9 +529,9 @@ fn compile_arm64_to_shared(
 ) -> Result<()> {
     let _span = info_span!("compile_arm64").entered();
 
-    let asm_path = output_dir.join(format!("{}.s", base_name));
-    let obj_path = output_dir.join(format!("{}.o", base_name));
-    let lib_path = output_dir.join(format!("lib{}.so", base_name));
+    let asm_path = output_dir.join(format!("{base_name}.s"));
+    let obj_path = output_dir.join(format!("{base_name}.o"));
+    let lib_path = output_dir.join(format!("lib{base_name}.so"));
 
     if !asm_path.exists() {
         return Err(Error::CompilationFailed(format!(
@@ -513,12 +540,10 @@ fn compile_arm64_to_shared(
         )));
     }
 
-    // Check if we need cross-compilation (non-ARM64 host)
     let is_arm64_host = cfg!(target_arch = "aarch64");
     let needs_cross = !is_arm64_host;
-
+    let target_triple = "aarch64-unknown-linux-gnu";
     let cc = if needs_cross {
-        // On non-ARM64 hosts, must use clang for cross-compilation
         "clang"
     } else {
         compiler.command()
@@ -526,166 +551,40 @@ fn compile_arm64_to_shared(
 
     debug!(asm = %asm_path.display(), compiler = %cc, cross = %needs_cross, "assembling");
 
-    // Assemble: cc -c -fPIC -o foo.o foo.s
-    let mut asm_cmd = Command::new(cc);
-
-    if needs_cross {
-        // Cross-compilation: use clang with explicit ARM64 target
-        asm_cmd.args(["--target=aarch64-unknown-linux-gnu", "-c", "-fPIC"]);
-    } else {
-        asm_cmd.args(["-c", "-fPIC"]);
-    }
-
-    asm_cmd.arg("-o").arg(&obj_path).arg(&asm_path);
-
-    let asm_output = {
-        let _span = info_span!("assemble").entered();
-        asm_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to run {}: {}", cc, e)))?
-    };
-
-    if !asm_output.status.success() {
-        let stderr = String::from_utf8_lossy(&asm_output.stderr);
-        error!(stderr = %stderr, "assembly failed");
-        return Err(Error::CompilationFailed(format!(
-            "Assembly failed: {}",
-            stderr.lines().next().unwrap_or("unknown error")
-        )));
-    }
+    assemble_asm(cc, &asm_path, &obj_path, needs_cross, target_triple)?;
 
     debug!(obj = %obj_path.display(), "linking");
 
-    // Collect object files to link
-    let mut obj_files = vec![obj_path.clone()];
-
-    // Check for syscalls.c and compile it if present
-    let syscalls_c_path = output_dir.join(format!("{}_syscalls.c", base_name));
-    if syscalls_c_path.exists() {
-        let syscalls_obj_path = output_dir.join(format!("{}_syscalls.o", base_name));
-        let mut syscalls_cmd = Command::new(cc);
-
-        if needs_cross {
-            syscalls_cmd.args([
-                "--target=aarch64-unknown-linux-gnu",
-                "-c",
-                "-fPIC",
-                "-O2",
-                "-std=c23",
-            ]);
-        } else {
-            syscalls_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
-        }
-
-        syscalls_cmd
-            .arg("-I")
-            .arg(output_dir)
-            .arg("-o")
-            .arg(&syscalls_obj_path)
-            .arg(&syscalls_c_path);
-
-        let syscalls_output = syscalls_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to compile syscalls: {}", e)))?;
-
-        if !syscalls_output.status.success() {
-            let stderr = String::from_utf8_lossy(&syscalls_output.stderr);
-            error!(stderr = %stderr, "syscalls compilation failed");
-            return Err(Error::CompilationFailed(format!(
-                "Syscalls compilation failed: {}",
-                stderr.lines().next().unwrap_or("unknown error")
-            )));
-        }
-
-        obj_files.push(syscalls_obj_path);
+    let mut obj_files = vec![obj_path];
+    if let Some(path) = compile_optional_c(
+        cc,
+        output_dir,
+        base_name,
+        "syscalls",
+        needs_cross,
+        target_triple,
+    )? {
+        obj_files.push(path);
+    }
+    if let Some(path) = compile_optional_c(
+        cc,
+        output_dir,
+        base_name,
+        "htif",
+        needs_cross,
+        target_triple,
+    )? {
+        obj_files.push(path);
     }
 
-    // Check for htif.c and compile it if present (for HTIF syscall support)
-    let htif_c_path = output_dir.join(format!("{}_htif.c", base_name));
-    if htif_c_path.exists() {
-        let htif_obj_path = output_dir.join(format!("{}_htif.o", base_name));
-        let mut htif_cmd = Command::new(cc);
-
-        if needs_cross {
-            htif_cmd.args([
-                "--target=aarch64-unknown-linux-gnu",
-                "-c",
-                "-fPIC",
-                "-O2",
-                "-std=c23",
-            ]);
-        } else {
-            htif_cmd.args(["-c", "-fPIC", "-O2", "-std=c23"]);
-        }
-
-        htif_cmd
-            .arg("-I")
-            .arg(output_dir)
-            .arg("-o")
-            .arg(&htif_obj_path)
-            .arg(&htif_c_path);
-
-        let htif_output = htif_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| Error::CompilationFailed(format!("Failed to compile htif: {}", e)))?;
-
-        if !htif_output.status.success() {
-            let stderr = String::from_utf8_lossy(&htif_output.stderr);
-            error!(stderr = %stderr, "htif compilation failed");
-            return Err(Error::CompilationFailed(format!(
-                "HTIF compilation failed: {}",
-                stderr.lines().next().unwrap_or("unknown error")
-            )));
-        }
-
-        obj_files.push(htif_obj_path);
-    }
-
-    // Link to shared library
-    let mut link_cmd = Command::new(cc);
-
-    if needs_cross {
-        // Cross-linking: use lld and no stdlib (our code is self-contained)
-        link_cmd.args([
-            "--target=aarch64-unknown-linux-gnu",
-            "-fuse-ld=lld",
-            "-nostdlib",
-            "-shared",
-            "-Wl,-z,noexecstack",
-        ]);
-    } else {
-        link_cmd.args(["-shared", "-Wl,-z,noexecstack"]);
-        // Use configured linker for clang (e.g., lld, lld-20)
-        if let Some(linker) = compiler.linker() {
-            link_cmd.arg(format!("-fuse-ld={}", linker));
-        }
-    }
-
-    link_cmd.arg("-o").arg(&lib_path);
-    for obj in &obj_files {
-        link_cmd.arg(obj);
-    }
-
-    let link_output = link_cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| Error::CompilationFailed(format!("Failed to link: {}", e)))?;
-
-    if !link_output.status.success() {
-        let stderr = String::from_utf8_lossy(&link_output.stderr);
-        error!(stderr = %stderr, "linking failed");
-        return Err(Error::CompilationFailed(format!(
-            "Linking failed: {}",
-            stderr.lines().next().unwrap_or("unknown error")
-        )));
-    }
+    link_shared(
+        cc,
+        &obj_files,
+        &lib_path,
+        compiler,
+        needs_cross,
+        target_triple,
+    )?;
 
     if !quiet {
         debug!(lib = %lib_path.display(), cross = %needs_cross, "compiled ARM64 shared library");

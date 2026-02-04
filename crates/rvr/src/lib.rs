@@ -61,7 +61,7 @@
 //! let options = CompileOptions::new()
 //!     .with_instret_mode(InstretMode::Count)
 //!     .with_address_mode(AddressMode::Bounds);
-//! let lib = rvr::compile_with_options("prog.elf".as_ref(), "out/".as_ref(), options)?;
+//! let lib = rvr::compile_with_options("prog.elf".as_ref(), "out/".as_ref(), &options)?;
 //! ```
 //!
 //! ## Custom Configuration
@@ -217,14 +217,16 @@ pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
 
 pub mod bench;
 pub mod build_utils;
-pub mod gdb;
-pub mod metrics;
-pub mod test_support;
 mod compile;
 mod error;
+pub mod gdb;
+pub mod metrics;
 mod recompiler;
+pub mod test_support;
 
-pub use compile::{compile, compile_with_options, lift_to_c, lift_to_c_with_options, CompileOptions};
+pub use compile::{
+    CompileOptions, compile, compile_with_options, lift_to_c, lift_to_c_with_options,
+};
 pub use error::{Error, Result};
 pub use recompiler::Recompiler;
 

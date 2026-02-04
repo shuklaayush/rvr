@@ -1,6 +1,6 @@
-//! BufferedDiffRunner - runner with buffered diff tracer for block-level comparison.
+//! `BufferedDiffRunner` - runner with buffered diff tracer for block-level comparison.
 //!
-//! Unlike DiffRunner which captures a single instruction's state, this runner
+//! Unlike `DiffRunner` which captures a single instruction's state, this runner
 //! uses a ring buffer to capture multiple instructions' states for block-level
 //! comparison.
 
@@ -44,8 +44,10 @@ impl<X: Xlen, const NUM_REGS: usize> BufferedDiffRunner<X, NUM_REGS> {
         state.suspender.disable();
 
         // Allocate buffer and set up tracer
+        let capacity_u32 = u32::try_from(capacity).unwrap_or(u32::MAX);
+        let capacity = usize::try_from(capacity_u32).unwrap_or(usize::MAX);
         let mut buffer = vec![DiffEntry::default(); capacity];
-        state.tracer.setup(buffer.as_mut_ptr(), capacity as u32);
+        state.tracer.setup(buffer.as_mut_ptr(), capacity_u32);
 
         Self {
             state,
@@ -59,9 +61,10 @@ impl<X: Xlen, const NUM_REGS: usize> BufferedDiffRunner<X, NUM_REGS> {
     /// Must be called after state reset to reconnect buffer.
     fn reconnect_buffer(&mut self) {
         let capacity = self.buffer.len();
-        self.state
-            .tracer
-            .setup(self.buffer.as_mut_ptr(), capacity as u32);
+        self.state.tracer.setup(
+            self.buffer.as_mut_ptr(),
+            u32::try_from(capacity).unwrap_or(u32::MAX),
+        );
     }
 }
 
@@ -69,7 +72,8 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for BufferedDiffRunner<X, NUM_RE
     fn load_segments(&mut self) {
         self.memory.clear();
         for seg in &self.elf_image.memory_segments {
-            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            let vaddr = usize::try_from(X::to_u64(seg.virtual_start))
+                .expect("segment address does not fit in host usize");
             unsafe { self.memory.copy_from(vaddr, &seg.data) };
         }
     }
@@ -132,7 +136,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for BufferedDiffRunner<X, NUM_RE
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let addr = usize::try_from(addr).expect("address does not fit in host usize");
         if addr >= mem_size {
             return 0;
         }
@@ -144,7 +148,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for BufferedDiffRunner<X, NUM_RE
 
     fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let addr = usize::try_from(addr).expect("address does not fit in host usize");
         if addr >= mem_size {
             return 0;
         }

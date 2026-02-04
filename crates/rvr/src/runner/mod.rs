@@ -29,6 +29,17 @@ use rvr_isa::{REG_GP, REG_RA, REG_SP};
 use rvr_state::{DEFAULT_MEMORY_SIZE, GuardedMemory, NUM_REGS_E, NUM_REGS_I};
 use tracing::{debug, error, trace};
 
+fn u64_to_f64(value: u64) -> f64 {
+    let hi = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let lo = u32::try_from(value & 0xFFFF_FFFF).unwrap_or(u32::MAX);
+    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    let value = u64::try_from(value).unwrap_or(u64::MAX);
+    u64_to_f64(value)
+}
+
 pub use api::{FixedAddresses, InstretMode, RvApi, TracerKind};
 pub use error::RunError;
 pub use traits::RunnerImpl;
@@ -269,17 +280,19 @@ pub struct PerfCounters {
 
 impl PerfCounters {
     /// Calculate instructions per cycle.
+    #[must_use]
     pub fn ipc(&self) -> Option<f64> {
         match (self.instructions, self.cycles) {
-            (Some(i), Some(c)) if c > 0 => Some(i as f64 / c as f64),
+            (Some(i), Some(c)) if c > 0 => Some(u64_to_f64(i) / u64_to_f64(c)),
             _ => None,
         }
     }
 
     /// Calculate branch miss rate as percentage.
+    #[must_use]
     pub fn branch_miss_rate(&self) -> Option<f64> {
         match (self.branch_misses, self.branches) {
-            (Some(m), Some(b)) if b > 0 => Some((m as f64 / b as f64) * 100.0),
+            (Some(m), Some(b)) if b > 0 => Some((u64_to_f64(m) / u64_to_f64(b)) * 100.0),
             _ => None,
         }
     }
@@ -319,11 +332,17 @@ impl Runner {
         self.inner.set_register(REG_RA as usize, 0);
     }
     /// Load a compiled shared library and its corresponding ELF with default memory size.
+    ///
+    /// # Errors
+    /// Returns an error if the library or ELF cannot be loaded.
     pub fn load(lib_dir: impl AsRef<Path>, elf_path: impl AsRef<Path>) -> Result<Self, RunError> {
         Self::load_with_memory(lib_dir, elf_path, DEFAULT_MEMORY_SIZE)
     }
 
     /// Load a compiled shared library and its corresponding ELF with specified memory size.
+    ///
+    /// # Errors
+    /// Returns an error if the library or ELF cannot be loaded.
     pub fn load_with_memory(
         lib_dir: impl AsRef<Path>,
         elf_path: impl AsRef<Path>,
@@ -334,7 +353,7 @@ impl Runner {
 
         // Derive library name from directory name
         let dir_name = lib_dir.file_name().and_then(|n| n.to_str()).unwrap_or("rv");
-        let lib_path = lib_dir.join(format!("lib{}.so", dir_name));
+        let lib_path = lib_dir.join(format!("lib{dir_name}.so"));
 
         if !lib_path.exists() {
             error!(path = %lib_path.display(), "shared library not found");
@@ -387,16 +406,19 @@ impl Runner {
     }
 
     /// Check if library was compiled with export functions mode.
-    pub fn has_export_functions(&self) -> bool {
+    #[must_use]
+    pub const fn has_export_functions(&self) -> bool {
         self.api.export_functions
     }
 
     /// Look up a symbol by name and return its address.
+    #[must_use]
     pub fn lookup_symbol(&self, name: &str) -> Option<u64> {
         self.inner.lookup_symbol(name)
     }
 
     /// Get the entry point address.
+    #[must_use]
     pub fn entry_point(&self) -> u64 {
         self.inner.entry_point()
     }
@@ -418,26 +440,31 @@ impl Runner {
     }
 
     /// Get the current instruction count.
+    #[must_use]
     pub fn instret(&self) -> u64 {
         self.inner.instret()
     }
 
     /// Get the exit code (only valid after program has exited).
+    #[must_use]
     pub fn exit_code(&self) -> u8 {
         self.inner.exit_code()
     }
 
     /// Check if the VM has exited.
+    #[must_use]
     pub fn has_exited(&self) -> bool {
         self.inner.has_exited()
     }
 
     /// Get a register value.
+    #[must_use]
     pub fn get_register(&self, reg: usize) -> u64 {
         self.inner.get_register(reg)
     }
 
     /// Get the program counter.
+    #[must_use]
     pub fn get_pc(&self) -> u64 {
         self.inner.get_pc()
     }
@@ -448,6 +475,7 @@ impl Runner {
     }
 
     /// Get a CSR (Control and Status Register) value.
+    #[must_use]
     pub fn get_csr(&self, csr: u16) -> u64 {
         self.inner.get_csr(csr)
     }
@@ -458,36 +486,43 @@ impl Runner {
     }
 
     /// Read memory at the given address into the buffer.
+    #[must_use]
     pub fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         self.inner.read_memory(addr, buf)
     }
 
     /// Write memory at the given address from the buffer.
+    #[must_use]
     pub fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
         self.inner.write_memory(addr, data)
     }
 
     /// Get the number of general-purpose registers (16 for E extension, 32 for I).
+    #[must_use]
     pub fn num_regs(&self) -> usize {
         self.inner.num_regs()
     }
 
     /// Get the XLEN (32 or 64 bits).
+    #[must_use]
     pub fn xlen(&self) -> u8 {
         self.inner.xlen()
     }
 
     /// Get the memory size in bytes.
+    #[must_use]
     pub fn memory_size(&self) -> usize {
         self.inner.memory_size()
     }
 
     /// Check if the runner supports suspend mode (for single-stepping).
+    #[must_use]
     pub fn supports_suspend(&self) -> bool {
         self.api.supports_suspend() && self.inner.supports_suspend()
     }
 
     /// Get the target instret for suspension.
+    #[must_use]
     pub fn get_target_instret(&self) -> Option<u64> {
         self.inner.get_target_instret()
     }
@@ -500,31 +535,37 @@ impl Runner {
     // Diff tracer methods - available when compiled with --tracer diff
 
     /// Get the PC from the diff tracer (instruction that was just traced).
+    #[must_use]
     pub fn diff_traced_pc(&self) -> Option<u64> {
         self.inner.diff_traced_pc()
     }
 
     /// Get the opcode from the diff tracer.
+    #[must_use]
     pub fn diff_traced_opcode(&self) -> Option<u32> {
         self.inner.diff_traced_opcode()
     }
 
     /// Get the destination register if one was written (None for x0 or no write).
+    #[must_use]
     pub fn diff_traced_rd(&self) -> Option<u8> {
         self.inner.diff_traced_rd()
     }
 
     /// Get the value written to rd.
+    #[must_use]
     pub fn diff_traced_rd_value(&self) -> Option<u64> {
         self.inner.diff_traced_rd_value()
     }
 
-    /// Get memory access info: (addr, value, width, is_write).
+    /// Get memory access info: (addr, value, width, `is_write`).
+    #[must_use]
     pub fn diff_traced_mem(&self) -> Option<(u64, u64, u8, bool)> {
         self.inner.diff_traced_mem()
     }
 
     /// Check if diff tracer captured valid state.
+    #[must_use]
     pub fn diff_tracer_valid(&self) -> bool {
         self.inner.diff_tracer_valid()
     }
@@ -532,28 +573,32 @@ impl Runner {
     // Buffered diff tracer methods - available when compiled with --tracer buffered-diff
 
     /// Get number of entries captured in the buffered diff tracer.
+    #[must_use]
     pub fn buffered_diff_count(&self) -> Option<usize> {
         self.inner.buffered_diff_count()
     }
 
     /// Check if buffered diff tracer has overflowed (entries dropped).
+    #[must_use]
     pub fn buffered_diff_has_overflow(&self) -> Option<bool> {
         self.inner.buffered_diff_has_overflow()
     }
 
     /// Get number of entries dropped due to overflow.
+    #[must_use]
     pub fn buffered_diff_dropped(&self) -> Option<u32> {
         self.inner.buffered_diff_dropped()
     }
 
-    /// Get buffered diff entry at index: (pc, opcode, rd, rd_value, mem_access).
+    /// Get buffered diff entry at index: (pc, opcode, rd, `rd_value`, `mem_access`).
+    #[must_use]
     pub fn buffered_diff_get(&self, index: usize) -> Option<BufferedDiffEntry> {
         self.inner.buffered_diff_get(index)
     }
 
     /// Reset the buffered diff tracer (clear entries, keep allocation).
     pub fn buffered_diff_reset(&mut self) {
-        self.inner.buffered_diff_reset()
+        self.inner.buffered_diff_reset();
     }
 
     /// Dump register state to stderr for debugging.
@@ -568,6 +613,7 @@ impl Runner {
     }
 
     /// Compute a simple checksum of memory for comparison.
+    #[must_use]
     pub fn memory_checksum(&self, start: u64, len: usize) -> u64 {
         let mut checksum: u64 = 0;
         let mut buf = [0u8; 8];
@@ -586,6 +632,9 @@ impl Runner {
     }
 
     /// Execute from a specific address.
+    ///
+    /// # Errors
+    /// Returns an error if execution fails or the runtime reports a failure.
     pub fn execute_from(&mut self, pc: u64) -> Result<(std::time::Duration, u64), RunError> {
         let start = Instant::now();
         unsafe { (self.api.execute_from)(self.inner.as_void_ptr(), pc) };
@@ -612,6 +661,9 @@ impl Runner {
     }
 
     /// Run the program and return the result.
+    ///
+    /// # Errors
+    /// Returns an error if execution fails or the runtime reports a failure.
     pub fn run(&mut self) -> Result<RunResult, RunError> {
         // Save target_instret before reset (reset() disables the suspender)
         let saved_target = self.inner.get_target_instret();
@@ -637,7 +689,7 @@ impl Runner {
         let instret = self.inner.instret();
         let exit_code = self.inner.exit_code();
         let time_secs = elapsed.as_secs_f64();
-        let mips = (instret as f64 / time_secs) / 1_000_000.0;
+        let mips = (u64_to_f64(instret) / time_secs) / 1_000_000.0;
 
         trace!(
             instret = instret,
@@ -655,6 +707,9 @@ impl Runner {
     }
 
     /// Run multiple times.
+    ///
+    /// # Errors
+    /// Returns an error if execution fails or the runtime reports a failure.
     pub fn run_multiple(&mut self, count: usize) -> Result<Vec<RunResult>, RunError> {
         let entry_point = self.inner.entry_point();
         let mut results = Vec::with_capacity(count);
@@ -670,7 +725,7 @@ impl Runner {
             let instret = self.inner.instret();
             let exit_code = self.inner.exit_code();
             let time_secs = elapsed.as_secs_f64();
-            let mips = (instret as f64 / time_secs) / 1_000_000.0;
+            let mips = (u64_to_f64(instret) / time_secs) / 1_000_000.0;
 
             results.push(RunResult {
                 exit_code,
@@ -684,6 +739,9 @@ impl Runner {
     }
 
     /// Run with hardware performance counters.
+    ///
+    /// # Errors
+    /// Returns an error if execution fails or the runtime reports a failure.
     pub fn run_with_counters(&mut self) -> Result<RunResultWithPerf, RunError> {
         self.inner.load_segments();
         self.inner.reset();
@@ -710,9 +768,9 @@ impl Runner {
         let instret = self.inner.instret();
         let exit_code = self.inner.exit_code();
         let time_secs = elapsed.as_secs_f64();
-        let mips = (instret as f64 / time_secs) / 1_000_000.0;
+        let mips = (u64_to_f64(instret) / time_secs) / 1_000_000.0;
 
-        let perf = perf_group.as_mut().and_then(|g| g.read());
+        let perf = perf_group.as_mut().and_then(crate::perf::PerfGroup::read);
 
         let result = RunResult {
             exit_code,
@@ -727,6 +785,10 @@ impl Runner {
     }
 
     /// Call a guest function by name with the given arguments.
+    /// Call an exported function by name.
+    ///
+    /// # Errors
+    /// Returns an error if the function cannot be resolved or execution fails.
     pub fn call(&mut self, name: &str, args: &[u64]) -> Result<u64, RunError> {
         let addr = self
             .lookup_symbol(name)
@@ -735,6 +797,10 @@ impl Runner {
     }
 
     /// Call a guest function by address with the given arguments.
+    /// Call an exported function by address.
+    ///
+    /// # Errors
+    /// Returns an error if execution fails.
     pub fn call_addr(&mut self, addr: u64, args: &[u64]) -> Result<u64, RunError> {
         if args.len() > 8 {
             return Err(RunError::TracerSetupFailed(
@@ -760,6 +826,10 @@ impl Runner {
     }
 
     /// Save the current machine state to a file (zstd compressed).
+    /// Save the current state to a file.
+    ///
+    /// # Errors
+    /// Returns an error if the state cannot be serialized or written.
     pub fn save_state(&self, path: impl AsRef<Path>) -> Result<(), RunError> {
         const MAGIC: &[u8; 4] = b"RVR\0";
         const VERSION: u32 = 1;
@@ -771,7 +841,9 @@ impl Runner {
         writer.write_all(MAGIC)?;
         writer.write_all(&VERSION.to_le_bytes())?;
         writer.write_all(&[self.inner.xlen()])?;
-        writer.write_all(&[self.inner.num_regs() as u8])?;
+        let num_regs = u8::try_from(self.inner.num_regs())
+            .map_err(|_| RunError::StateError("num_regs does not fit in u8".to_string()))?;
+        writer.write_all(&[num_regs])?;
         writer.write_all(&(self.inner.memory_size() as u64).to_le_bytes())?;
 
         // Data (zstd compressed)
@@ -801,6 +873,10 @@ impl Runner {
     }
 
     /// Load machine state from a file.
+    /// Load a previously saved state from a file.
+    ///
+    /// # Errors
+    /// Returns an error if the state cannot be read or is incompatible.
     pub fn load_state(&mut self, path: impl AsRef<Path>) -> Result<(), RunError> {
         const MAGIC: &[u8; 4] = b"RVR\0";
         const VERSION: u32 = 1;
@@ -844,7 +920,9 @@ impl Runner {
 
         let mut mem_size_bytes = [0u8; 8];
         reader.read_exact(&mut mem_size_bytes)?;
-        let file_mem_size = u64::from_le_bytes(mem_size_bytes) as usize;
+        let file_mem_size = usize::try_from(u64::from_le_bytes(mem_size_bytes)).map_err(|_| {
+            RunError::StateError("memory size does not fit in host usize".to_string())
+        })?;
         if file_mem_size != self.inner.memory_size() {
             return Err(RunError::StateError(format!(
                 "memory size mismatch: file has {}, runner has {}",
@@ -882,6 +960,10 @@ impl Runner {
     }
 
     /// Run multiple times with hardware performance counters.
+    ///
+    /// # Errors
+    ///
+    /// Returns errors from perf counter setup or execution.
     pub fn run_multiple_with_counters(
         &mut self,
         count: usize,
@@ -916,16 +998,17 @@ impl Runner {
             last_instret = self.inner.instret();
             last_exit_code = self.inner.exit_code();
             let time_secs = elapsed.as_secs_f64();
-            let mips = (last_instret as f64 / time_secs) / 1_000_000.0;
+            let mips = (u64_to_f64(last_instret) / time_secs) / 1_000_000.0;
 
             total_time += time_secs;
             total_mips += mips;
         }
 
-        let avg_time = total_time / count as f64;
-        let avg_mips = total_mips / count as f64;
+        let count_f64 = usize_to_f64(count);
+        let avg_time = total_time / count_f64;
+        let avg_mips = total_mips / count_f64;
 
-        let perf = perf_group.as_mut().and_then(|g| g.read());
+        let perf = perf_group.as_mut().and_then(crate::perf::PerfGroup::read);
 
         let result = RunResult {
             exit_code: last_exit_code,
@@ -949,7 +1032,7 @@ mod tests {
         let result = RunResult {
             exit_code: 0,
             instret: 1_234_567,
-            time_secs: 1.234567,
+            time_secs: 1.234_567,
             mips: 1.0,
         };
         result.print_raw_format();

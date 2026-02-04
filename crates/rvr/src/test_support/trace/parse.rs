@@ -15,6 +15,9 @@ impl TraceEntry {
     /// - `core   0: 0 0x<PC> (0x<OPCODE>) c<CSR>_name 0x<VALUE>`
     ///
     /// Uses pattern matching rather than positional parsing to handle format variations.
+    ///
+    /// # Panics
+    /// Panics if the internal regex patterns fail to compile (should be unreachable).
     pub fn parse(line: &str) -> Option<Self> {
         let line = line.trim();
         if !line.starts_with("core") {
@@ -53,7 +56,7 @@ impl TraceEntry {
             .captures(line)
             .and_then(|caps| u64::from_str_radix(caps.get(1)?.as_str(), 16).ok());
 
-        Some(TraceEntry {
+        Some(Self {
             pc,
             opcode,
             rd,
@@ -63,6 +66,10 @@ impl TraceEntry {
     }
 }
 
+/// Parse a trace file into entries.
+///
+/// # Errors
+/// Returns an error if the trace file cannot be read.
 pub fn parse_trace_file(path: &Path) -> std::io::Result<Vec<TraceEntry>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);

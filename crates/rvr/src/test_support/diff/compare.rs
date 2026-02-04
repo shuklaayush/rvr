@@ -2,8 +2,192 @@
 
 use super::executor::Executor;
 use super::inprocess::BufferedInProcessExecutor;
-use super::state::{CompareConfig, CompareResult, DiffState, Divergence, DivergenceKind, compare_states};
+use super::state::{
+    CompareConfig, CompareResult, DiffState, Divergence, DivergenceKind, compare_states,
+};
 
+struct RunSnapshot {
+    state: DiffState,
+    has_exited: bool,
+    exit_code: u8,
+    error: bool,
+}
+
+enum ExitStatus {
+    Running,
+    Exited(u8),
+}
+
+struct RunnerBatch {
+    executed: u64,
+    exit: ExitStatus,
+    error: bool,
+    pc_after: u64,
+}
+
+impl RunnerBatch {
+    const fn has_exited(&self) -> bool {
+        matches!(self.exit, ExitStatus::Exited(_))
+    }
+
+    const fn exit_code(&self) -> Option<u8> {
+        match self.exit {
+            ExitStatus::Exited(code) => Some(code),
+            ExitStatus::Running => None,
+        }
+    }
+}
+
+struct BatchResult {
+    ref_batch: RunnerBatch,
+    test_batch: RunnerBatch,
+}
+
+fn u64_to_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn regs_match(ref_r: &crate::Runner, test_r: &crate::Runner) -> bool {
+    for i in 0..ref_r.num_regs() {
+        if ref_r.get_register(i) != test_r.get_register(i) {
+            return false;
+        }
+    }
+    true
+}
+
+fn run_to_target(runner: &mut crate::Runner, target_instret: u64) -> RunSnapshot {
+    let result = runner.reset_and_run_to_instret(target_instret);
+    RunSnapshot {
+        state: DiffState {
+            pc: runner.get_pc(),
+            instret: runner.instret(),
+            is_exit: runner.has_exited(),
+            ..DiffState::default()
+        },
+        has_exited: runner.has_exited(),
+        exit_code: runner.exit_code(),
+        error: result.is_err(),
+    }
+}
+
+fn checkpoint_match(
+    ref_snap: &RunSnapshot,
+    test_snap: &RunSnapshot,
+    ref_r: &crate::Runner,
+    test_r: &crate::Runner,
+    target_instret: u64,
+) -> bool {
+    let executed_ok =
+        ref_snap.state.instret == target_instret && test_snap.state.instret == target_instret;
+    let both_exited = ref_snap.has_exited && test_snap.has_exited;
+    let exit_match = ref_snap.exit_code == test_snap.exit_code;
+    let errors_ok = !(ref_snap.error || test_snap.error) || (both_exited && exit_match);
+
+    executed_ok
+        && regs_match(ref_r, test_r)
+        && ref_snap.has_exited == test_snap.has_exited
+        && exit_match
+        && errors_ok
+        && (ref_snap.has_exited || ref_snap.state.pc == test_snap.state.pc)
+}
+
+fn align_pcs(ref_runner: &mut crate::Runner, test_runner: &mut crate::Runner) {
+    let ref_pc = ref_runner.get_pc();
+    let test_pc = test_runner.get_pc();
+    if ref_pc == test_pc {
+        return;
+    }
+
+    for _ in 0..256 {
+        let curr_ref_pc = ref_runner.get_pc();
+        let curr_test_pc = test_runner.get_pc();
+        if curr_ref_pc == curr_test_pc {
+            break;
+        }
+        if curr_ref_pc < curr_test_pc {
+            ref_runner.set_target_instret(ref_runner.instret() + 1);
+            ref_runner.clear_exit();
+            let _ = ref_runner.execute_from(curr_ref_pc);
+        } else {
+            test_runner.set_target_instret(test_runner.instret() + 1);
+            test_runner.clear_exit();
+            let _ = test_runner.execute_from(curr_test_pc);
+        }
+    }
+}
+
+fn run_batch(
+    ref_runner: &mut crate::Runner,
+    test_runner: &mut crate::Runner,
+    batch_size: u64,
+) -> BatchResult {
+    let ref_start_instret = ref_runner.instret();
+    ref_runner.set_target_instret(ref_start_instret + batch_size);
+    ref_runner.clear_exit();
+    let ref_pc = ref_runner.get_pc();
+    let ref_result = ref_runner.execute_from(ref_pc);
+
+    let test_start_instret = test_runner.instret();
+    test_runner.set_target_instret(test_start_instret + batch_size);
+    test_runner.clear_exit();
+    let test_pc = test_runner.get_pc();
+    let test_result = test_runner.execute_from(test_pc);
+
+    BatchResult {
+        ref_batch: RunnerBatch {
+            executed: ref_runner.instret() - ref_start_instret,
+            exit: if ref_runner.has_exited() {
+                ExitStatus::Exited(ref_runner.exit_code())
+            } else {
+                ExitStatus::Running
+            },
+            error: ref_result.is_err(),
+            pc_after: ref_runner.get_pc(),
+        },
+        test_batch: RunnerBatch {
+            executed: test_runner.instret() - test_start_instret,
+            exit: if test_runner.has_exited() {
+                ExitStatus::Exited(test_runner.exit_code())
+            } else {
+                ExitStatus::Running
+            },
+            error: test_result.is_err(),
+            pc_after: test_runner.get_pc(),
+        },
+    }
+}
+
+fn divergence_kind(
+    ref_snap: &RunSnapshot,
+    test_snap: &RunSnapshot,
+    ref_runner: &crate::Runner,
+    test_runner: &crate::Runner,
+    target_instret: u64,
+) -> DivergenceKind {
+    if ref_snap.state.pc != test_snap.state.pc {
+        DivergenceKind::Pc
+    } else if !regs_match(ref_runner, test_runner) {
+        DivergenceKind::RegValue
+    } else if ref_snap.has_exited != test_snap.has_exited
+        || ref_snap.exit_code != test_snap.exit_code
+    {
+        if ref_snap.has_exited {
+            DivergenceKind::ActualTail
+        } else {
+            DivergenceKind::ExpectedTail
+        }
+    } else if ref_snap.state.instret != target_instret || test_snap.state.instret != target_instret
+    {
+        if ref_snap.state.instret < test_snap.state.instret {
+            DivergenceKind::ActualTail
+        } else {
+            DivergenceKind::ExpectedTail
+        }
+    } else {
+        DivergenceKind::Pc
+    }
+}
 /// Run lockstep comparison between reference and test executors.
 ///
 /// Steps both executors one instruction at a time and compares state.
@@ -29,9 +213,8 @@ pub fn compare_lockstep(
         if matched == 0 {
             let mut attempts = 0u32;
             while attempts < 256 {
-                let (ref_s, test_s) = match (&ref_state, &test_state) {
-                    (Some(r), Some(t)) => (r, t),
-                    _ => break,
+                let (Some(ref_s), Some(test_s)) = (&ref_state, &test_state) else {
+                    break;
                 };
                 if ref_s.pc == test_s.pc {
                     break;
@@ -74,7 +257,7 @@ pub fn compare_lockstep(
                     divergence: Some(Divergence {
                         index: matched,
                         expected: ref_s,
-                        actual: Default::default(),
+                        actual: DiffState::default(),
                         kind: DivergenceKind::ExpectedTail,
                     }),
                 };
@@ -85,7 +268,7 @@ pub fn compare_lockstep(
                     matched,
                     divergence: Some(Divergence {
                         index: matched,
-                        expected: Default::default(),
+                        expected: DiffState::default(),
                         actual: test_s,
                         kind: DivergenceKind::ActualTail,
                     }),
@@ -149,17 +332,16 @@ pub fn compare_block_vs_linear(
                         matched,
                         divergence: Some(Divergence {
                             index: matched,
-                            expected: Default::default(),
+                            expected: DiffState::default(),
                             actual: linear_state,
                             kind: DivergenceKind::ActualTail,
                         }),
                     };
                 }
                 break;
-            } else {
-                // No entries but not exited - unexpected
-                break;
             }
+            // No entries but not exited - unexpected
+            break;
         }
 
         // Compare each buffered entry against stepped linear entry
@@ -168,25 +350,21 @@ pub fn compare_block_vs_linear(
                 break;
             }
 
-            let block_state = match block_exec.get_entry(i) {
-                Some(s) => s,
-                None => break,
+            let Some(block_state) = block_exec.get_entry(i) else {
+                break;
             };
 
-            let linear_state = match linear_exec.step() {
-                Some(s) => s,
-                None => {
-                    // Linear executor finished early
-                    return CompareResult {
-                        matched,
-                        divergence: Some(Divergence {
-                            index: matched,
-                            expected: block_state,
-                            actual: Default::default(),
-                            kind: DivergenceKind::ExpectedTail,
-                        }),
-                    };
-                }
+            let Some(linear_state) = linear_exec.step() else {
+                // Linear executor finished early
+                return CompareResult {
+                    matched,
+                    divergence: Some(Divergence {
+                        index: matched,
+                        expected: block_state,
+                        actual: DiffState::default(),
+                        kind: DivergenceKind::ExpectedTail,
+                    }),
+                };
             };
 
             // Compare the two states
@@ -256,82 +434,7 @@ pub fn compare_checkpoint(
     let limit = max_instrs.unwrap_or(u64::MAX);
     let mut matched: u64 = 0;
 
-    // Helper to compare register files
-    let regs_match = |ref_r: &crate::Runner, test_r: &crate::Runner| -> bool {
-        for i in 0..ref_r.num_regs() {
-            if ref_r.get_register(i) != test_r.get_register(i) {
-                return false;
-            }
-        }
-        true
-    };
-
-    struct RunSnapshot {
-        state: DiffState,
-        has_exited: bool,
-        exit_code: u8,
-        error: bool,
-    }
-
-    let run_to_target = |runner: &mut crate::Runner, target_instret: u64| -> RunSnapshot {
-        let result = runner.reset_and_run_to_instret(target_instret);
-        RunSnapshot {
-            state: DiffState {
-                pc: runner.get_pc(),
-                instret: runner.instret(),
-                is_exit: runner.has_exited(),
-                ..Default::default()
-            },
-            has_exited: runner.has_exited(),
-            exit_code: runner.exit_code(),
-            error: result.is_err(),
-        }
-    };
-
-    let checkpoint_match = |ref_snap: &RunSnapshot,
-                            test_snap: &RunSnapshot,
-                            ref_r: &crate::Runner,
-                            test_r: &crate::Runner,
-                            target_instret: u64|
-     -> bool {
-        let executed_ok =
-            ref_snap.state.instret == target_instret && test_snap.state.instret == target_instret;
-        let both_exited = ref_snap.has_exited && test_snap.has_exited;
-        let exit_match = ref_snap.exit_code == test_snap.exit_code;
-        let errors_ok = !(ref_snap.error || test_snap.error) || (both_exited && exit_match);
-
-        executed_ok
-            && regs_match(ref_r, test_r)
-            && ref_snap.has_exited == test_snap.has_exited
-            && exit_match
-            && errors_ok
-            && (ref_snap.has_exited || ref_snap.state.pc == test_snap.state.pc)
-    };
-
-    // Initial alignment: run a small number of instructions to synchronize PCs
-    // Different backends may start at slightly different PCs
-    let ref_pc = ref_runner.get_pc();
-    let test_pc = test_runner.get_pc();
-    if ref_pc != test_pc {
-        // Run up to 256 instructions to align
-        for _ in 0..256 {
-            let curr_ref_pc = ref_runner.get_pc();
-            let curr_test_pc = test_runner.get_pc();
-            if curr_ref_pc == curr_test_pc {
-                break;
-            }
-            // Advance the one with lower PC
-            if curr_ref_pc < curr_test_pc {
-                ref_runner.set_target_instret(ref_runner.instret() + 1);
-                ref_runner.clear_exit();
-                let _ = ref_runner.execute_from(curr_ref_pc);
-            } else {
-                test_runner.set_target_instret(test_runner.instret() + 1);
-                test_runner.clear_exit();
-                let _ = test_runner.execute_from(curr_test_pc);
-            }
-        }
-    }
+    align_pcs(ref_runner, test_runner);
 
     loop {
         if matched >= limit {
@@ -342,51 +445,25 @@ pub fn compare_checkpoint(
         let remaining = limit - matched;
         let batch_size = remaining.min(checkpoint_interval);
 
-        // Run reference for batch_size instructions
-        let ref_start_instret = ref_runner.instret();
-        ref_runner.set_target_instret(ref_start_instret + batch_size);
-        ref_runner.clear_exit();
-        let ref_pc = ref_runner.get_pc();
-        let ref_result = ref_runner.execute_from(ref_pc);
+        let batch = run_batch(ref_runner, test_runner, batch_size);
+        let both_exited = batch.ref_batch.has_exited() && batch.test_batch.has_exited();
+        let exit_match = batch.ref_batch.exit_code() == batch.test_batch.exit_code();
+        let errors_ok =
+            !(batch.ref_batch.error || batch.test_batch.error) || (both_exited && exit_match);
 
-        // Run test for batch_size instructions
-        let test_start_instret = test_runner.instret();
-        test_runner.set_target_instret(test_start_instret + batch_size);
-        test_runner.clear_exit();
-        let test_pc = test_runner.get_pc();
-        let test_result = test_runner.execute_from(test_pc);
-
-        // Check exit status and errors
-        let ref_has_exited = ref_runner.has_exited();
-        let test_has_exited = test_runner.has_exited();
-        let ref_exit_code = ref_runner.exit_code();
-        let test_exit_code = test_runner.exit_code();
-        let ref_error = ref_result.is_err();
-        let test_error = test_result.is_err();
-
-        // Get actual instructions executed
-        let ref_executed = ref_runner.instret() - ref_start_instret;
-        let test_executed = test_runner.instret() - test_start_instret;
-
-        // Quick check: if PCs match and registers match, we're good
-        let ref_pc_after = ref_runner.get_pc();
-        let test_pc_after = test_runner.get_pc();
-
-        let both_exited = ref_has_exited && test_has_exited;
-        let exit_match = ref_exit_code == test_exit_code;
-        let errors_ok = !(ref_error || test_error) || (both_exited && exit_match);
-
-        if ref_executed == test_executed
+        let states_match = batch.ref_batch.executed == batch.test_batch.executed
             && regs_match(ref_runner, test_runner)
-            && ref_has_exited == test_has_exited
+            && batch.ref_batch.has_exited() == batch.test_batch.has_exited()
             && exit_match
             && errors_ok
-            && (ref_has_exited || ref_pc_after == test_pc_after)
-        {
-            // States match - continue to next checkpoint
-            matched += ref_executed;
+            && (batch.ref_batch.has_exited()
+                || batch.ref_batch.pc_after == batch.test_batch.pc_after);
 
-            if ref_has_exited || test_has_exited {
+        if states_match {
+            // States match - continue to next checkpoint
+            matched += batch.ref_batch.executed;
+
+            if batch.ref_batch.has_exited() || batch.test_batch.has_exited() {
                 break;
             }
             continue;
@@ -394,12 +471,16 @@ pub fn compare_checkpoint(
 
         // States differ - find exact divergence point via binary search
         let start_instret = matched;
-        let max_steps = ref_executed.min(test_executed).min(batch_size);
+        let max_steps = batch
+            .ref_batch
+            .executed
+            .min(batch.test_batch.executed)
+            .min(batch_size);
         let mut low = 0u64;
         let mut high = max_steps;
 
         while low < high {
-            let mid = (low + high + 1) / 2;
+            let mid = (low + high).div_ceil(2);
             let target = start_instret + mid;
             let ref_snap = run_to_target(ref_runner, target);
             let test_snap = run_to_target(test_runner, target);
@@ -416,32 +497,12 @@ pub fn compare_checkpoint(
         let ref_snap = run_to_target(ref_runner, target);
         let test_snap = run_to_target(test_runner, target);
 
-        let kind = if ref_snap.state.pc != test_snap.state.pc {
-            DivergenceKind::Pc
-        } else if !regs_match(ref_runner, test_runner) {
-            DivergenceKind::RegValue
-        } else if ref_snap.has_exited != test_snap.has_exited
-            || ref_snap.exit_code != test_snap.exit_code
-        {
-            if ref_snap.has_exited {
-                DivergenceKind::ActualTail
-            } else {
-                DivergenceKind::ExpectedTail
-            }
-        } else if ref_snap.state.instret != target || test_snap.state.instret != target {
-            if ref_snap.state.instret < test_snap.state.instret {
-                DivergenceKind::ActualTail
-            } else {
-                DivergenceKind::ExpectedTail
-            }
-        } else {
-            DivergenceKind::Pc
-        };
-
+        let kind = divergence_kind(&ref_snap, &test_snap, ref_runner, test_runner, target);
+        let divergence_index = u64_to_usize(divergence_at);
         return CompareResult {
-            matched: divergence_at as usize,
+            matched: divergence_index,
             divergence: Some(Divergence {
-                index: divergence_at as usize,
+                index: divergence_index,
                 expected: ref_snap.state,
                 actual: test_snap.state,
                 kind,
@@ -450,7 +511,7 @@ pub fn compare_checkpoint(
     }
 
     CompareResult {
-        matched: matched as usize,
+        matched: u64_to_usize(matched),
         divergence: None,
     }
 }
@@ -492,7 +553,7 @@ mod tests {
                 opcode: 0x13,
                 rd: Some(1),
                 rd_value: Some(42),
-                ..Default::default()
+                ..DiffState::default()
             },
             DiffState {
                 pc: 0x1004,
@@ -500,7 +561,7 @@ mod tests {
                 rd: Some(2),
                 rd_value: Some(100),
                 is_exit: true,
-                ..Default::default()
+                ..DiffState::default()
             },
         ];
 
@@ -522,11 +583,11 @@ mod tests {
     fn test_compare_pc_mismatch() {
         let ref_states = vec![DiffState {
             pc: 0x1000,
-            ..Default::default()
+            ..DiffState::default()
         }];
         let test_states = vec![DiffState {
             pc: 0x2000,
-            ..Default::default()
+            ..DiffState::default()
         }];
 
         let mut ref_exec = MockExecutor::new(ref_states);
@@ -549,16 +610,16 @@ mod tests {
         let ref_states = vec![
             DiffState {
                 pc: 0x1000,
-                ..Default::default()
+                ..DiffState::default()
             },
             DiffState {
                 pc: 0x1004,
-                ..Default::default()
+                ..DiffState::default()
             },
         ];
         let test_states = vec![DiffState {
             pc: 0x1000,
-            ..Default::default()
+            ..DiffState::default()
         }];
 
         let mut ref_exec = MockExecutor::new(ref_states);
@@ -584,7 +645,7 @@ mod tests {
         let states: Vec<_> = (0..100)
             .map(|i| DiffState {
                 pc: 0x1000 + i * 4,
-                ..Default::default()
+                ..DiffState::default()
             })
             .collect();
 

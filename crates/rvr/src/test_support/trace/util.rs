@@ -2,6 +2,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::time::{Duration, Instant};
 
+/// Run a command with a timeout.
+///
+/// # Errors
+/// Returns an error if the command fails to spawn, fails while running, or times out.
 pub fn run_command_with_timeout(
     cmd: &mut Command,
     timeout: Duration,
@@ -26,22 +30,24 @@ pub fn run_command_with_timeout(
 }
 
 /// Find Spike executable in PATH.
+#[must_use]
 pub fn find_spike() -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .filter_map(|dir| {
-                let full_path = dir.join("spike");
-                if full_path.is_file() {
-                    Some(full_path)
-                } else {
-                    None
-                }
-            })
-            .next()
+        std::env::split_paths(&paths).find_map(|dir| {
+            let full_path = dir.join("spike");
+            if full_path.is_file() {
+                Some(full_path)
+            } else {
+                None
+            }
+        })
     })
 }
 
 /// Determine ISA string from ELF.
+///
+/// # Errors
+/// Returns an error if the ELF cannot be read or is invalid.
 pub fn elf_to_isa(elf_path: &Path) -> std::io::Result<String> {
     // Read ELF header to determine if RV32 or RV64
     let elf_data = std::fs::read(elf_path)?;
@@ -75,11 +81,12 @@ pub fn elf_to_isa(elf_path: &Path) -> std::io::Result<String> {
 /// Infer ISA string from riscv-tests-style filename when possible.
 ///
 /// Examples:
-/// - rv64ua-* => rv64imac_a
-/// - rv64uzbb-* => rv64imac_zbb
-/// - rv64uzba-* => rv64imac_zba
-/// - rv64uzbs-* => rv64imac_zbs
-/// - rv64si-* => rv64imac_s
+/// - rv64ua-* => `rv64imac_a`
+/// - rv64uzbb-* => `rv64imac_zbb`
+/// - rv64uzba-* => `rv64imac_zba`
+/// - rv64uzbs-* => `rv64imac_zbs`
+/// - rv64si-* => `rv64imac_s`
+#[must_use]
 pub fn isa_from_test_name(name: &str, fallback: &str) -> String {
     let mut isa = fallback.to_string();
     if name.starts_with("rv64uzba") || name.starts_with("rv32uzba") {
@@ -96,6 +103,9 @@ pub fn isa_from_test_name(name: &str, fallback: &str) -> String {
 }
 
 /// Get the entry point from an ELF file.
+///
+/// # Errors
+/// Returns an error if the ELF cannot be read or is invalid.
 pub fn elf_entry_point(elf_path: &Path) -> std::io::Result<u64> {
     let elf_data = std::fs::read(elf_path)?;
 
@@ -125,7 +135,10 @@ pub fn elf_entry_point(elf_path: &Path) -> std::io::Result<u64> {
                 "ELF file too small for entry point",
             ));
         }
-        Ok(u64::from_le_bytes(elf_data[0x18..0x20].try_into().unwrap()))
+        let bytes: [u8; 8] = elf_data[0x18..0x20]
+            .try_into()
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad entry point"))?;
+        Ok(u64::from_le_bytes(bytes))
     } else {
         if elf_data.len() < 0x18 + 4 {
             return Err(std::io::Error::new(
@@ -133,6 +146,9 @@ pub fn elf_entry_point(elf_path: &Path) -> std::io::Result<u64> {
                 "ELF file too small for entry point",
             ));
         }
-        Ok(u32::from_le_bytes(elf_data[0x18..0x1c].try_into().unwrap()) as u64)
+        let bytes: [u8; 4] = elf_data[0x18..0x1c]
+            .try_into()
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad entry point"))?;
+        Ok(u64::from(u32::from_le_bytes(bytes)))
     }
 }

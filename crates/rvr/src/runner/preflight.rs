@@ -1,4 +1,4 @@
-//! PreflightRunner - runner with preflight tracer for coverage analysis.
+//! `PreflightRunner` - runner with preflight tracer for coverage analysis.
 
 use std::ffi::c_void;
 
@@ -41,7 +41,8 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
     fn load_segments(&mut self) {
         self.memory.clear();
         for seg in &self.elf_image.memory_segments {
-            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            let vaddr = usize::try_from(X::to_u64(seg.virtual_start))
+                .expect("segment address does not fit in host usize");
             unsafe { self.memory.copy_from(vaddr, &seg.data) };
         }
     }
@@ -51,9 +52,9 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
         self.state.set_memory(self.memory.as_ptr());
         self.state.tracer.setup(
             self.data_buffer.as_mut_ptr(),
-            self.data_buffer.len() as u32,
+            u32::try_from(self.data_buffer.len()).unwrap_or(u32::MAX),
             self.pc_buffer.as_mut_ptr(),
-            self.pc_buffer.len() as u32,
+            u32::try_from(self.pc_buffer.len()).unwrap_or(u32::MAX),
         );
     }
 
@@ -107,7 +108,9 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let Ok(addr) = usize::try_from(addr) else {
+            return 0;
+        };
         if addr >= mem_size {
             return 0;
         }
@@ -119,7 +122,9 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for PreflightRunner<X, NUM_REGS>
 
     fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let Ok(addr) = usize::try_from(addr) else {
+            return 0;
+        };
         if addr >= mem_size {
             return 0;
         }

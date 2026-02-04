@@ -3,6 +3,7 @@
 //! Provides spinners, progress bars, and styled output helpers for CLI commands.
 
 use std::borrow::Cow;
+use std::fmt::Write as FmtWrite;
 use std::io::{self, Write};
 use std::time::Duration;
 
@@ -29,7 +30,6 @@ impl Spinner {
         Self { bar }
     }
 
-
     /// Finish the spinner with a success message.
     pub fn finish_with_success(&self, message: &str) {
         self.bar.finish_and_clear();
@@ -41,7 +41,6 @@ impl Spinner {
         self.bar.finish_and_clear();
         eprintln!("{} {}", style("✗").red().bold(), message);
     }
-
 }
 
 impl Drop for Spinner {
@@ -125,7 +124,7 @@ impl Table {
         }
 
         // Calculate column widths
-        let mut widths: Vec<usize> = self.headers.iter().map(|h| h.len()).collect();
+        let mut widths: Vec<usize> = self.headers.iter().map(std::string::String::len).collect();
         for row in &self.rows {
             for (i, cell) in row.iter().enumerate() {
                 if i < widths.len() {
@@ -140,7 +139,7 @@ impl Table {
         output.push('|');
         for (i, header) in self.headers.iter().enumerate() {
             let w = widths.get(i).copied().unwrap_or(0);
-            output.push_str(&format!(" {:^w$} |", header, w = w));
+            let _ = write!(output, " {header:^w$} |");
         }
         output.push('\n');
 
@@ -164,9 +163,9 @@ impl Table {
                 let w = widths.get(i).copied().unwrap_or(0);
                 let align = self.alignments.get(i).copied().unwrap_or_default();
                 let formatted = match align {
-                    Alignment::Left => format!(" {:<w$} |", cell, w = w),
-                    Alignment::Right => format!(" {:>w$} |", cell, w = w),
-                    Alignment::Center => format!(" {:^w$} |", cell, w = w),
+                    Alignment::Left => format!(" {cell:<w$} |"),
+                    Alignment::Right => format!(" {cell:>w$} |"),
+                    Alignment::Center => format!(" {cell:^w$} |"),
                 };
                 output.push_str(&formatted);
             }

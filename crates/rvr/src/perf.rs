@@ -25,6 +25,7 @@ mod inner {
     }
 
     impl PerfGroup {
+        #[must_use]
         pub fn new() -> Option<Self> {
             let mut group = Group::new().ok()?;
 
@@ -58,14 +59,26 @@ mod inner {
             })
         }
 
+        /// Enable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be enabled.
         pub fn enable(&mut self) -> std::io::Result<()> {
             self.group.enable()
         }
 
+        /// Disable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be disabled.
         pub fn disable(&mut self) -> std::io::Result<()> {
             self.group.disable()
         }
 
+        /// Reset perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be reset.
         pub fn reset(&mut self) -> std::io::Result<()> {
             self.group.reset()
         }
@@ -82,6 +95,7 @@ mod inner {
     }
 
     /// Individual perf counters for child process measurement (used by bench).
+    ///
     /// Uses inherit(true) to track forked child processes.
     /// Note: We use individual counters instead of a group because
     /// inherit doesn't work properly with perf groups.
@@ -93,6 +107,7 @@ mod inner {
     }
 
     impl HostPerfCounters {
+        #[must_use]
         pub fn new() -> Option<Self> {
             let cycles = Builder::new()
                 .kind(Hardware::CPU_CYCLES)
@@ -123,6 +138,10 @@ mod inner {
             })
         }
 
+        /// Enable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be enabled.
         pub fn enable(&mut self) -> std::io::Result<()> {
             self.cycles.enable()?;
             self.instructions.enable()?;
@@ -131,6 +150,10 @@ mod inner {
             Ok(())
         }
 
+        /// Disable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be disabled.
         pub fn disable(&mut self) -> std::io::Result<()> {
             self.cycles.disable()?;
             self.instructions.disable()?;
@@ -149,7 +172,7 @@ mod inner {
         }
 
         /// Read counters and return delta since last snapshot.
-        /// This works around the issue that reset() doesn't properly
+        /// This works around the issue that `reset()` doesn't properly
         /// clear accumulated child process counts with inherit=true.
         pub fn read_delta(&mut self, prev: &PerfCounters) -> PerfCounters {
             let curr = self.read();
@@ -191,18 +214,31 @@ mod inner {
     pub struct PerfGroup;
 
     impl PerfGroup {
+        #[must_use]
         pub fn new() -> Option<Self> {
             None
         }
 
+        /// Enable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be enabled.
         pub fn enable(&mut self) -> std::io::Result<()> {
             Ok(())
         }
 
+        /// Disable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be disabled.
         pub fn disable(&mut self) -> std::io::Result<()> {
             Ok(())
         }
 
+        /// Reset perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be reset.
         pub fn reset(&mut self) -> std::io::Result<()> {
             Ok(())
         }
@@ -216,14 +252,23 @@ mod inner {
     pub struct HostPerfCounters;
 
     impl HostPerfCounters {
+        #[must_use]
         pub fn new() -> Option<Self> {
             None
         }
 
+        /// Enable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be enabled.
         pub fn enable(&mut self) -> std::io::Result<()> {
             Ok(())
         }
 
+        /// Disable perf counters.
+        ///
+        /// # Errors
+        /// Returns an error if perf counters cannot be disabled.
         pub fn disable(&mut self) -> std::io::Result<()> {
             Ok(())
         }

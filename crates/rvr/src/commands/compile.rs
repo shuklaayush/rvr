@@ -96,7 +96,7 @@ pub fn cmd_compile(
         options
     };
 
-    match rvr::compile_with_options(input, output, options) {
+    match rvr::compile_with_options(input, output, &options) {
         Ok(path) => {
             info!(output = %path.display(), "done");
             EXIT_SUCCESS
@@ -176,7 +176,7 @@ pub fn cmd_lift(
         }
     }
 
-    match rvr::lift_to_c_with_options(input, output, options) {
+    match rvr::lift_to_c_with_options(input, output, &options) {
         Ok(path) => {
             info!(output = %path.display(), "done");
             EXIT_SUCCESS

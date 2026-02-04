@@ -23,20 +23,15 @@ fn compile_for_diff_mode(
     compiler: &Compiler,
     mode: DiffCompileMode,
 ) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("failed to create output dir: {e}"))?;
+    std::fs::create_dir_all(output_dir).map_err(|e| format!("failed to create output dir: {e}"))?;
 
     if matches!(mode, DiffCompileMode::Block) && !super::backend_supports_buffered_diff(backend) {
         return Err(format!(
-            "buffered diff tracer not supported for backend {:?}",
-            backend
+            "buffered diff tracer not supported for backend {backend:?}"
         ));
     }
     if matches!(mode, DiffCompileMode::Linear) && !super::backend_supports_diff(backend) {
-        return Err(format!(
-            "diff tracer not supported for backend {:?}",
-            backend
-        ));
+        return Err(format!("diff tracer not supported for backend {backend:?}"));
     }
 
     let (instret_mode, tracer_config, superblock) = match mode {
@@ -64,31 +59,54 @@ fn compile_for_diff_mode(
         options = options.with_superblock(false);
     }
 
-    compile_with_options(elf_path, output_dir, options)
-        .map_err(|e| format!("compile failed: {e}"))
+    compile_with_options(elf_path, output_dir, &options).map_err(|e| format!("compile failed: {e}"))
 }
 
 /// Compile an ELF for linear differential execution (per-instruction stepping).
+///
+/// # Errors
+///
+/// Returns errors from compilation or unsupported backends.
 pub fn compile_for_diff(
     elf_path: &Path,
     output_dir: &Path,
     backend: Backend,
     compiler: &Compiler,
 ) -> Result<PathBuf, String> {
-    compile_for_diff_mode(elf_path, output_dir, backend, compiler, DiffCompileMode::Linear)
+    compile_for_diff_mode(
+        elf_path,
+        output_dir,
+        backend,
+        compiler,
+        DiffCompileMode::Linear,
+    )
 }
 
 /// Compile an ELF for block-level differential execution (buffered tracer).
+///
+/// # Errors
+///
+/// Returns errors from compilation or unsupported backends.
 pub fn compile_for_diff_block(
     elf_path: &Path,
     output_dir: &Path,
     backend: Backend,
     compiler: &Compiler,
 ) -> Result<PathBuf, String> {
-    compile_for_diff_mode(elf_path, output_dir, backend, compiler, DiffCompileMode::Block)
+    compile_for_diff_mode(
+        elf_path,
+        output_dir,
+        backend,
+        compiler,
+        DiffCompileMode::Block,
+    )
 }
 
 /// Compile an ELF for checkpoint-based differential execution (suspend mode only).
+///
+/// # Errors
+///
+/// Returns errors from compilation or unsupported backends.
 pub fn compile_for_checkpoint(
     elf_path: &Path,
     output_dir: &Path,

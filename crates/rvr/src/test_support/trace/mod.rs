@@ -6,7 +6,7 @@
 use std::fmt;
 
 /// A single instruction trace entry.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceEntry {
     /// Program counter.
     pub pc: u64,
@@ -72,17 +72,17 @@ pub enum DivergenceKind {
 impl fmt::Display for DivergenceKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DivergenceKind::Pc => write!(f, "PC mismatch"),
-            DivergenceKind::Opcode => write!(f, "opcode mismatch"),
-            DivergenceKind::RegDest => write!(f, "register destination mismatch"),
-            DivergenceKind::RegValue => write!(f, "register value mismatch"),
-            DivergenceKind::MemAddr => write!(f, "memory address mismatch"),
-            DivergenceKind::MissingRegWrite => write!(f, "missing register write in actual"),
-            DivergenceKind::ExtraRegWrite => write!(f, "extra register write in actual"),
-            DivergenceKind::MissingMemAccess => write!(f, "missing memory access in actual"),
-            DivergenceKind::ExtraMemAccess => write!(f, "extra memory access in actual"),
-            DivergenceKind::ExpectedTail => write!(f, "expected trace has extra tail"),
-            DivergenceKind::ActualTail => write!(f, "actual trace has extra tail"),
+            Self::Pc => write!(f, "PC mismatch"),
+            Self::Opcode => write!(f, "opcode mismatch"),
+            Self::RegDest => write!(f, "register destination mismatch"),
+            Self::RegValue => write!(f, "register value mismatch"),
+            Self::MemAddr => write!(f, "memory address mismatch"),
+            Self::MissingRegWrite => write!(f, "missing register write in actual"),
+            Self::ExtraRegWrite => write!(f, "extra register write in actual"),
+            Self::MissingMemAccess => write!(f, "missing memory access in actual"),
+            Self::ExtraMemAccess => write!(f, "extra memory access in actual"),
+            Self::ExpectedTail => write!(f, "expected trace has extra tail"),
+            Self::ActualTail => write!(f, "actual trace has extra tail"),
         }
     }
 }
@@ -105,7 +105,7 @@ pub struct CompareConfig {
 impl Default for CompareConfig {
     fn default() -> Self {
         Self {
-            entry_point: 0x80000000,
+            entry_point: 0x8000_0000,
             strict_reg_writes: true,
             strict_mem_access: false, // Spike doesn't always log mem for loads
             stop_on_first: true,
@@ -113,8 +113,8 @@ impl Default for CompareConfig {
     }
 }
 
-mod parse;
 mod compare;
+mod parse;
 mod util;
 
 #[cfg(test)]
@@ -122,4 +122,6 @@ mod tests;
 
 pub use compare::{align_traces_at, compare_traces_with_config};
 pub use parse::parse_trace_file;
-pub use util::{elf_entry_point, elf_to_isa, find_spike, isa_from_test_name, run_command_with_timeout};
+pub use util::{
+    elf_entry_point, elf_to_isa, find_spike, isa_from_test_name, run_command_with_timeout,
+};

@@ -14,6 +14,17 @@ use parking_lot::RwLock;
 
 use crate::{PerfCounters, RunResult};
 
+fn u64_to_f64(value: u64) -> f64 {
+    let hi = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let lo = u32::try_from(value & 0xFFFF_FFFF).unwrap_or(u32::MAX);
+    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    let value = u64::try_from(value).unwrap_or(u64::MAX);
+    u64_to_f64(value)
+}
+
 /// Test result status for metrics recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestStatus {
@@ -136,7 +147,7 @@ pub fn record_run(arch: &str, result: &RunResult, perf: Option<&PerfCounters>) {
     }
 }
 
-/// Record overhead ratio (vm_time / host_time).
+/// Record overhead ratio (`vm_time` / `host_time`).
 pub fn record_overhead(arch: &str, vm_time: f64, host_time: f64) {
     if host_time > 0.0 {
         let labels = [("arch", arch.to_string())];
@@ -249,6 +260,7 @@ pub struct CliRecorder {
 
 impl CliRecorder {
     /// Create a new CLI recorder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             counters: Arc::new(CounterStorage::default()),
@@ -260,6 +272,7 @@ impl CliRecorder {
     /// Install this recorder as the global metrics recorder.
     ///
     /// Returns a handle that can be used to retrieve metrics later.
+    #[must_use]
     pub fn install(self) -> Option<CliRecorderHandle> {
         let counters = Arc::clone(&self.counters);
         let gauges = Arc::clone(&self.gauges);
@@ -330,31 +343,37 @@ pub struct CliRecorderHandle {
 
 impl CliRecorderHandle {
     /// Get a counter value by key.
+    #[must_use]
     pub fn get_counter(&self, key: &str) -> Option<u64> {
         self.counters.values.read().get(key).copied()
     }
 
     /// Get a gauge value by key.
+    #[must_use]
     pub fn get_gauge(&self, key: &str) -> Option<f64> {
         self.gauges.values.read().get(key).copied()
     }
 
     /// Get histogram values by key.
+    #[must_use]
     pub fn get_histogram(&self, key: &str) -> Option<Vec<f64>> {
         self.histograms.values.read().get(key).cloned()
     }
 
     /// Get all counter values.
+    #[must_use]
     pub fn all_counters(&self) -> HashMap<String, u64> {
         self.counters.values.read().clone()
     }
 
     /// Get all gauge values.
+    #[must_use]
     pub fn all_gauges(&self) -> HashMap<String, f64> {
         self.gauges.values.read().clone()
     }
 
     /// Get all histogram values.
+    #[must_use]
     pub fn all_histograms(&self) -> HashMap<String, Vec<f64>> {
         self.histograms.values.read().clone()
     }
@@ -380,7 +399,7 @@ impl CliRecorderHandle {
             keys.sort();
             for key in keys {
                 if let Some(value) = counters.get(key) {
-                    println!("  {}: {}", key, value);
+                    println!("  {key}: {value}");
                 }
             }
             println!();
@@ -392,7 +411,7 @@ impl CliRecorderHandle {
             keys.sort();
             for key in keys {
                 if let Some(value) = gauges.get(key) {
-                    println!("  {}: {:.6}", key, value);
+                    println!("  {key}: {value:.6}");
                 }
             }
             println!();
@@ -406,10 +425,10 @@ impl CliRecorderHandle {
                 if let Some(values) = histograms.get(key)
                     && !values.is_empty()
                 {
-                    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
-                    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+                    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                     let sum: f64 = values.iter().sum();
-                    let avg = sum / values.len() as f64;
+                    let avg = sum / usize_to_f64(values.len());
                     println!(
                         "  {}: count={}, min={:.6}, max={:.6}, avg={:.6}",
                         key,

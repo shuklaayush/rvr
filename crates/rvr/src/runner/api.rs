@@ -53,7 +53,7 @@ impl RvApi {
     }
 
     /// Check if the library supports suspend mode (for single-stepping).
-    pub fn supports_suspend(&self) -> bool {
+    pub const fn supports_suspend(&self) -> bool {
         // Suspend (2) or PerInstruction (3) mode
         self.instret_mode >= 2
     }
@@ -87,7 +87,7 @@ pub unsafe fn load_data_symbol_u64(lib: &Library, symbol: &'static [u8]) -> Opti
     }
 }
 
-/// Tracer kind matches RV_TRACER_KIND in generated C code.
+/// Tracer kind matches `RV_TRACER_KIND` in generated C code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TracerKind {
     None,
@@ -102,7 +102,7 @@ pub enum TracerKind {
 }
 
 impl TracerKind {
-    pub fn from_raw(raw: u32) -> Self {
+    pub const fn from_raw(raw: u32) -> Self {
         match raw {
             1 => Self::Preflight,
             2 => Self::Stats,
@@ -117,7 +117,7 @@ impl TracerKind {
     }
 }
 
-/// Instret mode matches RV_INSTRET_MODE in generated C code.
+/// Instret mode matches `RV_INSTRET_MODE` in generated C code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstretMode {
     /// No instruction counting.
@@ -131,7 +131,7 @@ pub enum InstretMode {
 }
 
 impl InstretMode {
-    pub fn from_raw(raw: u32) -> Self {
+    pub const fn from_raw(raw: u32) -> Self {
         match raw {
             0 => Self::Off,
             2 => Self::Suspend,
@@ -140,8 +140,8 @@ impl InstretMode {
         }
     }
 
-    /// True if the mode supports suspension (Suspend or PerInstruction).
-    pub fn is_suspend(&self) -> bool {
+    /// True if the mode supports suspension (`Suspend` or `PerInstruction`).
+    pub const fn is_suspend(self) -> bool {
         matches!(self, Self::Suspend | Self::PerInstruction)
     }
 }

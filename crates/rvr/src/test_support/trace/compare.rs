@@ -1,13 +1,13 @@
 use super::{CompareConfig, DivergenceKind, TraceComparison, TraceDivergence, TraceEntry};
 
 /// ECALL opcode (SYSTEM instruction with funct3=0, no registers).
-const ECALL_OPCODE: u32 = 0x00000073;
+const ECALL_OPCODE: u32 = 0x0000_0073;
 
 /// EBREAK opcode.
-const EBREAK_OPCODE: u32 = 0x00100073;
+const EBREAK_OPCODE: u32 = 0x0010_0073;
 
 /// Check if an opcode is SC.W or SC.D.
-fn is_sc(opcode: u32) -> bool {
+const fn is_sc(opcode: u32) -> bool {
     let op = opcode & 0x7f;
     let funct5 = (opcode >> 27) & 0x1f;
     op == 0x2f && funct5 == 0b00011
@@ -17,9 +17,283 @@ fn is_sc(opcode: u32) -> bool {
 ///
 /// Uses the entry point to determine: trap handlers are typically placed
 /// just before or at the entry point in riscv-tests.
-fn is_trap_handler_pc(pc: u64, entry_point: u64) -> bool {
+const fn is_trap_handler_pc(pc: u64, entry_point: u64) -> bool {
     let start = entry_point.saturating_sub(0x100);
     pc >= start && pc < entry_point + 0x50
+}
+
+enum CompareStep {
+    AdvanceMatched,
+    AdvanceUnmatched,
+    Return(TraceComparison),
+}
+
+enum ResyncAction {
+    SkipExpected(usize),
+    SkipActual(usize),
+}
+
+fn record_divergence(
+    config: &CompareConfig,
+    matched: usize,
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    kind: DivergenceKind,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> Option<TraceComparison> {
+    let divergence = TraceDivergence {
+        index: matched,
+        expected: expected.clone(),
+        actual: actual.clone(),
+        kind,
+    };
+    if config.stop_on_first {
+        return Some(TraceComparison {
+            matched,
+            divergence: Some(divergence),
+        });
+    }
+    if first_divergence.is_none() {
+        *first_divergence = Some(divergence);
+    }
+    None
+}
+
+fn compare_same_pc(
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    matched: usize,
+    config: &CompareConfig,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> CompareStep {
+    if let Some(step) = check_opcode(expected, actual, matched, config, first_divergence) {
+        return step;
+    }
+    if let Some(step) = check_reg_writes(expected, actual, matched, config, first_divergence) {
+        return step;
+    }
+    if let Some(step) = check_reg_dest_value(expected, actual, matched, config, first_divergence) {
+        return step;
+    }
+    if let Some(step) = check_mem_access(expected, actual, matched, config, first_divergence) {
+        return step;
+    }
+    if let Some(step) = check_mem_addr(expected, actual, matched, config, first_divergence) {
+        return step;
+    }
+    CompareStep::AdvanceMatched
+}
+
+fn divergence_step(
+    config: &CompareConfig,
+    matched: usize,
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    kind: DivergenceKind,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> CompareStep {
+    record_divergence(config, matched, expected, actual, kind, first_divergence)
+        .map_or(CompareStep::AdvanceUnmatched, CompareStep::Return)
+}
+
+fn check_opcode(
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    matched: usize,
+    config: &CompareConfig,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> Option<CompareStep> {
+    if expected.opcode == actual.opcode {
+        return None;
+    }
+    Some(divergence_step(
+        config,
+        matched,
+        expected,
+        actual,
+        DivergenceKind::Opcode,
+        first_divergence,
+    ))
+}
+
+fn check_reg_writes(
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    matched: usize,
+    config: &CompareConfig,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> Option<CompareStep> {
+    if !config.strict_reg_writes {
+        return None;
+    }
+    match (expected.rd.is_some(), actual.rd.is_some()) {
+        (true, false) => Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::MissingRegWrite,
+            first_divergence,
+        )),
+        (false, true) => Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::ExtraRegWrite,
+            first_divergence,
+        )),
+        _ => None,
+    }
+}
+
+fn check_reg_dest_value(
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    matched: usize,
+    config: &CompareConfig,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> Option<CompareStep> {
+    if expected.rd.is_none() || actual.rd.is_none() {
+        return None;
+    }
+    if expected.rd != actual.rd {
+        return Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::RegDest,
+            first_divergence,
+        ));
+    }
+    if expected.rd_value != actual.rd_value && !is_sc(expected.opcode) {
+        return Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::RegValue,
+            first_divergence,
+        ));
+    }
+    None
+}
+
+fn check_mem_access(
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    matched: usize,
+    config: &CompareConfig,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> Option<CompareStep> {
+    if !config.strict_mem_access {
+        return None;
+    }
+    match (expected.mem_addr.is_some(), actual.mem_addr.is_some()) {
+        (true, false) if !is_sc(expected.opcode) => Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::MissingMemAccess,
+            first_divergence,
+        )),
+        (false, true) if !is_sc(expected.opcode) => Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::ExtraMemAccess,
+            first_divergence,
+        )),
+        _ => None,
+    }
+}
+
+fn check_mem_addr(
+    expected: &TraceEntry,
+    actual: &TraceEntry,
+    matched: usize,
+    config: &CompareConfig,
+    first_divergence: &mut Option<TraceDivergence>,
+) -> Option<CompareStep> {
+    if expected.mem_addr.is_some()
+        && actual.mem_addr.is_some()
+        && expected.mem_addr != actual.mem_addr
+        && !is_sc(expected.opcode)
+    {
+        return Some(divergence_step(
+            config,
+            matched,
+            expected,
+            actual,
+            DivergenceKind::MemAddr,
+            first_divergence,
+        ));
+    }
+    None
+}
+
+fn find_resync_action(
+    expected: &[TraceEntry],
+    actual: &[TraceEntry],
+    exp_idx: usize,
+    act_idx: usize,
+    window: usize,
+) -> Option<ResyncAction> {
+    let exp = &expected[exp_idx];
+    let act = &actual[act_idx];
+    let mut skip_exp = None;
+    let mut skip_act = None;
+    let mut skip_exp_pc = None;
+    let mut skip_act_pc = None;
+
+    for i in 1..=window {
+        if exp_idx + i < expected.len() {
+            let cand = &expected[exp_idx + i];
+            if cand.pc == act.pc && cand.opcode == act.opcode {
+                skip_exp = Some(i);
+                break;
+            }
+            if skip_exp_pc.is_none() && cand.pc == act.pc {
+                skip_exp_pc = Some(i);
+            }
+        }
+    }
+
+    for i in 1..=window {
+        if act_idx + i < actual.len() {
+            let cand = &actual[act_idx + i];
+            if cand.pc == exp.pc && cand.opcode == exp.opcode {
+                skip_act = Some(i);
+                break;
+            }
+            if skip_act_pc.is_none() && cand.pc == exp.pc {
+                skip_act_pc = Some(i);
+            }
+        }
+    }
+
+    if skip_exp.is_none() {
+        skip_exp = skip_exp_pc;
+    }
+    if skip_act.is_none() {
+        skip_act = skip_act_pc;
+    }
+
+    match (skip_exp, skip_act) {
+        (Some(se), Some(sa)) => {
+            if se <= sa {
+                Some(ResyncAction::SkipExpected(se))
+            } else {
+                Some(ResyncAction::SkipActual(sa))
+            }
+        }
+        (Some(se), None) => Some(ResyncAction::SkipExpected(se)),
+        (None, Some(sa)) => Some(ResyncAction::SkipActual(sa)),
+        (None, None) => None,
+    }
 }
 
 /// Compare two traces sequentially, tolerating missing entries.
@@ -32,6 +306,7 @@ fn is_trap_handler_pc(pc: u64, entry_point: u64) -> bool {
 /// - rvr handles syscalls directly and traces the ECALL instruction
 /// - Spike traps to machine mode and traces the trap handler instead
 /// - When rvr ends with ECALL and Spike continues with trap handler, that's expected
+#[must_use]
 pub fn compare_traces_with_config(
     expected: &[TraceEntry],
     actual: &[TraceEntry],
@@ -47,293 +322,51 @@ pub fn compare_traces_with_config(
         let act = &actual[act_idx];
 
         if exp.pc == act.pc {
-            // Same PC - compare the instruction
-            if exp.opcode != act.opcode {
-                let divergence = TraceDivergence {
-                    index: matched,
-                    expected: exp.clone(),
-                    actual: act.clone(),
-                    kind: DivergenceKind::Opcode,
-                };
-                if config.stop_on_first {
-                    return TraceComparison {
-                        matched,
-                        divergence: Some(divergence),
-                    };
-                }
-                if first_divergence.is_none() {
-                    first_divergence = Some(divergence);
-                }
-                exp_idx += 1;
-                act_idx += 1;
-                continue;
-            }
-
-            // Check register write presence mismatch
-            if config.strict_reg_writes {
-                match (exp.rd.is_some(), act.rd.is_some()) {
-                    (true, false) => {
-                        let divergence = TraceDivergence {
-                            index: matched,
-                            expected: exp.clone(),
-                            actual: act.clone(),
-                            kind: DivergenceKind::MissingRegWrite,
-                        };
-                        if config.stop_on_first {
-                            return TraceComparison {
-                                matched,
-                                divergence: Some(divergence),
-                            };
-                        }
-                        if first_divergence.is_none() {
-                            first_divergence = Some(divergence);
-                        }
-                        exp_idx += 1;
-                        act_idx += 1;
-                        continue;
-                    }
-                    (false, true) => {
-                        let divergence = TraceDivergence {
-                            index: matched,
-                            expected: exp.clone(),
-                            actual: act.clone(),
-                            kind: DivergenceKind::ExtraRegWrite,
-                        };
-                        if config.stop_on_first {
-                            return TraceComparison {
-                                matched,
-                                divergence: Some(divergence),
-                            };
-                        }
-                        if first_divergence.is_none() {
-                            first_divergence = Some(divergence);
-                        }
-                        exp_idx += 1;
-                        act_idx += 1;
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-
-            // Check register write values (only if both have one)
-            if exp.rd.is_some() && act.rd.is_some() {
-                if exp.rd != act.rd {
-                    let divergence = TraceDivergence {
-                        index: matched,
-                        expected: exp.clone(),
-                        actual: act.clone(),
-                        kind: DivergenceKind::RegDest,
-                    };
-                    if config.stop_on_first {
-                        return TraceComparison {
-                            matched,
-                            divergence: Some(divergence),
-                        };
-                    }
-                    if first_divergence.is_none() {
-                        first_divergence = Some(divergence);
-                    }
+            match compare_same_pc(exp, act, matched, config, &mut first_divergence) {
+                CompareStep::Return(result) => return result,
+                CompareStep::AdvanceMatched => {
+                    matched += 1;
                     exp_idx += 1;
                     act_idx += 1;
-                    continue;
                 }
-
-                if exp.rd_value != act.rd_value && !is_sc(exp.opcode) {
-                    let divergence = TraceDivergence {
-                        index: matched,
-                        expected: exp.clone(),
-                        actual: act.clone(),
-                        kind: DivergenceKind::RegValue,
-                    };
-                    if config.stop_on_first {
-                        return TraceComparison {
-                            matched,
-                            divergence: Some(divergence),
-                        };
-                    }
-                    if first_divergence.is_none() {
-                        first_divergence = Some(divergence);
-                    }
+                CompareStep::AdvanceUnmatched => {
                     exp_idx += 1;
                     act_idx += 1;
-                    continue;
                 }
             }
-
-            // Check memory access presence mismatch
-            if config.strict_mem_access {
-                match (exp.mem_addr.is_some(), act.mem_addr.is_some()) {
-                    (true, false) => {
-                        if is_sc(exp.opcode) {
-                            // SC may or may not perform the store.
-                        } else {
-                            let divergence = TraceDivergence {
-                                index: matched,
-                                expected: exp.clone(),
-                                actual: act.clone(),
-                                kind: DivergenceKind::MissingMemAccess,
-                            };
-                            if config.stop_on_first {
-                                return TraceComparison {
-                                    matched,
-                                    divergence: Some(divergence),
-                                };
-                            }
-                            if first_divergence.is_none() {
-                                first_divergence = Some(divergence);
-                            }
-                            exp_idx += 1;
-                            act_idx += 1;
-                            continue;
-                        }
-                    }
-                    (false, true) => {
-                        if is_sc(exp.opcode) {
-                            // SC may or may not perform the store.
-                        } else {
-                            let divergence = TraceDivergence {
-                                index: matched,
-                                expected: exp.clone(),
-                                actual: act.clone(),
-                                kind: DivergenceKind::ExtraMemAccess,
-                            };
-                            if config.stop_on_first {
-                                return TraceComparison {
-                                    matched,
-                                    divergence: Some(divergence),
-                                };
-                            }
-                            if first_divergence.is_none() {
-                                first_divergence = Some(divergence);
-                            }
-                            exp_idx += 1;
-                            act_idx += 1;
-                            continue;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // Check memory address (only if both have one)
-            if exp.mem_addr.is_some()
-                && act.mem_addr.is_some()
-                && exp.mem_addr != act.mem_addr
-                && !is_sc(exp.opcode)
-            {
-                let divergence = TraceDivergence {
-                    index: matched,
-                    expected: exp.clone(),
-                    actual: act.clone(),
-                    kind: DivergenceKind::MemAddr,
-                };
-                if config.stop_on_first {
-                    return TraceComparison {
-                        matched,
-                        divergence: Some(divergence),
-                    };
-                }
-                if first_divergence.is_none() {
-                    first_divergence = Some(divergence);
-                }
-                exp_idx += 1;
-                act_idx += 1;
-                continue;
-            }
-
-            matched += 1;
-            exp_idx += 1;
-            act_idx += 1;
-        } else {
-            // PCs don't match - try to resync by scanning ahead.
-            let window = 32usize;
-            let mut skip_exp = None;
-            let mut skip_act = None;
-
-            // Prefer resync on (pc, opcode) to avoid false alignment on reused PCs.
-            let mut skip_exp_pc = None;
-            let mut skip_act_pc = None;
-            for i in 1..=window {
-                if exp_idx + i < expected.len() {
-                    let cand = &expected[exp_idx + i];
-                    if cand.pc == act.pc && cand.opcode == act.opcode {
-                        skip_exp = Some(i);
-                        break;
-                    }
-                    if skip_exp_pc.is_none() && cand.pc == act.pc {
-                        skip_exp_pc = Some(i);
-                    }
-                }
-            }
-            for i in 1..=window {
-                if act_idx + i < actual.len() {
-                    let cand = &actual[act_idx + i];
-                    if cand.pc == exp.pc && cand.opcode == exp.opcode {
-                        skip_act = Some(i);
-                        break;
-                    }
-                    if skip_act_pc.is_none() && cand.pc == exp.pc {
-                        skip_act_pc = Some(i);
-                    }
-                }
-            }
-            if skip_exp.is_none() {
-                skip_exp = skip_exp_pc;
-            }
-            if skip_act.is_none() {
-                skip_act = skip_act_pc;
-            }
-
-            if let (Some(se), Some(sa)) = (skip_exp, skip_act) {
-                if se <= sa {
-                    exp_idx += se;
-                } else {
-                    act_idx += sa;
-                }
-            } else if let Some(se) = skip_exp {
-                exp_idx += se;
-            } else if let Some(sa) = skip_act {
-                act_idx += sa;
-            } else {
-                // Can't resync - check for expected ECALL divergence
-                // When rvr traces ECALL/EBREAK and Spike traces trap handler,
-                // this is expected behavior (rvr handles syscalls directly)
-                let is_ecall_divergence = (act.opcode == ECALL_OPCODE
-                    || act.opcode == EBREAK_OPCODE)
-                    && is_trap_handler_pc(exp.pc, config.entry_point);
-
-                if is_ecall_divergence {
-                    // rvr ends with ECALL, Spike continues in trap handler
-                    // This is expected - treat as success
-                    matched += 1; // Count the ECALL as matched
-                    return TraceComparison {
-                        matched,
-                        divergence: None,
-                    };
-                }
-
-                // Real control flow divergence
-                let divergence = TraceDivergence {
-                    index: matched,
-                    expected: exp.clone(),
-                    actual: act.clone(),
-                    kind: DivergenceKind::Pc,
-                };
-                if config.stop_on_first {
-                    return TraceComparison {
-                        matched,
-                        divergence: Some(divergence),
-                    };
-                }
-                if first_divergence.is_none() {
-                    first_divergence = Some(divergence);
-                }
-                exp_idx += 1;
-                act_idx += 1;
-                continue;
-            }
+            continue;
         }
+
+        if let Some(action) = find_resync_action(expected, actual, exp_idx, act_idx, 32) {
+            match action {
+                ResyncAction::SkipExpected(se) => exp_idx += se,
+                ResyncAction::SkipActual(sa) => act_idx += sa,
+            }
+            continue;
+        }
+
+        let is_ecall_divergence = (act.opcode == ECALL_OPCODE || act.opcode == EBREAK_OPCODE)
+            && is_trap_handler_pc(exp.pc, config.entry_point);
+        if is_ecall_divergence {
+            matched += 1;
+            return TraceComparison {
+                matched,
+                divergence: None,
+            };
+        }
+
+        if let Some(result) = record_divergence(
+            config,
+            matched,
+            exp,
+            act,
+            DivergenceKind::Pc,
+            &mut first_divergence,
+        ) {
+            return result;
+        }
+        exp_idx += 1;
+        act_idx += 1;
     }
 
     if let Some(divergence) = first_divergence {
@@ -383,6 +416,7 @@ pub fn compare_traces_with_config(
 ///
 /// Spike has startup code at 0x1000 before jumping to the entry point.
 /// rvr starts directly at the entry point.
+#[must_use]
 pub fn align_traces_at(
     spike: &[TraceEntry],
     rvr: &[TraceEntry],

@@ -20,7 +20,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub metrics: bool,
 
-    /// Enable verbose output (sets RUST_LOG=debug)
+    /// Enable verbose output (sets `RUST_LOG=debug`)
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
@@ -90,7 +90,7 @@ pub enum Commands {
         linker: Option<String>,
 
         /// Use fixed addresses for state and memory (experimental).
-        /// Format: "STATE_ADDR,MEMORY_ADDR" (hex) or "default" for default addresses.
+        /// Format: "`STATE_ADDR,MEMORY_ADDR`" (hex) or "default" for default addresses.
         /// Requires runtime to map memory at these addresses.
         #[arg(long, value_name = "ADDRS")]
         fixed_addresses: Option<String>,
@@ -141,7 +141,7 @@ pub enum Commands {
         perf: bool,
 
         /// Use fixed addresses for state and memory (experimental).
-        /// Format: "STATE_ADDR,MEMORY_ADDR" (hex) or "default" for default addresses.
+        /// Format: "`STATE_ADDR,MEMORY_ADDR`" (hex) or "default" for default addresses.
         /// Requires runtime to map memory at these addresses.
         #[arg(long, value_name = "ADDRS")]
         fixed_addresses: Option<String>,
@@ -335,10 +335,10 @@ pub enum InstretModeArg {
 impl From<InstretModeArg> for InstretMode {
     fn from(arg: InstretModeArg) -> Self {
         match arg {
-            InstretModeArg::Off => InstretMode::Off,
-            InstretModeArg::Count => InstretMode::Count,
-            InstretModeArg::Suspend => InstretMode::Suspend,
-            InstretModeArg::PerInstruction => InstretMode::PerInstruction,
+            InstretModeArg::Off => Self::Off,
+            InstretModeArg::Count => Self::Count,
+            InstretModeArg::Suspend => Self::Suspend,
+            InstretModeArg::PerInstruction => Self::PerInstruction,
         }
     }
 }
@@ -360,15 +360,15 @@ pub enum TracerKindArg {
 impl From<TracerKindArg> for TracerKind {
     fn from(arg: TracerKindArg) -> Self {
         match arg {
-            TracerKindArg::None => TracerKind::None,
-            TracerKindArg::Preflight => TracerKind::Preflight,
-            TracerKindArg::Stats => TracerKind::Stats,
-            TracerKindArg::Ffi => TracerKind::Ffi,
-            TracerKindArg::Dynamic => TracerKind::Dynamic,
-            TracerKindArg::Debug => TracerKind::Debug,
-            TracerKindArg::Spike => TracerKind::Spike,
-            TracerKindArg::Diff => TracerKind::Diff,
-            TracerKindArg::BufferedDiff => TracerKind::BufferedDiff,
+            TracerKindArg::None => Self::None,
+            TracerKindArg::Preflight => Self::Preflight,
+            TracerKindArg::Stats => Self::Stats,
+            TracerKindArg::Ffi => Self::Ffi,
+            TracerKindArg::Dynamic => Self::Dynamic,
+            TracerKindArg::Debug => Self::Debug,
+            TracerKindArg::Spike => Self::Spike,
+            TracerKindArg::Diff => Self::Diff,
+            TracerKindArg::BufferedDiff => Self::BufferedDiff,
         }
     }
 }
@@ -386,8 +386,8 @@ pub enum SyscallModeArg {
 impl From<SyscallModeArg> for SyscallMode {
     fn from(arg: SyscallModeArg) -> Self {
         match arg {
-            SyscallModeArg::Baremetal => SyscallMode::BareMetal,
-            SyscallModeArg::Linux => SyscallMode::Linux,
+            SyscallModeArg::Baremetal => Self::BareMetal,
+            SyscallModeArg::Linux => Self::Linux,
         }
     }
 }
@@ -407,9 +407,9 @@ pub enum AddressModeArg {
 impl From<AddressModeArg> for AddressMode {
     fn from(arg: AddressModeArg) -> Self {
         match arg {
-            AddressModeArg::Unchecked => AddressMode::Unchecked,
-            AddressModeArg::Wrap => AddressMode::Wrap,
-            AddressModeArg::Bounds => AddressMode::Bounds,
+            AddressModeArg::Unchecked => Self::Unchecked,
+            AddressModeArg::Wrap => Self::Wrap,
+            AddressModeArg::Bounds => Self::Bounds,
         }
     }
 }
@@ -429,9 +429,9 @@ pub enum BackendArg {
 impl From<BackendArg> for rvr_emit::Backend {
     fn from(arg: BackendArg) -> Self {
         match arg {
-            BackendArg::C => rvr_emit::Backend::C,
-            BackendArg::X86 => rvr_emit::Backend::X86Asm,
-            BackendArg::Arm64 => rvr_emit::Backend::ARM64Asm,
+            BackendArg::C => Self::C,
+            BackendArg::X86 => Self::X86Asm,
+            BackendArg::Arm64 => Self::ARM64Asm,
         }
     }
 }
@@ -503,7 +503,7 @@ pub struct TracerArgs {
     #[arg(long)]
     pub tracer_inline: Option<String>,
 
-    /// Passed vars for the tracer (e.g. ptr:data, index:data_idx).
+    /// Passed vars for the tracer (e.g. ptr:data, `index:data_idx`).
     #[arg(long = "tracer-pass", value_name = "KIND:NAME", action = clap::ArgAction::Append)]
     pub tracer_pass: Vec<String>,
 }
@@ -532,7 +532,7 @@ pub fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
         let kind = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("");
         if name.is_empty() {
-            return Err(format!("invalid tracer var '{}', expected KIND:NAME", item));
+            return Err(format!("invalid tracer var '{item}', expected KIND:NAME"));
         }
         let var = match kind {
             "ptr" => PassedVar::ptr(name),
@@ -540,8 +540,7 @@ pub fn parse_passed_vars(items: &[String]) -> Result<Vec<PassedVar>, String> {
             "value" => PassedVar::value(name),
             _ => {
                 return Err(format!(
-                    "invalid tracer var kind '{}', expected ptr/index/value",
-                    kind
+                    "invalid tracer var kind '{kind}', expected ptr/index/value"
                 ));
             }
         };
@@ -581,7 +580,7 @@ pub fn build_tracer_config(args: &TracerArgs) -> Result<TracerConfig, String> {
 ///
 /// Accepts:
 /// - "default" - use default addresses (64GB, 128GB)
-/// - "STATE_ADDR,MEMORY_ADDR" - hex addresses (e.g., "0x1000000000,0x2000000000")
+/// - "`STATE_ADDR,MEMORY_ADDR`" - hex addresses (e.g., "0x1000000000,0x2000000000")
 pub fn parse_fixed_addresses(arg: &str) -> Result<FixedAddressConfig, String> {
     let arg = arg.trim();
 
@@ -596,7 +595,7 @@ pub fn parse_fixed_addresses(arg: &str) -> Result<FixedAddressConfig, String> {
 
     let parse_hex = |s: &str| -> Result<u64, String> {
         let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
-        u64::from_str_radix(s, 16).map_err(|e| format!("invalid hex address: {}", e))
+        u64::from_str_radix(s, 16).map_err(|e| format!("invalid hex address: {e}"))
     };
 
     let state_addr = parse_hex(parts[0])?;

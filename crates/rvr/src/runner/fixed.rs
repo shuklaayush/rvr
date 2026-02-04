@@ -1,4 +1,4 @@
-//! FixedAddrRunner - runner with state/memory at fixed addresses.
+//! `FixedAddrRunner` - runner with state/memory at fixed addresses.
 
 use std::ffi::c_void;
 
@@ -13,7 +13,7 @@ use super::{FixedAddresses, RunError, RunnerImpl};
 /// Used when the library was compiled with `--fixed-addresses`. The generated C code
 /// expects state and memory at specific addresses and reads them via constexpr casts.
 pub struct FixedAddrRunner<X: Xlen, const NUM_REGS: usize> {
-    /// Memory region for RvState at fixed address.
+    /// Memory region for `RvState` at fixed address.
     state_mem: FixedMemory,
     /// Memory region for guest memory at fixed address.
     memory: GuardedMemory,
@@ -35,7 +35,7 @@ impl<X: Xlen, const NUM_REGS: usize> FixedAddrRunner<X, NUM_REGS> {
         let memory = GuardedMemory::new_at_fixed(fixed.memory_addr, memory_size)?;
 
         // Initialize state in-place
-        let state_ptr = state_mem.as_ptr() as *mut RvState<X, (), (), NUM_REGS>;
+        let state_ptr = state_mem.as_ptr().cast::<RvState<X, (), (), NUM_REGS>>();
         unsafe {
             std::ptr::write(state_ptr, RvState::new());
             (*state_ptr).set_memory(memory.as_ptr());
@@ -51,8 +51,10 @@ impl<X: Xlen, const NUM_REGS: usize> FixedAddrRunner<X, NUM_REGS> {
         })
     }
 
-    fn state_ptr(&self) -> *mut RvState<X, (), (), NUM_REGS> {
-        self.state_mem.as_ptr() as *mut RvState<X, (), (), NUM_REGS>
+    const fn state_ptr(&self) -> *mut RvState<X, (), (), NUM_REGS> {
+        self.state_mem
+            .as_ptr()
+            .cast::<RvState<X, (), (), NUM_REGS>>()
     }
 
     fn state(&self) -> &RvState<X, (), (), NUM_REGS> {
@@ -68,7 +70,8 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for FixedAddrRunner<X, NUM_REGS>
     fn load_segments(&mut self) {
         self.memory.clear();
         for seg in &self.elf_image.memory_segments {
-            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            let vaddr = usize::try_from(X::to_u64(seg.virtual_start))
+                .expect("segment address does not fit in host usize");
             unsafe { self.memory.copy_from(vaddr, &seg.data) };
         }
     }
@@ -77,13 +80,13 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for FixedAddrRunner<X, NUM_REGS>
         let state = self.state_mut();
         state.instret = 0;
         state.clear_exit();
-        for reg in state.regs.iter_mut() {
+        for reg in &mut state.regs {
             *reg = X::from_u64(0);
         }
     }
 
     fn as_void_ptr(&mut self) -> *mut c_void {
-        self.state_mem.as_ptr() as *mut c_void
+        self.state_mem.as_ptr().cast::<c_void>()
     }
 
     fn instret(&self) -> u64 {
@@ -138,7 +141,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for FixedAddrRunner<X, NUM_REGS>
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let addr = usize::try_from(addr).expect("address does not fit in host usize");
         if addr >= mem_size {
             return 0;
         }
@@ -150,7 +153,7 @@ impl<X: Xlen, const NUM_REGS: usize> RunnerImpl for FixedAddrRunner<X, NUM_REGS>
 
     fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let addr = usize::try_from(addr).expect("address does not fit in host usize");
         if addr >= mem_size {
             return 0;
         }

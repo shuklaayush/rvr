@@ -1,4 +1,4 @@
-//! TypedRunner - basic runner parameterized by X, T, NUM_REGS.
+//! `TypedRunner` - basic runner parameterized by X, T, `NUM_REGS`.
 
 use std::ffi::c_void;
 
@@ -34,7 +34,8 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
     fn load_segments(&mut self) {
         self.memory.clear();
         for seg in &self.elf_image.memory_segments {
-            let vaddr = X::to_u64(seg.virtual_start) as usize;
+            let vaddr = usize::try_from(X::to_u64(seg.virtual_start))
+                .expect("segment address does not fit in host usize");
             unsafe { self.memory.copy_from(vaddr, &seg.data) };
         }
     }
@@ -94,7 +95,9 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
 
     fn read_memory(&self, addr: u64, buf: &mut [u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let Ok(addr) = usize::try_from(addr) else {
+            return 0;
+        };
         if addr >= mem_size {
             return 0;
         }
@@ -106,7 +109,9 @@ impl<X: Xlen, T: TracerState, const NUM_REGS: usize> RunnerImpl for TypedRunner<
 
     fn write_memory(&mut self, addr: u64, data: &[u8]) -> usize {
         let mem_size = self.memory.size();
-        let addr = addr as usize;
+        let Ok(addr) = usize::try_from(addr) else {
+            return 0;
+        };
         if addr >= mem_size {
             return 0;
         }

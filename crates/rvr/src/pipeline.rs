@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use rvr_cfg::{BlockTable, InstructionTable};
-use rvr_elf::{DebugInfo, ElfImage};
+use rvr_elf::{DebugInfo, ElfImage, MemorySegment as ElfMemorySegment};
 use rvr_emit::arm64::Arm64Emitter;
 use rvr_emit::c::{
-    CProject, HeaderConfig, HtifConfig, MemorySegment, SyscallsConfig, gen_header, gen_htif_header,
-    gen_htif_source, gen_syscalls_source, gen_tracer_header,
+    CProject, HeaderConfig, HtifConfig, MemorySegment as CMemorySegment, SyscallsConfig,
+    gen_header, gen_htif_header, gen_htif_source, gen_syscalls_source, gen_tracer_header,
 };
 use rvr_emit::x86::X86Emitter;
 use rvr_emit::{
@@ -19,6 +19,17 @@ use rvr_isa::{ExtensionRegistry, Xlen};
 use tracing::{debug, info, info_span, trace_span, warn};
 
 use crate::{Error, Result};
+
+fn u64_to_f64(value: u64) -> f64 {
+    let hi = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let lo = u32::try_from(value & 0xFFFF_FFFF).unwrap_or(u32::MAX);
+    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    let value_u64 = u64::try_from(value).unwrap_or(u64::MAX);
+    u64_to_f64(value_u64)
+}
 
 /// Recompilation pipeline.
 pub struct Pipeline<X: Xlen> {
@@ -98,27 +109,27 @@ impl<X: Xlen> Pipeline<X> {
     }
 
     /// Get reference to ELF image.
-    pub fn image(&self) -> &ElfImage<X> {
+    pub const fn image(&self) -> &ElfImage<X> {
         &self.image
     }
 
     /// Get reference to emit config.
-    pub fn config(&self) -> &EmitConfig<X> {
+    pub const fn config(&self) -> &EmitConfig<X> {
         &self.config
     }
 
     /// Get mutable reference to emit config.
-    pub fn config_mut(&mut self) -> &mut EmitConfig<X> {
+    pub const fn config_mut(&mut self) -> &mut EmitConfig<X> {
         &mut self.config
     }
 
     /// Get reference to block table (if built).
-    pub fn block_table(&self) -> Option<&BlockTable<X>> {
+    pub const fn block_table(&self) -> Option<&BlockTable<X>> {
         self.block_table.as_ref()
     }
 
     /// Get reference to lifted IR blocks.
-    pub fn ir_blocks(&self) -> &HashMap<u64, BlockIR<X>> {
+    pub const fn ir_blocks(&self) -> &HashMap<u64, BlockIR<X>> {
         &self.ir_blocks
     }
 
@@ -147,20 +158,7 @@ impl<X: Xlen> Pipeline<X> {
         self.extra_entry_points.extend(entry_points);
     }
 
-    /// Build CFG: creates InstructionTable → BlockTable with optimizations.
-    ///
-    /// Builds InstructionTable from ALL executable segments, not just the entry segment.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Error::NoCodeSegment` if there are no executable segments or
-    /// the entry point is not within any executable segment.
-    pub fn build_cfg(&mut self) -> Result<()> {
-        let _span = info_span!("build_cfg").entered();
-
-        let entry_pc = X::to_u64(self.image.entry_point);
-
-        // Collect all executable segments (check PF_X flag first)
+    fn collect_exec_segments(&self, entry_pc: u64) -> Result<Vec<&ElfMemorySegment<X>>> {
         let mut exec_segments: Vec<_> = self
             .image
             .memory_segments
@@ -168,8 +166,6 @@ impl<X: Xlen> Pipeline<X> {
             .filter(|seg| seg.is_executable())
             .collect();
 
-        // Fallback: if no segments have PF_X, check section flags (SHF_EXECINSTR).
-        // This handles linker scripts that set only section flags instead of program header flags.
         if exec_segments.is_empty() {
             exec_segments = self
                 .image
@@ -191,7 +187,6 @@ impl<X: Xlen> Pipeline<X> {
             return Err(Error::NoCodeSegment(entry_pc));
         }
 
-        // Verify entry point is in an executable segment
         let entry_in_exec = exec_segments.iter().any(|seg| {
             let start = X::to_u64(seg.virtual_start);
             let end = X::to_u64(seg.virtual_end);
@@ -201,17 +196,162 @@ impl<X: Xlen> Pipeline<X> {
             return Err(Error::NoCodeSegment(entry_pc));
         }
 
-        // Calculate address range spanning all executable segments
+        Ok(exec_segments)
+    }
+
+    fn exec_segments_range(
+        exec_segments: &[&ElfMemorySegment<X>],
+        entry_pc: u64,
+    ) -> Result<(u64, u64)> {
         let base_address = exec_segments
             .iter()
             .map(|seg| X::to_u64(seg.virtual_start))
             .min()
-            .unwrap();
+            .ok_or(Error::NoCodeSegment(entry_pc))?;
         let end_address = exec_segments
             .iter()
             .map(|seg| X::to_u64(seg.virtual_end))
             .max()
-            .unwrap();
+            .ok_or(Error::NoCodeSegment(entry_pc))?;
+        Ok((base_address, end_address))
+    }
+
+    fn decode_exec_segments(
+        &self,
+        exec_segments: &[&ElfMemorySegment<X>],
+        instr_table: &mut InstructionTable<X>,
+    ) {
+        let _span = trace_span!("decode_instructions").entered();
+        for seg in exec_segments {
+            let seg_start = X::to_u64(seg.virtual_start);
+            instr_table.populate_segment(&seg.data, seg_start, &self.registry);
+        }
+    }
+
+    fn add_extra_entry_points_to_table(&self, instr_table: &mut InstructionTable<X>) {
+        if !self.extra_entry_points.is_empty() {
+            debug!(
+                count = self.extra_entry_points.len(),
+                "adding extra entry points"
+            );
+            instr_table.add_entry_points(self.extra_entry_points.iter().copied());
+        }
+    }
+
+    fn add_ro_segments_to_table(&self, instr_table: &mut InstructionTable<X>) {
+        for seg in &self.image.memory_segments {
+            if seg.is_readonly() {
+                let seg_start = X::to_u64(seg.virtual_start);
+                let seg_end = X::to_u64(seg.virtual_end);
+                instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
+            }
+        }
+    }
+
+    fn insns_per_block(num_instructions: usize, num_blocks: usize) -> f64 {
+        if num_blocks == 0 {
+            return 0.0;
+        }
+        usize_to_f64(num_instructions) / usize_to_f64(num_blocks)
+    }
+
+    fn build_cfg_for_c(&mut self, instr_table: InstructionTable<X>, num_instructions: usize) {
+        let (mut block_table, blocks_before) = match self.config.analysis_mode {
+            AnalysisMode::FullCfg => {
+                let _span = trace_span!("cfg_analysis").entered();
+                let table = BlockTable::from_instruction_table(instr_table, &self.registry);
+                let before = table.len();
+                (table, before)
+            }
+            AnalysisMode::Basic => {
+                debug!("Basic mode: using linear blocks (no CFG analysis)");
+                let table = BlockTable::linear(instr_table);
+                let before = table.len();
+                (table, before)
+            }
+        };
+
+        let (absorbed, tail_duplicated, superblocked) = match self.config.analysis_mode {
+            AnalysisMode::FullCfg => {
+                let _span = trace_span!("block_transforms").entered();
+                if self.config.enable_superblock {
+                    block_table.optimize(&self.registry)
+                } else {
+                    let merged = block_table.merge_blocks(&self.registry);
+                    let tail_duped =
+                        block_table.tail_duplicate(rvr_cfg::DEFAULT_TAIL_DUP_SIZE, &self.registry);
+                    block_table.fix_stale_mappings();
+                    (merged, tail_duped, 0)
+                }
+            }
+            AnalysisMode::Basic => (0, 0, 0),
+        };
+
+        let num_blocks = block_table.len();
+        let insns_per_block = Self::insns_per_block(num_instructions, num_blocks);
+
+        info!(
+            instructions = num_instructions,
+            blocks = num_blocks,
+            insns_per_block = format!("{:.1}", insns_per_block),
+            analysis_mode = ?self.config.analysis_mode,
+            "built CFG"
+        );
+
+        if absorbed > 0 || tail_duplicated > 0 || superblocked > 0 {
+            info!(
+                before = blocks_before,
+                absorbed = absorbed,
+                tail_duplicated = tail_duplicated,
+                superblocked = superblocked,
+                "block transforms"
+            );
+        }
+
+        self.block_table = Some(block_table);
+        self.instruction_table = None;
+    }
+
+    fn build_cfg_for_asm(&mut self, instr_table: InstructionTable<X>, num_instructions: usize) {
+        if self.config.analysis_mode == AnalysisMode::FullCfg {
+            let _span = trace_span!("cfg_analysis").entered();
+            let block_table =
+                BlockTable::from_instruction_table(instr_table.clone(), &self.registry);
+            let num_blocks = block_table.len();
+            let insns_per_block = Self::insns_per_block(num_instructions, num_blocks);
+            info!(
+                instructions = num_instructions,
+                blocks = num_blocks,
+                insns_per_block = format!("{:.1}", insns_per_block),
+                analysis_mode = ?self.config.analysis_mode,
+                "built CFG (linear emission)"
+            );
+            self.block_table = Some(block_table);
+        } else {
+            info!(
+                instructions = num_instructions,
+                analysis_mode = ?self.config.analysis_mode,
+                "built instruction table"
+            );
+            self.block_table = None;
+        }
+        self.instruction_table = Some(instr_table);
+    }
+
+    /// Build CFG: creates `InstructionTable` → `BlockTable` with optimizations.
+    ///
+    /// Builds `InstructionTable` from ALL executable segments, not just the entry segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::NoCodeSegment` if there are no executable segments or
+    /// the entry point is not within any executable segment.
+    pub fn build_cfg(&mut self) -> Result<()> {
+        let _span = info_span!("build_cfg").entered();
+
+        let entry_pc = X::to_u64(self.image.entry_point);
+        let exec_segments = self.collect_exec_segments(entry_pc)?;
+        let (base_address, end_address) = Self::exec_segments_range(&exec_segments, entry_pc)?;
 
         debug!(
             base_address = format!("{:#x}", base_address),
@@ -221,134 +361,21 @@ impl<X: Xlen> Pipeline<X> {
 
         // Create InstructionTable spanning all executable segments
         let mut instr_table = InstructionTable::new(base_address, end_address, entry_pc);
-
-        // Populate each executable segment (instruction decoding)
-        {
-            let _span = trace_span!("decode_instructions").entered();
-            for seg in &exec_segments {
-                let seg_start = X::to_u64(seg.virtual_start);
-                instr_table.populate_segment(&seg.data, seg_start, &self.registry);
-            }
-        }
-
-        // Add extra entry points (e.g., exported functions for library mode)
-        if !self.extra_entry_points.is_empty() {
-            debug!(
-                count = self.extra_entry_points.len(),
-                "adding extra entry points"
-            );
-            instr_table.add_entry_points(self.extra_entry_points.iter().copied());
-        }
-
-        // Add read-only segments for constant propagation and jump table detection.
-        // Include both non-executable (.rodata) and executable segments (.text + .rodata merged).
-        // Some linkers merge .text and .rodata into a single R+X segment, so we scan both.
-        for seg in &self.image.memory_segments {
-            if seg.is_readonly() {
-                let seg_start = X::to_u64(seg.virtual_start);
-                let seg_end = X::to_u64(seg.virtual_end);
-                instr_table.add_ro_segment(seg_start, seg_end, seg.data.clone());
-            }
-        }
+        self.decode_exec_segments(&exec_segments, &mut instr_table);
+        self.add_extra_entry_points_to_table(&mut instr_table);
+        self.add_ro_segments_to_table(&mut instr_table);
 
         let num_instructions = instr_table.valid_indices().count();
 
         if self.config.backend == Backend::C {
-            // Create BlockTable - mode determines whether we do CFG analysis
-            let (mut block_table, blocks_before) = match self.config.analysis_mode {
-                AnalysisMode::FullCfg => {
-                    let _span = trace_span!("cfg_analysis").entered();
-                    let table = BlockTable::from_instruction_table(instr_table, &self.registry);
-                    let before = table.len();
-                    (table, before)
-                }
-                AnalysisMode::Basic => {
-                    // Linear mode: one instruction per block, no CFG analysis
-                    debug!("Basic mode: using linear blocks (no CFG analysis)");
-                    let table = BlockTable::linear(instr_table);
-                    let before = table.len();
-                    (table, before)
-                }
-            };
-
-            // Apply block transforms only in FullCfg mode.
-            let (absorbed, tail_duplicated, superblocked) = match self.config.analysis_mode {
-                AnalysisMode::FullCfg => {
-                    let _span = trace_span!("block_transforms").entered();
-                    if self.config.enable_superblock {
-                        block_table.optimize(&self.registry)
-                    } else {
-                        // Only merge and tail-dup, skip superblock formation
-                        let merged = block_table.merge_blocks(&self.registry);
-                        let tail_duped = block_table
-                            .tail_duplicate(rvr_cfg::DEFAULT_TAIL_DUP_SIZE, &self.registry);
-                        block_table.fix_stale_mappings();
-                        (merged, tail_duped, 0)
-                    }
-                }
-                AnalysisMode::Basic => (0, 0, 0),
-            };
-
-            let num_blocks = block_table.len();
-            let insns_per_block = if num_blocks > 0 {
-                num_instructions as f64 / num_blocks as f64
-            } else {
-                0.0
-            };
-
-            info!(
-                instructions = num_instructions,
-                blocks = num_blocks,
-                insns_per_block = format!("{:.1}", insns_per_block),
-                analysis_mode = ?self.config.analysis_mode,
-                "built CFG"
-            );
-
-            if absorbed > 0 || tail_duplicated > 0 || superblocked > 0 {
-                info!(
-                    before = blocks_before,
-                    absorbed = absorbed,
-                    tail_duplicated = tail_duplicated,
-                    superblocked = superblocked,
-                    "block transforms"
-                );
-            }
-
-            self.block_table = Some(block_table);
-            self.instruction_table = None;
+            self.build_cfg_for_c(instr_table, num_instructions);
         } else {
-            if self.config.analysis_mode == AnalysisMode::FullCfg {
-                let _span = trace_span!("cfg_analysis").entered();
-                let block_table =
-                    BlockTable::from_instruction_table(instr_table.clone(), &self.registry);
-                let num_blocks = block_table.len();
-                let insns_per_block = if num_blocks > 0 {
-                    num_instructions as f64 / num_blocks as f64
-                } else {
-                    0.0
-                };
-                info!(
-                    instructions = num_instructions,
-                    blocks = num_blocks,
-                    insns_per_block = format!("{:.1}", insns_per_block),
-                    analysis_mode = ?self.config.analysis_mode,
-                    "built CFG (linear emission)"
-                );
-                self.block_table = Some(block_table);
-            } else {
-                info!(
-                    instructions = num_instructions,
-                    analysis_mode = ?self.config.analysis_mode,
-                    "built instruction table"
-                );
-                self.block_table = None;
-            }
-            self.instruction_table = Some(instr_table);
+            self.build_cfg_for_asm(instr_table, num_instructions);
         }
         Ok(())
     }
 
-    /// Lift all blocks to IR using BlockTable.
+    /// Lift all blocks to IR using `BlockTable`.
     ///
     /// # Errors
     ///
@@ -429,14 +456,17 @@ impl<X: Xlen> Pipeline<X> {
         for (_, instr) in block_table.instruction_table().valid_instructions() {
             let instr_ir = self.registry.lift(instr);
             let pc = X::to_u64(instr_ir.pc);
-            let end_pc = pc + instr_ir.size as u64;
+            let end_pc = pc + u64::from(instr_ir.size);
             let mut block = BlockIR::new(instr_ir.pc);
             block.end_pc = X::from_u64(end_pc);
             block.instructions.push(instr_ir);
             self.ir_blocks.insert(pc, block);
         }
 
-        debug!(blocks = self.ir_blocks.len(), "lifted to IR as single-instruction blocks");
+        debug!(
+            blocks = self.ir_blocks.len(),
+            "lifted to IR as single-instruction blocks"
+        );
 
         Ok(())
     }
@@ -444,7 +474,7 @@ impl<X: Xlen> Pipeline<X> {
     /// Load debug info and attach source locations to instructions.
     ///
     /// Must be called after `lift_to_ir()`. Uses llvm-addr2line to resolve
-    /// instruction addresses to source file:line:function.
+    /// instruction addresses to source `<file:line:function>`.
     ///
     /// # Arguments
     ///
@@ -525,12 +555,11 @@ impl<X: Xlen> Pipeline<X> {
 
             while pc < *range_end {
                 // Get decoded instruction from table
-                let instr = match instr_table.get_at_pc(pc) {
-                    Some(i) => i,
-                    None => break,
+                let Some(instr) = instr_table.get_at_pc(pc) else {
+                    break;
                 };
 
-                let size = instr.size as u64;
+                let size = u64::from(instr.size);
 
                 // Lift to IR
                 let instr_ir = self.registry.lift(instr);
@@ -554,7 +583,7 @@ impl<X: Xlen> Pipeline<X> {
             let last_term = &block.instructions.last().unwrap().terminator;
             if !last_term.is_control_flow() {
                 // Mark the fall-through target - use end of last range
-                let final_pc = ranges.last().map(|(_, e)| *e).unwrap_or(end);
+                let final_pc = ranges.last().map_or(end, |(_, e)| *e);
                 if let Some(last_instr) = block.instructions.last_mut() {
                     last_instr.terminator = rvr_ir::Terminator::Fall {
                         target: Some(X::from_u64(final_pc)),
@@ -566,7 +595,7 @@ impl<X: Xlen> Pipeline<X> {
         if block.is_empty() { None } else { Some(block) }
     }
 
-    /// Emit C code to output directory using CProject.
+    /// Emit C code to output directory using `CProject`.
     ///
     /// # Errors
     ///
@@ -583,19 +612,26 @@ impl<X: Xlen> Pipeline<X> {
         let entry_point = X::to_u64(self.image.entry_point);
 
         // Convert memory segments
-        let segments: Vec<MemorySegment> = self
+        let segments: Vec<CMemorySegment> = self
             .image
             .memory_segments
             .iter()
             .map(|seg| {
-                MemorySegment::new(
+                let mem_len =
+                    usize::try_from(X::to_u64(seg.virtual_end) - X::to_u64(seg.virtual_start))
+                        .map_err(|_| {
+                            Error::CompilationFailed(
+                                "memory segment size does not fit in host usize".to_string(),
+                            )
+                        })?;
+                Ok(CMemorySegment::new(
                     X::to_u64(seg.virtual_start),
                     seg.data.len(),
-                    (X::to_u64(seg.virtual_end) - X::to_u64(seg.virtual_start)) as usize,
+                    mem_len,
                     seg.data.clone(),
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         // Compute text_start (minimum block address) and pc_end (maximum end address) from blocks
         let text_start = self
@@ -625,7 +661,7 @@ impl<X: Xlen> Pipeline<X> {
         inputs
             .valid_addresses
             .extend(self.ir_blocks.keys().copied());
-        inputs.absorbed_to_merged = absorbed_to_merged.clone();
+        inputs.absorbed_to_merged = absorbed_to_merged;
 
         // Create CProject with block transform mappings
         // Note: compiler is already in self.config, no need to call with_compiler
@@ -647,6 +683,26 @@ impl<X: Xlen> Pipeline<X> {
         Ok(())
     }
 
+    fn instruction_range(&self, entry_point: u64) -> (u64, u64) {
+        if self.ir_instructions.is_empty() {
+            return (entry_point, 0);
+        }
+
+        let text_start = self
+            .ir_instructions
+            .iter()
+            .map(|ir| X::to_u64(ir.pc))
+            .min()
+            .unwrap_or(entry_point);
+        let pc_end = self
+            .ir_instructions
+            .iter()
+            .map(|ir| X::to_u64(ir.pc) + u64::from(ir.size))
+            .max()
+            .unwrap_or(0);
+        (text_start, pc_end)
+    }
+
     /// Emit x86-64 assembly to output directory.
     ///
     /// # Errors
@@ -663,22 +719,7 @@ impl<X: Xlen> Pipeline<X> {
         let entry_point = X::to_u64(self.image.entry_point);
 
         // Build emission inputs
-        let mut text_start = entry_point;
-        let mut pc_end = 0u64;
-        if !self.ir_instructions.is_empty() {
-            text_start = self
-                .ir_instructions
-                .iter()
-                .map(|ir| X::to_u64(ir.pc))
-                .min()
-                .unwrap_or(entry_point);
-            pc_end = self
-                .ir_instructions
-                .iter()
-                .map(|ir| X::to_u64(ir.pc) + ir.size as u64)
-                .max()
-                .unwrap_or(0);
-        }
+        let (text_start, pc_end) = self.instruction_range(entry_point);
         let initial_brk = X::to_u64(self.image.get_initial_program_break());
         let mut inputs = EmitInputs::new(entry_point, pc_end)
             .with_text_start(text_start)
@@ -697,7 +738,7 @@ impl<X: Xlen> Pipeline<X> {
         std::fs::create_dir_all(output_dir)?;
 
         // Write assembly file
-        let asm_path = output_dir.join(format!("{}.s", base_name));
+        let asm_path = output_dir.join(format!("{base_name}.s"));
         emitter.write_asm(&asm_path)?;
 
         self.write_asm_syscalls_support(output_dir, base_name, &inputs)?;
@@ -723,22 +764,7 @@ impl<X: Xlen> Pipeline<X> {
         let entry_point = X::to_u64(self.image.entry_point);
 
         // Build emission inputs
-        let mut text_start = entry_point;
-        let mut pc_end = 0u64;
-        if !self.ir_instructions.is_empty() {
-            text_start = self
-                .ir_instructions
-                .iter()
-                .map(|ir| X::to_u64(ir.pc))
-                .min()
-                .unwrap_or(entry_point);
-            pc_end = self
-                .ir_instructions
-                .iter()
-                .map(|ir| X::to_u64(ir.pc) + ir.size as u64)
-                .max()
-                .unwrap_or(0);
-        }
+        let (text_start, pc_end) = self.instruction_range(entry_point);
         let initial_brk = X::to_u64(self.image.get_initial_program_break());
         let mut inputs = EmitInputs::new(entry_point, pc_end)
             .with_text_start(text_start)
@@ -757,7 +783,7 @@ impl<X: Xlen> Pipeline<X> {
         std::fs::create_dir_all(output_dir)?;
 
         // Write assembly file
-        let asm_path = output_dir.join(format!("{}.s", base_name));
+        let asm_path = output_dir.join(format!("{base_name}.s"));
         emitter.write_asm(&asm_path)?;
 
         self.write_asm_syscalls_support(output_dir, base_name, &inputs)?;
@@ -774,23 +800,18 @@ impl<X: Xlen> Pipeline<X> {
         inputs: &EmitInputs,
     ) -> Result<()> {
         // HTIF support can be used with any syscall mode (for riscv-tests benchmarks)
-        if self.config.htif_enabled {
+        if self.config.htif_enabled() {
             // Write header file (needed for HTIF source to compile)
             let header_cfg = HeaderConfig::new(base_name, &self.config, inputs, Vec::new());
             let header = gen_header::<X>(&header_cfg);
-            std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
+            std::fs::write(output_dir.join(format!("{base_name}.h")), header)?;
 
-            let htif_cfg = HtifConfig::new(base_name, true).with_verbose(self.config.htif_verbose);
+            let htif_cfg =
+                HtifConfig::new(base_name, true).with_verbose(self.config.htif_verbose());
             let htif_header = gen_htif_header::<X>(&htif_cfg);
-            std::fs::write(
-                output_dir.join(format!("{}_htif.h", base_name)),
-                htif_header,
-            )?;
+            std::fs::write(output_dir.join(format!("{base_name}_htif.h")), htif_header)?;
             let htif_source = gen_htif_source::<X>(&htif_cfg);
-            std::fs::write(
-                output_dir.join(format!("{}_htif.c", base_name)),
-                htif_source,
-            )?;
+            std::fs::write(output_dir.join(format!("{base_name}_htif.c")), htif_source)?;
         }
 
         // Linux syscall mode requires additional support files
@@ -799,10 +820,10 @@ impl<X: Xlen> Pipeline<X> {
         }
 
         // Write header if not already written for HTIF
-        if !self.config.htif_enabled {
+        if !self.config.htif_enabled() {
             let header_cfg = HeaderConfig::new(base_name, &self.config, inputs, Vec::new());
             let header = gen_header::<X>(&header_cfg);
-            std::fs::write(output_dir.join(format!("{}.h", base_name)), header)?;
+            std::fs::write(output_dir.join(format!("{base_name}.h")), header)?;
         }
 
         if !self.config.tracer_config.is_none() {
@@ -813,7 +834,7 @@ impl<X: Xlen> Pipeline<X> {
         let syscalls_cfg = SyscallsConfig::new(base_name, self.config.fixed_addresses.is_some());
         let syscalls_src = gen_syscalls_source::<X>(&syscalls_cfg);
         std::fs::write(
-            output_dir.join(format!("{}_syscalls.c", base_name)),
+            output_dir.join(format!("{base_name}_syscalls.c")),
             syscalls_src,
         )?;
 
@@ -825,8 +846,8 @@ impl<X: Xlen> Pipeline<X> {
         let block_table = self.block_table.as_ref();
         PipelineStats {
             num_blocks: self.ir_blocks.len(),
-            num_basic_blocks: block_table.map(|b| b.len()).unwrap_or(0),
-            num_absorbed: block_table.map(|b| b.absorbed_to_merged.len()).unwrap_or(0),
+            num_basic_blocks: block_table.map_or(0, BlockTable::len),
+            num_absorbed: block_table.map_or(0, |b| b.absorbed_to_merged.len()),
         }
     }
 }

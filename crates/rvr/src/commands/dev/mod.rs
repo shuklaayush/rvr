@@ -6,5 +6,5 @@
 mod diff;
 mod trace;
 
-pub use diff::{diff_compare, DiffCompareArgs};
+pub use diff::{DiffCompareArgs, diff_compare};
 pub use trace::trace_compare;

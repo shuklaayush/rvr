@@ -1,6 +1,6 @@
 //! Differential execution command.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rvr_emit::Backend;
 
@@ -17,15 +17,15 @@ enum DiffBackend {
 }
 
 impl DiffBackend {
-    fn as_backend(&self) -> Option<Backend> {
+    const fn as_backend(self) -> Option<Backend> {
         match self {
-            DiffBackend::Backend(b) => Some(*b),
-            DiffBackend::Spike => None,
+            Self::Backend(b) => Some(b),
+            Self::Spike => None,
         }
     }
 }
 
-fn diff_backend_from_arg(arg: DiffBackendArg) -> DiffBackend {
+const fn diff_backend_from_arg(arg: DiffBackendArg) -> DiffBackend {
     match arg {
         DiffBackendArg::Spike => DiffBackend::Spike,
         DiffBackendArg::C => DiffBackend::Backend(Backend::C),
@@ -67,18 +67,12 @@ fn resolve_diff_backends(
     if let Some(backend) = ref_backend.as_backend()
         && !diff::backend_supports_diff(backend)
     {
-        return Err(format!(
-            "backend {:?} does not support diff tracing",
-            backend
-        ));
+        return Err(format!("backend {backend:?} does not support diff tracing"));
     }
     if let Some(backend) = test_backend.as_backend()
         && !diff::backend_supports_diff(backend)
     {
-        return Err(format!(
-            "backend {:?} does not support diff tracing",
-            backend
-        ));
+        return Err(format!("backend {backend:?} does not support diff tracing"));
     }
 
     Ok((ref_backend, test_backend))
@@ -87,6 +81,8 @@ fn resolve_diff_backends(
 fn should_skip_test(name: &str) -> bool {
     matches!(name, "rv32ui-p-fence_i" | "rv64ui-p-fence_i")
 }
+
+const CHECKPOINT_INTERVAL: u64 = 1_000_000;
 
 // ============================================================================
 // Differential Execution Command
@@ -109,99 +105,75 @@ pub struct DiffCompareArgs<'a> {
     pub strict_mem: bool,
 }
 
-/// Run lockstep differential execution between two backends.
-pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
-    let DiffCompareArgs {
-        mode,
-        ref_backend,
-        test_backend,
-        elf_path,
-        granularity_arg,
-        max_instrs,
-        output_dir,
-        ref_dir,
-        test_dir,
-        cc,
-        isa,
-        strict_mem,
-    } = args;
-    // Convert granularity argument
-    let granularity = match granularity_arg {
+const fn granularity_from_arg(arg: DiffGranularityArg) -> diff::DiffGranularity {
+    match arg {
         DiffGranularityArg::Instruction => diff::DiffGranularity::Instruction,
         DiffGranularityArg::Block => diff::DiffGranularity::Block,
         DiffGranularityArg::Hybrid => diff::DiffGranularity::Hybrid,
         DiffGranularityArg::Checkpoint => diff::DiffGranularity::Checkpoint,
         DiffGranularityArg::PureC => diff::DiffGranularity::PureC,
-    };
-
-    // Check if test should be skipped
-    let test_name = elf_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if should_skip_test(test_name) {
-        eprintln!(
-            "SKIP: {} (not compatible with static recompilation)",
-            test_name
-        );
-        return EXIT_SUCCESS;
     }
+}
 
-    // Determine ISA
-    let isa = match isa {
+fn test_name_from_path(elf_path: &Path) -> &str {
+    elf_path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+}
+
+fn resolve_isa(elf_path: &Path, isa: Option<String>, test_name: &str) -> Result<String, String> {
+    let detected = match isa {
         Some(i) => i,
-        None => match trace::elf_to_isa(elf_path) {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("Error detecting ISA: {}", e);
-                return EXIT_FAILURE;
-            }
-        },
+        None => trace::elf_to_isa(elf_path).map_err(|e| format!("Error detecting ISA: {e}"))?,
     };
-    let isa = trace::isa_from_test_name(test_name, &isa);
+    Ok(trace::isa_from_test_name(test_name, &detected))
+}
 
-    // Get entry point for alignment
-    let entry_point = match trace::elf_entry_point(elf_path) {
-        Ok(ep) => ep,
-        Err(e) => {
-            eprintln!("Error reading ELF entry point: {}", e);
-            return EXIT_FAILURE;
-        }
-    };
+fn resolve_entry_point(elf_path: &Path) -> Result<u64, String> {
+    trace::elf_entry_point(elf_path).map_err(|e| format!("Error reading ELF entry point: {e}"))
+}
 
-    eprintln!("ELF: {}", elf_path.display());
-    eprintln!("Mode: {:?}", mode);
-    eprintln!("Granularity: {:?}", granularity);
-    eprintln!("ISA: {}", isa);
-    eprintln!("Entry: 0x{:x}", entry_point);
-    if let Some(n) = max_instrs {
-        eprintln!("Max instructions: {}", n);
-    }
-    eprintln!();
-
-    // Create output directory
-    let output_dir = output_dir.unwrap_or_else(|| {
+fn create_output_dir(output_dir: Option<PathBuf>) -> PathBuf {
+    output_dir.unwrap_or_else(|| {
         let temp = tempfile::tempdir().expect("failed to create temp dir");
         temp.keep()
-    });
+    })
+}
 
-    // Resolve reference/test backends
-    let (ref_backend, test_backend) = match resolve_diff_backends(mode, ref_backend, test_backend) {
-        Ok(pair) => pair,
-        Err(msg) => {
-            eprintln!("Error: {}", msg);
-            return EXIT_FAILURE;
-        }
-    };
-
-    eprintln!("Reference: {:?}", ref_backend);
-    eprintln!("Test: {:?}", test_backend);
-
-    // Check Spike is available if needed
-    let needs_spike = matches!(ref_backend, DiffBackend::Spike);
-    if needs_spike && diff::find_spike().is_none() {
-        eprintln!("Error: Spike not found in PATH");
-        eprintln!("Install from https://github.com/riscv-software-src/riscv-isa-sim");
-        return EXIT_FAILURE;
+fn log_header(
+    elf_path: &Path,
+    mode: DiffModeArg,
+    granularity: diff::DiffGranularity,
+    isa: &str,
+    entry_point: u64,
+    max_instrs: Option<u64>,
+) {
+    eprintln!("ELF: {}", elf_path.display());
+    eprintln!("Mode: {mode:?}");
+    eprintln!("Granularity: {granularity:?}");
+    eprintln!("ISA: {isa}");
+    eprintln!("Entry: 0x{entry_point:x}");
+    if let Some(n) = max_instrs {
+        eprintln!("Max instructions: {n}");
     }
+    eprintln!();
+}
 
+fn resolve_compiler(cc: &str) -> Result<rvr::Compiler, String> {
+    cc.parse()
+        .map_err(|e| format!("Error: invalid compiler: {e}"))
+}
+
+#[derive(Clone, Copy)]
+struct CompareModes {
+    use_block_comparison: bool,
+    use_checkpoint_comparison: bool,
+    use_pure_c: bool,
+}
+
+fn determine_compare_modes(
+    granularity: diff::DiffGranularity,
+    ref_backend: DiffBackend,
+    test_backend: DiffBackend,
+) -> CompareModes {
     let checkpoint_requested = matches!(granularity, diff::DiffGranularity::Checkpoint);
     let block_requested = matches!(
         granularity,
@@ -218,7 +190,6 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
         );
     }
 
-    // Check if checkpoint mode is possible (requires two compiled backends)
     let use_checkpoint_comparison = checkpoint_requested
         && matches!(ref_backend, DiffBackend::Backend(_))
         && matches!(test_backend, DiffBackend::Backend(_));
@@ -228,7 +199,6 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
         );
     }
 
-    // Check if pure-C mode is possible (requires two compiled backends)
     let pure_c_requested = matches!(granularity, diff::DiffGranularity::PureC);
     let use_pure_c = pure_c_requested
         && matches!(ref_backend, DiffBackend::Backend(_))
@@ -239,259 +209,338 @@ pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
         );
     }
 
-    let compiler: rvr::Compiler = match cc.parse() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Error: invalid compiler: {}", e);
+    CompareModes {
+        use_block_comparison,
+        use_checkpoint_comparison,
+        use_pure_c,
+    }
+}
+
+fn ensure_spike_available(ref_backend: DiffBackend) -> Result<(), String> {
+    if matches!(ref_backend, DiffBackend::Spike) && diff::find_spike().is_none() {
+        let mut message = String::from("Error: Spike not found in PATH\n");
+        message.push_str("Install from https://github.com/riscv-software-src/riscv-isa-sim");
+        return Err(message);
+    }
+    Ok(())
+}
+
+struct DiffContext<'a> {
+    elf_path: &'a Path,
+    output_dir: &'a Path,
+    compiler: &'a rvr::Compiler,
+    ref_backend: DiffBackend,
+    test_backend: DiffBackend,
+    ref_dir: Option<PathBuf>,
+    test_dir: Option<PathBuf>,
+    max_instrs: Option<u64>,
+    strict_mem: bool,
+    isa: &'a str,
+    entry_point: u64,
+}
+
+fn run_pure_c(ctx: &DiffContext<'_>, cc: &str) -> diff::CompareResult {
+    run_pure_c_comparison(
+        ctx.elf_path,
+        ctx.output_dir,
+        ctx.ref_backend.as_backend().unwrap(),
+        ctx.test_backend.as_backend().unwrap(),
+        ctx.compiler,
+        cc,
+        ctx.max_instrs,
+    )
+}
+
+fn run_block_comparison(ctx: &DiffContext<'_>) -> Result<diff::CompareResult, String> {
+    eprintln!("Using block-level comparison (reference block vs test linear)");
+
+    let block_dir = if let Some(dir) = ctx.ref_dir.clone() {
+        dir
+    } else {
+        let dir = ctx.output_dir.join("block");
+        let backend = ctx.ref_backend.as_backend().unwrap();
+        eprintln!("Compiling block executor ({backend:?} with buffered-diff)...");
+        diff::compile_for_diff_block(ctx.elf_path, &dir, backend, ctx.compiler)
+            .map_err(|err| format!("Error: {err}"))?;
+        dir
+    };
+
+    let linear_dir = if let Some(dir) = ctx.test_dir.clone() {
+        dir
+    } else {
+        let dir = ctx.output_dir.join("linear");
+        let backend = ctx.test_backend.as_backend().unwrap();
+        eprintln!("Compiling linear executor ({backend:?} with diff)...");
+        diff::compile_for_diff(ctx.elf_path, &dir, backend, ctx.compiler)
+            .map_err(|err| format!("Error: {err}"))?;
+        dir
+    };
+
+    eprintln!("Starting block-level differential execution...");
+    let config = diff::CompareConfig {
+        strict_reg_writes: true,
+        strict_mem_access: ctx.strict_mem,
+    };
+
+    let mut block_exec = diff::BufferedInProcessExecutor::new(&block_dir, ctx.elf_path)
+        .map_err(|e| format!("Error loading block executor: {e}"))?;
+    let mut linear_exec = diff::InProcessExecutor::new(&linear_dir, ctx.elf_path)
+        .map_err(|e| format!("Error loading linear executor: {e}"))?;
+
+    Ok(diff::compare_block_vs_linear(
+        &mut block_exec,
+        &mut linear_exec,
+        &config,
+        ctx.max_instrs,
+    ))
+}
+
+fn run_checkpoint_comparison(ctx: &DiffContext<'_>) -> Result<diff::CompareResult, String> {
+    eprintln!("Using checkpoint comparison (1M instruction intervals)");
+
+    let ref_dir = if let Some(dir) = ctx.ref_dir.clone() {
+        dir
+    } else {
+        let dir = ctx.output_dir.join("ref");
+        let backend = ctx.ref_backend.as_backend().unwrap();
+        eprintln!("Compiling reference ({backend:?} for checkpoint)...");
+        diff::compile_for_checkpoint(ctx.elf_path, &dir, backend, ctx.compiler)
+            .map_err(|err| format!("Error: {err}"))?;
+        dir
+    };
+
+    let test_dir = if let Some(dir) = ctx.test_dir.clone() {
+        dir
+    } else {
+        let dir = ctx.output_dir.join("test");
+        let backend = ctx.test_backend.as_backend().unwrap();
+        eprintln!("Compiling test ({backend:?} for checkpoint)...");
+        diff::compile_for_checkpoint(ctx.elf_path, &dir, backend, ctx.compiler)
+            .map_err(|err| format!("Error: {err}"))?;
+        dir
+    };
+
+    eprintln!("Starting checkpoint comparison...");
+    let mut ref_runner = rvr::Runner::load(&ref_dir, ctx.elf_path)
+        .map_err(|e| format!("Error loading reference runner: {e}"))?;
+    ref_runner.prepare();
+    let entry = ref_runner.entry_point();
+    ref_runner.set_pc(entry);
+
+    let mut test_runner = rvr::Runner::load(&test_dir, ctx.elf_path)
+        .map_err(|e| format!("Error loading test runner: {e}"))?;
+    test_runner.prepare();
+    test_runner.set_pc(entry);
+
+    Ok(diff::compare_checkpoint(
+        &mut ref_runner,
+        &mut test_runner,
+        CHECKPOINT_INTERVAL,
+        ctx.max_instrs,
+    ))
+}
+
+fn run_instruction_comparison(ctx: &DiffContext<'_>) -> Result<diff::CompareResult, String> {
+    let ref_compiled_dir = if let Some(dir) = ctx.ref_dir.clone() {
+        dir
+    } else if let Some(backend) = ctx.ref_backend.as_backend() {
+        let dir = ctx.output_dir.join("ref");
+        eprintln!("Compiling reference ({backend:?})...");
+        diff::compile_for_diff(ctx.elf_path, &dir, backend, ctx.compiler)
+            .map_err(|err| format!("Error: {err}"))?;
+        dir
+    } else {
+        PathBuf::new()
+    };
+
+    let test_compiled_dir = if let Some(dir) = ctx.test_dir.clone() {
+        dir
+    } else if let Some(backend) = ctx.test_backend.as_backend() {
+        let dir = ctx.output_dir.join("test");
+        eprintln!("Compiling test ({backend:?})...");
+        diff::compile_for_diff(ctx.elf_path, &dir, backend, ctx.compiler)
+            .map_err(|err| format!("Error: {err}"))?;
+        dir
+    } else {
+        return Err("test backend always required".to_string());
+    };
+
+    eprintln!("Starting differential execution...");
+    let config = diff::CompareConfig {
+        strict_reg_writes: true,
+        strict_mem_access: ctx.strict_mem,
+    };
+
+    match ctx.ref_backend {
+        DiffBackend::Spike => {
+            let mut spike = diff::SpikeExecutor::start(ctx.elf_path, ctx.isa, ctx.entry_point)
+                .map_err(|e| format!("Error starting Spike: {e}"))?;
+            let mut test = diff::InProcessExecutor::new(&test_compiled_dir, ctx.elf_path)
+                .map_err(|e| format!("Error loading test executor: {e}"))?;
+            Ok(diff::compare_lockstep(
+                &mut spike,
+                &mut test,
+                &config,
+                ctx.max_instrs,
+            ))
+        }
+        DiffBackend::Backend(_) => {
+            let mut reference = diff::InProcessExecutor::new(&ref_compiled_dir, ctx.elf_path)
+                .map_err(|e| format!("Error loading reference executor: {e}"))?;
+            let mut test = diff::InProcessExecutor::new(&test_compiled_dir, ctx.elf_path)
+                .map_err(|e| format!("Error loading test executor: {e}"))?;
+            Ok(diff::compare_lockstep(
+                &mut reference,
+                &mut test,
+                &config,
+                ctx.max_instrs,
+            ))
+        }
+    }
+}
+
+fn report_result(result: &diff::CompareResult, output_dir: &Path) -> i32 {
+    eprintln!();
+    result.divergence.as_ref().map_or_else(
+        || {
+            eprintln!("PASS: {} instructions matched", result.matched);
+            EXIT_SUCCESS
+        },
+        |div| {
+            eprintln!("DIVERGENCE at instruction {}: {}", div.index, div.kind);
+            eprintln!();
+            eprintln!("Expected:");
+            eprintln!("  PC: 0x{:016x}", div.expected.pc);
+            eprintln!("  Opcode: 0x{:08x}", div.expected.opcode);
+            if let (Some(rd), Some(val)) = (div.expected.rd, div.expected.rd_value) {
+                eprintln!("  x{rd} = 0x{val:016x}");
+            }
+            if let Some(addr) = div.expected.mem_addr {
+                eprintln!("  mem 0x{addr:016x}");
+            }
+            eprintln!();
+            eprintln!("Actual:");
+            eprintln!("  PC: 0x{:016x}", div.actual.pc);
+            eprintln!("  Opcode: 0x{:08x}", div.actual.opcode);
+            if let (Some(rd), Some(val)) = (div.actual.rd, div.actual.rd_value) {
+                eprintln!("  x{rd} = 0x{val:016x}");
+            }
+            if let Some(addr) = div.actual.mem_addr {
+                eprintln!("  mem 0x{addr:016x}");
+            }
+            eprintln!();
+            eprintln!("Output: {}", output_dir.display());
+            EXIT_FAILURE
+        },
+    )
+}
+
+fn run_comparison(
+    ctx: &DiffContext<'_>,
+    cc: &str,
+    modes: CompareModes,
+) -> Result<diff::CompareResult, String> {
+    if modes.use_pure_c {
+        Ok(run_pure_c(ctx, cc))
+    } else if modes.use_block_comparison {
+        run_block_comparison(ctx)
+    } else if modes.use_checkpoint_comparison {
+        run_checkpoint_comparison(ctx)
+    } else {
+        run_instruction_comparison(ctx)
+    }
+}
+
+/// Run lockstep differential execution between two backends.
+pub fn diff_compare(args: DiffCompareArgs<'_>) -> i32 {
+    let DiffCompareArgs {
+        mode,
+        ref_backend,
+        test_backend,
+        elf_path,
+        granularity_arg,
+        max_instrs,
+        output_dir,
+        ref_dir,
+        test_dir,
+        cc,
+        isa,
+        strict_mem,
+    } = args;
+    let granularity = granularity_from_arg(granularity_arg);
+
+    let test_name = test_name_from_path(elf_path);
+    if should_skip_test(test_name) {
+        eprintln!("SKIP: {test_name} (not compatible with static recompilation)");
+        return EXIT_SUCCESS;
+    }
+
+    let isa = match resolve_isa(elf_path, isa, test_name) {
+        Ok(isa) => isa,
+        Err(message) => {
+            eprintln!("{message}");
             return EXIT_FAILURE;
         }
     };
 
-    // Determine what to compile based on mode and granularity
-    let result = if use_pure_c {
-        // Pure-C comparison: generates a standalone C program
-        run_pure_c_comparison(
-            elf_path,
-            &output_dir,
-            ref_backend.as_backend().unwrap(),
-            test_backend.as_backend().unwrap(),
-            &compiler,
-            cc,
-            max_instrs,
-        )
-    } else if use_block_comparison {
-        // Block-level comparison: reference as block executor, test as linear executor
-        eprintln!("Using block-level comparison (reference block vs test linear)");
-
-        // Compile C with buffered-diff tracer for block execution
-        let block_dir = if let Some(dir) = ref_dir {
-            dir
-        } else {
-            let dir = output_dir.join("block");
-            let backend = ref_backend.as_backend().unwrap();
-            eprintln!(
-                "Compiling block executor ({:?} with buffered-diff)...",
-                backend
-            );
-            if let Err(err) = diff::compile_for_diff_block(elf_path, &dir, backend, &compiler) {
-                eprintln!("Error: {}", err);
-                return EXIT_FAILURE;
-            }
-            dir
-        };
-
-        // Compile ARM64 with diff tracer for linear execution
-        let linear_dir = if let Some(dir) = test_dir {
-            dir
-        } else {
-            let dir = output_dir.join("linear");
-            let backend = test_backend.as_backend().unwrap();
-            eprintln!("Compiling linear executor ({:?} with diff)...", backend);
-            if let Err(err) = diff::compile_for_diff(elf_path, &dir, backend, &compiler) {
-                eprintln!("Error: {}", err);
-                return EXIT_FAILURE;
-            }
-            dir
-        };
-
-        // Create executors
-        eprintln!("Starting block-level differential execution...");
-
-        let config = diff::CompareConfig {
-            strict_reg_writes: true,
-            strict_mem_access: strict_mem,
-        };
-
-        let mut block_exec = match diff::BufferedInProcessExecutor::new(&block_dir, elf_path) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("Error loading block executor: {}", e);
-                return EXIT_FAILURE;
-            }
-        };
-
-        let mut linear_exec = match diff::InProcessExecutor::new(&linear_dir, elf_path) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("Error loading linear executor: {}", e);
-                return EXIT_FAILURE;
-            }
-        };
-
-        diff::compare_block_vs_linear(&mut block_exec, &mut linear_exec, &config, max_instrs)
-    } else if use_checkpoint_comparison {
-        // Fast checkpoint comparison: compare PC+registers every N instructions
-        eprintln!("Using checkpoint comparison (1M instruction intervals)");
-
-        // Compile both backends with suspend mode (no tracer needed)
-        let ref_dir = if let Some(dir) = ref_dir {
-            dir
-        } else {
-            let dir = output_dir.join("ref");
-            let backend = ref_backend.as_backend().unwrap();
-            eprintln!("Compiling reference ({:?} for checkpoint)...", backend);
-            if let Err(err) = diff::compile_for_checkpoint(elf_path, &dir, backend, &compiler) {
-                eprintln!("Error: {}", err);
-                return EXIT_FAILURE;
-            }
-            dir
-        };
-
-        let test_dir = if let Some(dir) = test_dir {
-            dir
-        } else {
-            let dir = output_dir.join("test");
-            let backend = test_backend.as_backend().unwrap();
-            eprintln!("Compiling test ({:?} for checkpoint)...", backend);
-            if let Err(err) = diff::compile_for_checkpoint(elf_path, &dir, backend, &compiler) {
-                eprintln!("Error: {}", err);
-                return EXIT_FAILURE;
-            }
-            dir
-        };
-
-        eprintln!("Starting checkpoint comparison...");
-
-        // Load runners
-        let mut ref_runner = match rvr::Runner::load(&ref_dir, elf_path) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Error loading reference runner: {}", e);
-                return EXIT_FAILURE;
-            }
-        };
-        ref_runner.prepare();
-        let entry = ref_runner.entry_point();
-        ref_runner.set_pc(entry);
-
-        let mut test_runner = match rvr::Runner::load(&test_dir, elf_path) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Error loading test runner: {}", e);
-                return EXIT_FAILURE;
-            }
-        };
-        test_runner.prepare();
-        test_runner.set_pc(entry);
-
-        // Checkpoint interval: 1M instructions
-        const CHECKPOINT_INTERVAL: u64 = 1_000_000;
-
-        diff::compare_checkpoint(&mut ref_runner, &mut test_runner, CHECKPOINT_INTERVAL, max_instrs)
-    } else {
-        // Instruction-level comparison (original behavior)
-        // Compile reference if needed
-        let ref_compiled_dir = if let Some(dir) = ref_dir {
-            dir
-        } else if let Some(backend) = ref_backend.as_backend() {
-            let dir = output_dir.join("ref");
-            eprintln!("Compiling reference ({:?})...", backend);
-            if let Err(err) = diff::compile_for_diff(elf_path, &dir, backend, &compiler) {
-                eprintln!("Error: {}", err);
-                return EXIT_FAILURE;
-            }
-            dir
-        } else {
-            PathBuf::new() // Not used for Spike mode
-        };
-
-        // Compile test
-        let test_compiled_dir = if let Some(dir) = test_dir {
-            dir
-        } else if let Some(backend) = test_backend.as_backend() {
-            let dir = output_dir.join("test");
-            eprintln!("Compiling test ({:?})...", backend);
-            if let Err(err) = diff::compile_for_diff(elf_path, &dir, backend, &compiler) {
-                eprintln!("Error: {}", err);
-                return EXIT_FAILURE;
-            }
-            dir
-        } else {
-            unreachable!("test backend always required")
-        };
-
-        // Create executors
-        eprintln!("Starting differential execution...");
-
-        let config = diff::CompareConfig {
-            strict_reg_writes: true,
-            strict_mem_access: strict_mem,
-        };
-
-        // Run comparison based on mode
-        match ref_backend {
-            DiffBackend::Spike => {
-                // Spike as reference
-                let mut spike = match diff::SpikeExecutor::start(elf_path, &isa, entry_point) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Error starting Spike: {}", e);
-                        return EXIT_FAILURE;
-                    }
-                };
-
-                let mut test = match diff::InProcessExecutor::new(&test_compiled_dir, elf_path) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!("Error loading test executor: {}", e);
-                        return EXIT_FAILURE;
-                    }
-                };
-
-                diff::compare_lockstep(&mut spike, &mut test, &config, max_instrs)
-            }
-            DiffBackend::Backend(_) => {
-                let mut reference = match diff::InProcessExecutor::new(&ref_compiled_dir, elf_path)
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("Error loading reference executor: {}", e);
-                        return EXIT_FAILURE;
-                    }
-                };
-
-                let mut test = match diff::InProcessExecutor::new(&test_compiled_dir, elf_path) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!("Error loading test executor: {}", e);
-                        return EXIT_FAILURE;
-                    }
-                };
-
-                diff::compare_lockstep(&mut reference, &mut test, &config, max_instrs)
-            }
+    let entry_point = match resolve_entry_point(elf_path) {
+        Ok(entry_point) => entry_point,
+        Err(message) => {
+            eprintln!("{message}");
+            return EXIT_FAILURE;
         }
     };
 
-    // Report result
-    eprintln!();
-    if let Some(div) = &result.divergence {
-        eprintln!("DIVERGENCE at instruction {}: {}", div.index, div.kind);
-        eprintln!();
-        eprintln!("Expected:");
-        eprintln!("  PC: 0x{:016x}", div.expected.pc);
-        eprintln!("  Opcode: 0x{:08x}", div.expected.opcode);
-        if let (Some(rd), Some(val)) = (div.expected.rd, div.expected.rd_value) {
-            eprintln!("  x{} = 0x{:016x}", rd, val);
+    log_header(elf_path, mode, granularity, &isa, entry_point, max_instrs);
+
+    let output_dir = create_output_dir(output_dir);
+
+    let (ref_backend, test_backend) = match resolve_diff_backends(mode, ref_backend, test_backend) {
+        Ok(pair) => pair,
+        Err(msg) => {
+            eprintln!("Error: {msg}");
+            return EXIT_FAILURE;
         }
-        if let Some(addr) = div.expected.mem_addr {
-            eprintln!("  mem 0x{:016x}", addr);
-        }
-        eprintln!();
-        eprintln!("Actual:");
-        eprintln!("  PC: 0x{:016x}", div.actual.pc);
-        eprintln!("  Opcode: 0x{:08x}", div.actual.opcode);
-        if let (Some(rd), Some(val)) = (div.actual.rd, div.actual.rd_value) {
-            eprintln!("  x{} = 0x{:016x}", rd, val);
-        }
-        if let Some(addr) = div.actual.mem_addr {
-            eprintln!("  mem 0x{:016x}", addr);
-        }
-        eprintln!();
-        eprintln!("Output: {}", output_dir.display());
-        EXIT_FAILURE
-    } else {
-        eprintln!("PASS: {} instructions matched", result.matched);
-        EXIT_SUCCESS
+    };
+
+    eprintln!("Reference: {ref_backend:?}");
+    eprintln!("Test: {test_backend:?}");
+
+    if let Err(message) = ensure_spike_available(ref_backend) {
+        eprintln!("{message}");
+        return EXIT_FAILURE;
     }
+
+    let modes = determine_compare_modes(granularity, ref_backend, test_backend);
+    let compiler = match resolve_compiler(cc) {
+        Ok(compiler) => compiler,
+        Err(message) => {
+            eprintln!("{message}");
+            return EXIT_FAILURE;
+        }
+    };
+
+    let ctx = DiffContext {
+        elf_path,
+        output_dir: &output_dir,
+        compiler: &compiler,
+        ref_backend,
+        test_backend,
+        ref_dir,
+        test_dir,
+        max_instrs,
+        strict_mem,
+        isa: &isa,
+        entry_point,
+    };
+
+    let result = match run_comparison(&ctx, cc, modes) {
+        Ok(result) => result,
+        Err(message) => {
+            eprintln!("{message}");
+            return EXIT_FAILURE;
+        }
+    };
+
+    report_result(&result, &output_dir)
 }

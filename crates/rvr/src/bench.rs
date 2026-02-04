@@ -23,9 +23,10 @@ pub enum Arch {
 
 impl Arch {
     /// All supported architectures.
-    pub const ALL: &'static [Arch] = &[Arch::Rv32i, Arch::Rv32e, Arch::Rv64i, Arch::Rv64e];
+    pub const ALL: &'static [Self] = &[Self::Rv32i, Self::Rv32e, Self::Rv64i, Self::Rv64e];
 
     /// Parse from string (e.g., "rv32i").
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "rv32i" => Some(Self::Rv32i),
@@ -37,7 +38,9 @@ impl Arch {
     }
 
     /// Parse comma-separated list of architectures.
-    /// Use "all" to get all architectures.
+    ///
+    /// # Errors
+    /// Returns an error when an unknown architecture string is encountered.
     pub fn parse_list(s: &str) -> Result<Vec<Self>, String> {
         if s.eq_ignore_ascii_case("all") {
             return Ok(vec![Self::Rv32i, Self::Rv32e, Self::Rv64i, Self::Rv64e]);
@@ -45,17 +48,15 @@ impl Arch {
         s.split(',')
             .map(|part| {
                 Self::parse(part.trim()).ok_or_else(|| {
-                    format!(
-                        "unknown arch '{}', expected rv32i/rv32e/rv64i/rv64e/all",
-                        part
-                    )
+                    format!("unknown arch '{part}', expected rv32i/rv32e/rv64i/rv64e/all")
                 })
             })
             .collect()
     }
 
     /// Get string representation.
-    pub fn as_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Rv32i => "rv32i",
             Self::Rv32e => "rv32e",
@@ -81,22 +82,25 @@ pub struct HostResult {
 }
 
 /// Run a compiled library and return results with perf counters.
+///
+/// # Errors
+/// Returns an error if the library fails to load or execution fails.
 pub fn run_bench(
     lib_dir: &Path,
     elf_path: &Path,
     runs: usize,
 ) -> Result<RunResultWithPerf, String> {
     let mut runner =
-        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
+        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {e}"))?;
 
     if runs <= 1 {
         runner
             .run_with_counters()
-            .map_err(|e| format!("execution failed: {}", e))
+            .map_err(|e| format!("execution failed: {e}"))
     } else {
         runner
             .run_multiple_with_counters(runs)
-            .map_err(|e| format!("execution failed: {}", e))
+            .map_err(|e| format!("execution failed: {e}"))
     }
 }
 
@@ -105,21 +109,24 @@ pub fn run_bench(
 pub enum BenchMode {
     /// Executable mode: run from entry point
     Executable,
-    /// Library mode: call initialize() then run() N times
+    /// Library mode: call `initialize()` then `run()` N times
     Library,
 }
 
 /// Run a benchmark with automatic mode detection.
 ///
-/// Uses the RV_EXPORT_FUNCTIONS metadata from the compiled library to determine
+/// Uses the `RV_EXPORT_FUNCTIONS` metadata from the compiled library to determine
 /// whether to use library mode (call initialize/run) or executable mode (entry point).
+///
+/// # Errors
+/// Returns an error if the library fails to load or execution fails.
 pub fn run_bench_auto(
     lib_dir: &Path,
     elf_path: &Path,
     runs: usize,
 ) -> Result<(RunResultWithPerf, BenchMode), String> {
     let mut runner =
-        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
+        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {e}"))?;
 
     if runner.has_export_functions() {
         // Library mode: call initialize() then run()
@@ -137,11 +144,11 @@ pub fn run_bench_auto(
         let result = if runs <= 1 {
             runner
                 .run_with_counters()
-                .map_err(|e| format!("execution failed: {}", e))?
+                .map_err(|e| format!("execution failed: {e}"))?
         } else {
             runner
                 .run_multiple_with_counters(runs)
-                .map_err(|e| format!("execution failed: {}", e))?
+                .map_err(|e| format!("execution failed: {e}"))?
         };
         Ok((result, BenchMode::Executable))
     }
@@ -152,13 +159,16 @@ pub fn run_bench_auto(
 /// The benchmark exports two symbols:
 /// - `initialize`: Called once before timing (setup)
 /// - `run`: Called N times with timing (the actual benchmark)
+///
+/// # Errors
+/// Returns an error if the library fails to load or the benchmark fails to run.
 pub fn run_bench_library(
     lib_dir: &Path,
     elf_path: &Path,
     runs: usize,
 ) -> Result<RunResultWithPerf, String> {
     let mut runner =
-        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {}", e))?;
+        Runner::load(lib_dir, elf_path).map_err(|e| format!("failed to load library: {e}"))?;
 
     // Look up required symbols
     let init_addr = runner
@@ -173,8 +183,8 @@ pub fn run_bench_library(
 
 /// Internal implementation for library-mode benchmarks.
 ///
-/// Calls initialize() once (not timed), then run() N times (timed).
-/// Uses 0 as return address - rv_trap handles it and saves state properly.
+/// Calls `initialize()` once (not timed), then `run()` N times (timed).
+/// Uses 0 as return address - `rv_trap` handles it and saves state properly.
 fn run_bench_library_inner(
     runner: &mut Runner,
     init_addr: u64,
@@ -212,7 +222,7 @@ fn run_bench_library_inner(
         // Run initialize() (not timed)
         runner
             .execute_from(init_addr)
-            .map_err(|e| format!("initialize() failed: {}", e))?;
+            .map_err(|e| format!("initialize() failed: {e}"))?;
 
         // Clear exit flag and reset ra for run()
         runner.clear_exit();
@@ -228,7 +238,7 @@ fn run_bench_library_inner(
 
         let (elapsed, instret_after) = runner
             .execute_from(run_addr)
-            .map_err(|e| format!("run() failed: {}", e))?;
+            .map_err(|e| format!("run() failed: {e}"))?;
 
         if let Some(ref mut group) = perf_group {
             let _ = group.disable();
@@ -241,11 +251,12 @@ fn run_bench_library_inner(
         runner.clear_exit();
     }
 
-    let avg_time = total_time / runs as f64;
-    let avg_instret = total_instret / runs as u64;
-    let mips = (avg_instret as f64 / avg_time) / 1_000_000.0;
+    let runs_u64 = u64::try_from(runs).unwrap_or(u64::MAX);
+    let avg_time = total_time / u64_to_f64(runs_u64);
+    let avg_instret = total_instret / runs_u64;
+    let mips = (u64_to_f64(avg_instret) / avg_time) / 1_000_000.0;
 
-    let perf = perf_group.as_mut().and_then(|g| g.read());
+    let perf = perf_group.as_mut().and_then(crate::perf::PerfGroup::read);
 
     let result = crate::RunResult {
         exit_code: 0,
@@ -259,6 +270,9 @@ fn run_bench_library_inner(
 
 /// Run host binary and time it (for baseline comparison).
 /// Collects perf counters and supports multiple runs for averaging.
+///
+/// # Errors
+/// Returns an error if the host binary is missing or execution fails.
 pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
     if !host_bin.exists() {
         return Err("host binary not found".to_string());
@@ -273,7 +287,9 @@ pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
     let mut total_branch_misses = 0u64;
 
     // Get initial snapshot for delta tracking
-    let mut prev_snapshot = perf_counters.as_mut().map(|c| c.read()).unwrap_or_default();
+    let mut prev_snapshot = perf_counters
+        .as_mut()
+        .map_or_else(Default::default, crate::perf::HostPerfCounters::read);
 
     for _ in 0..runs {
         let start = Instant::now();
@@ -285,7 +301,7 @@ pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-            .map_err(|e| format!("failed to run host: {}", e))?;
+            .map_err(|e| format!("failed to run host: {e}"))?;
 
         if let Some(ref mut counters) = perf_counters {
             let _ = counters.disable();
@@ -309,12 +325,13 @@ pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
         }
     }
 
-    let avg_time = total_time / runs as f64;
+    let runs_u64 = u64::try_from(runs).unwrap_or(u64::MAX);
+    let avg_time = total_time / u64_to_f64(runs_u64);
     let perf = perf_counters.map(|_| PerfCounters {
-        cycles: Some(total_cycles / runs as u64),
-        instructions: Some(total_instructions / runs as u64),
-        branches: Some(total_branches / runs as u64),
-        branch_misses: Some(total_branch_misses / runs as u64),
+        cycles: Some(total_cycles / runs_u64),
+        instructions: Some(total_instructions / runs_u64),
+        branches: Some(total_branches / runs_u64),
+        branch_misses: Some(total_branch_misses / runs_u64),
     });
 
     Ok(HostResult {
@@ -327,20 +344,34 @@ pub fn run_host(host_bin: &Path, runs: usize) -> Result<HostResult, String> {
 // Formatting utilities
 // ============================================================================
 
+fn u64_to_f64(value: u64) -> f64 {
+    let hi = u32::try_from(value >> 32).unwrap_or(u32::MAX);
+    let lo = u32::try_from(value & 0xFFFF_FFFF).unwrap_or(u32::MAX);
+    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+}
+
 /// Format a number with SI suffix (K, M, B).
+#[must_use]
 pub fn format_num(n: u64) -> String {
     if n >= 1_000_000_000 {
-        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+        let whole = n / 1_000_000_000;
+        let frac = (n % 1_000_000_000) / 10_000_000;
+        format!("{whole}.{frac:02}B")
     } else if n >= 1_000_000 {
-        format!("{:.2}M", n as f64 / 1_000_000.0)
+        let whole = n / 1_000_000;
+        let frac = (n % 1_000_000) / 10_000;
+        format!("{whole}.{frac:02}M")
     } else if n >= 1_000 {
-        format!("{:.2}K", n as f64 / 1_000.0)
+        let whole = n / 1_000;
+        let frac = (n % 1_000) / 10;
+        format!("{whole}.{frac:02}K")
     } else {
         n.to_string()
     }
 }
 
-/// Calculate overhead ratio (vm_time / host_time).
+/// Calculate overhead ratio (`vm_time` / `host_time`).
+#[must_use]
 pub fn calc_overhead(vm_time: f64, host_time: f64) -> Option<f64> {
     if host_time > 0.0 {
         Some(vm_time / host_time)
@@ -350,25 +381,26 @@ pub fn calc_overhead(vm_time: f64, host_time: f64) -> Option<f64> {
 }
 
 /// Format overhead as "X.Xx".
+#[must_use]
 pub fn format_overhead(oh: Option<f64>) -> String {
-    oh.map(|v| format!("{:.1}x", v))
-        .unwrap_or_else(|| "-".to_string())
+    oh.map_or_else(|| "-".to_string(), |v| format!("{v:.1}x"))
 }
 
 /// Format IPC value.
+#[must_use]
 pub fn format_ipc(ipc: Option<f64>) -> String {
-    ipc.map(|v| format!("{:.2}", v))
-        .unwrap_or_else(|| "-".to_string())
+    ipc.map_or_else(|| "-".to_string(), |v| format!("{v:.2}"))
 }
 
 /// Format branch miss rate as percentage.
+#[must_use]
 pub fn format_branch_miss(rate: Option<f64>) -> String {
-    rate.map(|v| format!("{:.2}%", v))
-        .unwrap_or_else(|| "-".to_string())
+    rate.map_or_else(|| "-".to_string(), |v| format!("{v:.2}%"))
 }
 
-/// Format speed value with appropriate unit (MIPS or BIPS).
-/// Input is in MIPS (millions of instructions per second).
+/// Format speed value with appropriate unit (`MIPS` or `BIPS`).
+/// Input is in `MIPS` (millions of instructions per second).
+#[must_use]
 pub fn format_speed(mips: f64) -> String {
     if mips <= 0.0 {
         "-".to_string()
@@ -376,33 +408,35 @@ pub fn format_speed(mips: f64) -> String {
         // BIPS = billions of instructions per second
         format!("{:.2} BIPS", mips / 1000.0)
     } else if mips >= 1.0 {
-        format!("{:.0} MIPS", mips)
+        format!("{mips:.0} MIPS")
     } else {
         // Sub-MIPS: show with decimals
-        format!("{:.2} MIPS", mips)
+        format!("{mips:.2} MIPS")
     }
 }
 
 /// Format speed for shell parsing (underscore instead of space).
+#[must_use]
 pub fn format_speed_shell(mips: f64) -> String {
     if mips <= 0.0 {
         "-".to_string()
     } else if mips >= 1000.0 {
         format!("{:.2}_BIPS", mips / 1000.0)
     } else if mips >= 1.0 {
-        format!("{:.0}_MIPS", mips)
+        format!("{mips:.0}_MIPS")
     } else {
-        format!("{:.2}_MIPS", mips)
+        format!("{mips:.2}_MIPS")
     }
 }
 
 /// Format time value with appropriate unit (s, ms, us, ns).
 /// Input is in seconds.
+#[must_use]
 pub fn format_time(secs: f64) -> String {
     if secs <= 0.0 {
         "-".to_string()
     } else if secs >= 1.0 {
-        format!("{:.2}s", secs)
+        format!("{secs:.2}s")
     } else if secs >= 0.001 {
         format!("{:.2}ms", secs * 1000.0)
     } else if secs >= 0.000_001 {
@@ -419,7 +453,7 @@ pub fn format_time(secs: f64) -> String {
 /// Row in a benchmark results table.
 #[derive(Debug, Clone)]
 pub struct TableRow {
-    /// Row label (arch name or "host").
+    /// Row label (arch name or `host`).
     pub label: String,
     /// Instruction count (guest instret), None for host.
     pub instret: Option<u64>,
@@ -429,7 +463,7 @@ pub struct TableRow {
     pub instrs_per_guest: Option<f64>,
     /// Execution time in seconds.
     pub time_secs: Option<f64>,
-    /// Overhead compared to host (vm_time / host_time).
+    /// Overhead compared to host (`vm_time` / `host_time`).
     pub overhead: Option<f64>,
     /// Speed in MIPS (guest MIPS), None for host.
     pub mips: Option<f64>,
@@ -443,12 +477,12 @@ pub struct TableRow {
 
 impl TableRow {
     /// Create a row for the host baseline.
+    #[must_use]
     pub fn host(label: &str, result: &HostResult) -> Self {
-        let (ipc, branch_miss_rate, host_instrs) = result
-            .perf
-            .as_ref()
-            .map(|p| (p.ipc(), p.branch_miss_rate(), p.instructions))
-            .unwrap_or((None, None, None));
+        let (ipc, branch_miss_rate, host_instrs) =
+            result.perf.as_ref().map_or((None, None, None), |p| {
+                (p.ipc(), p.branch_miss_rate(), p.instructions)
+            });
 
         Self {
             label: label.to_string(),
@@ -465,16 +499,17 @@ impl TableRow {
     }
 
     /// Create a row for a VM backend.
+    #[must_use]
     pub fn backend(label: &str, result: &RunResultWithPerf, host_time: Option<f64>) -> Self {
         let overhead = host_time.and_then(|ht| calc_overhead(result.result.time_secs, ht));
-        let (ipc, branch_miss_rate, host_instrs) = result
-            .perf
-            .as_ref()
-            .map(|p| (p.ipc(), p.branch_miss_rate(), p.instructions))
-            .unwrap_or((None, None, None));
+        let (ipc, branch_miss_rate, host_instrs) =
+            result.perf.as_ref().map_or((None, None, None), |p| {
+                (p.ipc(), p.branch_miss_rate(), p.instructions)
+            });
 
         // Calculate host instructions per guest instruction
-        let instrs_per_guest = host_instrs.map(|hi| hi as f64 / result.result.instret as f64);
+        let instrs_per_guest =
+            host_instrs.map(|hi| u64_to_f64(hi) / u64_to_f64(result.result.instret));
 
         Self {
             label: label.to_string(),
@@ -491,6 +526,7 @@ impl TableRow {
     }
 
     /// Create an error row.
+    #[must_use]
     pub fn error(label: &str, error: String) -> Self {
         Self {
             label: label.to_string(),
@@ -508,16 +544,16 @@ impl TableRow {
 }
 
 /// Format host instructions per guest instruction.
+#[must_use]
 pub fn format_instrs_per_guest(ipg: Option<f64>) -> String {
-    ipg.map(|v| format!("{:.1}x", v))
-        .unwrap_or_else(|| "-".to_string())
+    ipg.map_or_else(|| "-".to_string(), |v| format!("{v:.1}x"))
 }
 
 /// Print markdown table header for benchmark results.
 pub fn print_bench_header(name: &str, description: &str, runs: usize) {
-    println!("## {}", name);
+    println!("## {name}");
     println!();
-    println!("*{} | runs: {}*", description, runs);
+    println!("*{description} | runs: {runs}*");
     println!();
     println!(
         "| {:<14} | {:>10} | {:>10} | {:>9} | {:>10} | {:>6} | {:>12} | {:>5} | {:>11} |",
@@ -534,7 +570,7 @@ pub fn print_table_row(row: &TableRow) {
     if let Some(ref err) = row.error {
         // Truncate error to fit in Speed column (12 chars)
         let err_display = if err.len() > 12 {
-            format!("{}...", &err[..9])
+            format!("{err}...", err = &err[..9])
         } else {
             err.clone()
         };
@@ -545,24 +581,12 @@ pub fn print_table_row(row: &TableRow) {
         return;
     }
 
-    let instret = row
-        .instret
-        .map(format_num)
-        .unwrap_or_else(|| "-".to_string());
-    let host_instrs = row
-        .host_instrs
-        .map(format_num)
-        .unwrap_or_else(|| "-".to_string());
+    let instret = row.instret.map_or_else(|| "-".to_string(), format_num);
+    let host_instrs = row.host_instrs.map_or_else(|| "-".to_string(), format_num);
     let instrs_per_guest = format_instrs_per_guest(row.instrs_per_guest);
-    let time = row
-        .time_secs
-        .map(format_time)
-        .unwrap_or_else(|| "-".to_string());
+    let time = row.time_secs.map_or_else(|| "-".to_string(), format_time);
     let overhead = format_overhead(row.overhead);
-    let speed = row
-        .mips
-        .map(format_speed)
-        .unwrap_or_else(|| "-".to_string());
+    let speed = row.mips.map_or_else(|| "-".to_string(), format_speed);
     let ipc = format_ipc(row.ipc);
     let branch_miss = format_branch_miss(row.branch_miss_rate);
 
