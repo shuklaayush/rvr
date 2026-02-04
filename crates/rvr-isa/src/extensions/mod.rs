@@ -80,14 +80,15 @@ use crate::{
 };
 use std::collections::HashMap;
 
-/// Get instruction mnemonic from packed OpId (ext << 8 | idx).
+/// Get instruction mnemonic from packed `OpId` (ext << 8 | idx).
 ///
 /// Returns uppercase mnemonic for use in comments.
+#[must_use]
 pub fn op_mnemonic(packed: u16) -> &'static str {
-    let ext = (packed >> 8) as u8;
+    let ext = u8::try_from(packed >> 8).unwrap_or(0);
     let opid = OpId {
         ext,
-        idx: packed as u8,
+        idx: u8::try_from(packed & 0xFF).unwrap_or(0),
     };
     match ext {
         EXT_I => base_mnemonic(opid),
@@ -111,7 +112,7 @@ use rvr_ir::{InstrIR, Terminator, Xlen};
 
 /// Override trait for intercepting instruction lifting.
 ///
-/// Allows custom handling of specific instructions by OpId.
+/// Allows custom handling of specific instructions by `OpId`.
 /// The override receives the original instruction and a default lift function.
 pub trait InstructionOverride<X: Xlen>: Send + Sync {
     /// Lift instruction, with access to the default lift implementation.
@@ -134,7 +135,7 @@ pub trait InstructionExtension<X: Xlen>: Send + Sync {
     /// Human-readable extension name (e.g., "I", "M", "C").
     fn name(&self) -> &'static str;
 
-    /// Extension ID constant (EXT_I, EXT_M, etc.).
+    /// Extension ID constant (`EXT_I`, `EXT_M`, etc.).
     fn ext_id(&self) -> u8;
 
     /// Try to decode a 16-bit (compressed) instruction.
@@ -173,7 +174,7 @@ pub trait InstructionExtension<X: Xlen>: Send + Sync {
     /// Disassembly string for debugging.
     fn disasm(&self, instr: &DecodedInstr<X>) -> String;
 
-    /// Get metadata for an instruction. Returns None for unknown OpIds.
+    /// Get metadata for an instruction. Returns None for unknown `OpIds`.
     fn op_info(&self, _opid: OpId) -> Option<OpInfo> {
         None
     }
@@ -184,7 +185,7 @@ pub trait InstructionExtension<X: Xlen>: Send + Sync {
 /// Chains multiple extensions and dispatches decode/lift/disasm to the appropriate one.
 /// Extensions are tried in order; C extension should be first to handle compressed instructions.
 ///
-/// Supports per-OpId overrides for custom instruction handling.
+/// Supports per-`OpId` overrides for custom instruction handling.
 ///
 /// # Building a Registry
 ///
@@ -225,6 +226,7 @@ pub struct ExtensionRegistry<X: Xlen> {
 
 impl<X: Xlen> ExtensionRegistry<X> {
     /// Create a new registry with the given extensions.
+    #[must_use]
     pub fn new(extensions: Vec<Box<dyn InstructionExtension<X>>>) -> Self {
         Self {
             extensions,
@@ -243,6 +245,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     ///     .with_m()    // Integer multiply/divide
     ///     .with_c();   // Compressed instructions
     /// ```
+    #[must_use]
     pub fn base() -> Self {
         Self {
             extensions: vec![Box::new(BaseExtension)],
@@ -256,6 +259,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Includes: I, M, A, C, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond.
     ///
     /// Order: C (compressed first), then I, M, A, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond.
+    #[must_use]
     pub fn standard() -> Self {
         Self::base()
             .with_c() // C first (handles 16-bit instructions)
@@ -273,6 +277,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Create an empty registry (no extensions).
     ///
     /// Useful for testing or building a completely custom extension set.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             extensions: Vec::new(),
@@ -289,6 +294,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     ///
     /// Instructions: MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU,
     /// and W variants for RV64.
+    #[must_use]
     pub fn with_m(self) -> Self {
         self.with_extension(MExtension)
     }
@@ -296,6 +302,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add A extension (atomic operations).
     ///
     /// Instructions: LR.W, SC.W, AMO*.W, and D variants for RV64.
+    #[must_use]
     pub fn with_a(self) -> Self {
         self.with_extension(AExtension)
     }
@@ -306,6 +313,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// compressed instructions are decoded before 32-bit decoders see them.
     ///
     /// Instructions: C.LW, C.SW, C.ADDI, C.JAL, C.J, etc.
+    #[must_use]
     pub fn with_c(mut self) -> Self {
         // Insert C at the front for correct decode order
         self.extensions.insert(0, Box::new(CExtension));
@@ -315,6 +323,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add Zicsr extension (CSR instructions).
     ///
     /// Instructions: CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI.
+    #[must_use]
     pub fn with_zicsr(self) -> Self {
         self.with_extension(ZicsrExtension)
     }
@@ -322,6 +331,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add Zifencei extension (instruction-fetch fence).
     ///
     /// Instructions: FENCE.I.
+    #[must_use]
     pub fn with_zifencei(self) -> Self {
         self.with_extension(ZifenceiExtension)
     }
@@ -329,6 +339,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add Zba extension (address generation).
     ///
     /// Instructions: SH1ADD, SH2ADD, SH3ADD, ADD.UW, SH*ADD.UW, SLLI.UW.
+    #[must_use]
     pub fn with_zba(self) -> Self {
         self.with_extension(ZbaExtension)
     }
@@ -337,6 +348,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     ///
     /// Instructions: ANDN, ORN, XNOR, CLZ, CTZ, CPOP, MAX, MIN, SEXT, ZEXT,
     /// ROL, ROR, ORC.B, REV8.
+    #[must_use]
     pub fn with_zbb(self) -> Self {
         self.with_extension(ZbbExtension)
     }
@@ -344,6 +356,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add Zbs extension (single-bit operations).
     ///
     /// Instructions: BCLR, BEXT, BINV, BSET and immediate variants.
+    #[must_use]
     pub fn with_zbs(self) -> Self {
         self.with_extension(ZbsExtension)
     }
@@ -351,6 +364,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add Zbkb extension (bit manipulation for cryptography).
     ///
     /// Instructions: BREV8, PACK, PACKH, PACKW, ZIP, UNZIP.
+    #[must_use]
     pub fn with_zbkb(self) -> Self {
         self.with_extension(ZbkbExtension)
     }
@@ -358,6 +372,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Add Zicond extension (conditional operations).
     ///
     /// Instructions: CZERO.EQZ, CZERO.NEZ.
+    #[must_use]
     pub fn with_zicond(self) -> Self {
         self.with_extension(ZicondExtension)
     }
@@ -370,15 +385,17 @@ impl<X: Xlen> ExtensionRegistry<X> {
     ///
     /// Extensions are appended to the end of the decode chain.
     /// For the C extension, use `with_c()` which inserts at the front.
+    #[must_use]
     pub fn with_extension(mut self, ext: impl InstructionExtension<X> + 'static) -> Self {
         self.extensions.push(Box::new(ext));
         self
     }
 
-    /// Register an override for a specific OpId.
+    /// Register an override for a specific `OpId`.
     ///
-    /// When the given OpId is lifted, the override's `lift()` method is called
+    /// When the given `OpId` is lifted, the override's `lift()` method is called
     /// instead of the standard extension lift.
+    #[must_use]
     pub fn with_override(
         mut self,
         opid: OpId,
@@ -389,6 +406,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     }
 
     /// Register multiple overrides at once.
+    #[must_use]
     pub fn with_overrides(
         mut self,
         overrides: HashMap<OpId, Box<dyn InstructionOverride<X>>>,
@@ -400,7 +418,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Set the syscall handler for ECALL instructions.
     ///
     /// The syscall handler is called when an ECALL instruction is lifted,
-    /// unless an explicit override for OP_ECALL is registered.
+    /// unless an explicit override for `OP_ECALL` is registered.
     ///
     /// Default: `RiscvTestsHandler` (exits with a0 as exit code).
     ///
@@ -413,6 +431,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// let registry = ExtensionRegistry::<Rv64>::standard()
     ///     .with_syscall_handler(LinuxHandler::default());
     /// ```
+    #[must_use]
     pub fn with_syscall_handler(mut self, handler: impl SyscallHandler<X> + 'static) -> Self {
         self.syscall_handler = Box::new(handler);
         self
@@ -420,11 +439,13 @@ impl<X: Xlen> ExtensionRegistry<X> {
 
     /// Check if there are any overrides registered.
     #[inline]
+    #[must_use]
     pub fn has_overrides(&self) -> bool {
         !self.overrides.is_empty()
     }
 
     /// Get all registered extensions.
+    #[must_use]
     pub fn extensions(&self) -> &[Box<dyn InstructionExtension<X>>] {
         &self.extensions
     }
@@ -442,7 +463,7 @@ impl<X: Xlen> ExtensionRegistry<X> {
     /// Lift an instruction using the appropriate extension.
     ///
     /// Order of precedence:
-    /// 1. Explicit override for the OpId (highest priority)
+    /// 1. Explicit override for the `OpId` (highest priority)
     /// 2. Syscall handler for ECALL instructions
     /// 3. Default extension lift
     pub fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
@@ -493,9 +514,10 @@ impl<X: Xlen> ExtensionRegistry<X> {
         format!("??? (ext={})", instr.opid.ext)
     }
 
-    /// Get metadata for an instruction by OpId.
+    /// Get metadata for an instruction by `OpId`.
     ///
-    /// Tries all extensions since some extensions (like Zicsr) handle multiple ext_ids.
+    /// Tries all extensions since some extensions (like Zicsr) handle multiple `ext_ids`.
+    #[must_use]
     pub fn op_info(&self, opid: OpId) -> Option<OpInfo> {
         for ext in &self.extensions {
             if let Some(info) = ext.op_info(opid) {
@@ -813,11 +835,7 @@ mod tests {
             }
         }
 
-        let override_impl = std::sync::Arc::new(PassthroughOverride {
-            called: std::sync::atomic::AtomicBool::new(false),
-        });
-
-        // Need to create a wrapper that implements InstructionOverride
+        // Wrapper that implements InstructionOverride for Arc.
         struct ArcWrapper(std::sync::Arc<PassthroughOverride>);
         impl InstructionOverride<Rv64> for ArcWrapper {
             fn lift(
@@ -828,6 +846,10 @@ mod tests {
                 self.0.lift(instr, default)
             }
         }
+
+        let override_impl = std::sync::Arc::new(PassthroughOverride {
+            called: std::sync::atomic::AtomicBool::new(false),
+        });
 
         let registry = ExtensionRegistry::<Rv64>::standard()
             .with_override(OP_ADDI, ArcWrapper(override_impl.clone()));

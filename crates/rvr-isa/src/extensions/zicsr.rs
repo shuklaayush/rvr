@@ -31,7 +31,8 @@ pub const CSR_MIMPID: u16 = 0xF13;
 pub const CSR_MHARTID: u16 = 0xF14;
 
 /// Get the mnemonic for a Zicsr instruction.
-pub fn zicsr_mnemonic(opid: OpId) -> &'static str {
+#[must_use]
+pub const fn zicsr_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
         0 => "csrrw",
         1 => "csrrs",
@@ -44,7 +45,8 @@ pub fn zicsr_mnemonic(opid: OpId) -> &'static str {
 }
 
 /// Get CSR name from address.
-pub fn csr_name(csr: u16) -> &'static str {
+#[must_use]
+pub const fn csr_name(csr: u16) -> &'static str {
     match csr {
         0xC00 => "cycle",
         0xC01 => "time",
@@ -131,7 +133,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
                     imm
                 )
             }
-            _ => format!("{} <?>", mnemonic),
+            _ => format!("{mnemonic} <?>"),
         }
     }
 
@@ -140,7 +142,7 @@ impl<X: Xlen> InstructionExtension<X> for ZicsrExtension {
     }
 }
 
-/// Table-driven OpInfo for Zicsr extension.
+/// Table-driven `OpInfo` for Zicsr extension.
 const OP_INFO_ZICSR: &[OpInfo] = &[
     OpInfo {
         opid: OP_CSRRW,
@@ -250,7 +252,10 @@ fn lift_csrrwi<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(*rd, Expr::csr(*csr)));
             }
-            stmts.push(Stmt::write_csr(*csr, Expr::imm(X::from_u64(*imm as u64))));
+            stmts.push(Stmt::write_csr(
+                *csr,
+                Expr::imm(X::from_u64(u64::from(*imm))),
+            ));
             (stmts, Terminator::Fall { target: None })
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -268,7 +273,7 @@ fn lift_csrrsi<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *imm != 0 {
                 stmts.push(Stmt::write_csr(
                     *csr,
-                    Expr::or(old_val, Expr::imm(X::from_u64(*imm as u64))),
+                    Expr::or(old_val, Expr::imm(X::from_u64(u64::from(*imm)))),
                 ));
             }
             (stmts, Terminator::Fall { target: None })
@@ -288,7 +293,7 @@ fn lift_csrrci<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             if *imm != 0 {
                 stmts.push(Stmt::write_csr(
                     *csr,
-                    Expr::and(old_val, Expr::not(Expr::imm(X::from_u64(*imm as u64)))),
+                    Expr::and(old_val, Expr::not(Expr::imm(X::from_u64(u64::from(*imm))))),
                 ));
             }
             (stmts, Terminator::Fall { target: None })

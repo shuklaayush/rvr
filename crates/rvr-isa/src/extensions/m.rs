@@ -27,7 +27,8 @@ pub const OP_REMW: OpId = OpId::new(EXT_M, 11);
 pub const OP_REMUW: OpId = OpId::new(EXT_M, 12);
 
 /// Get the mnemonic for an M extension instruction.
-pub fn m_mnemonic(opid: OpId) -> &'static str {
+#[must_use]
+pub const fn m_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
         0 => "mul",
         1 => "mulh",
@@ -126,7 +127,7 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
                     reg_name(*rs2)
                 )
             }
-            _ => format!("{} <?>", mnemonic),
+            _ => format!("{mnemonic} <?>"),
         }
     }
 
@@ -135,7 +136,7 @@ impl<X: Xlen> InstructionExtension<X> for MExtension {
     }
 }
 
-/// Table-driven OpInfo for M extension.
+/// Table-driven `OpInfo` for M extension.
 const OP_INFO_M: &[OpInfo] = &[
     OpInfo {
         opid: OP_MUL,

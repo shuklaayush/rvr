@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstrArgs, reg_name};
 
 pub(super) fn format_c_instr(mnemonic: &str, args: &InstrArgs, opid: crate::OpId) -> String {
     match args {
@@ -14,16 +14,21 @@ pub(super) fn format_c_instr(mnemonic: &str, args: &InstrArgs, opid: crate::OpId
             format!("{} {}, {}", mnemonic, reg_name(*rs2), imm)
         }
         InstrArgs::U { rd, imm } => {
-            format!("{} {}, {:#x}", mnemonic, reg_name(*rd), (*imm as u32) >> 12)
+            format!(
+                "{} {}, {:#x}",
+                mnemonic,
+                reg_name(*rd),
+                imm.cast_unsigned() >> 12
+            )
         }
         InstrArgs::J { rd: _, imm } => {
-            format!("{} {}", mnemonic, imm)
+            format!("{mnemonic} {imm}")
         }
         InstrArgs::B { rs1, rs2: _, imm } => {
             format!("{} {}, {}", mnemonic, reg_name(*rs1), imm)
         }
         InstrArgs::None => mnemonic.to_string(),
-        _ => format!("{} <?>", mnemonic),
+        _ => format!("{mnemonic} <?>"),
     }
 }
 

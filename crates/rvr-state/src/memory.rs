@@ -14,10 +14,10 @@ pub const GUARD_SIZE: usize = 1 << 14;
 
 /// Get flags for fixed-address mmap that fails if address is already mapped.
 ///
-/// Uses MAP_FIXED_NOREPLACE on Linux (safer - returns EEXIST if address is taken).
-/// Falls back to MAP_FIXED on macOS/BSD (will unmap existing mappings).
+/// Uses `MAP_FIXED_NOREPLACE` on Linux (safer - returns EEXIST if address is taken).
+/// Falls back to `MAP_FIXED` on macOS/BSD (will unmap existing mappings).
 #[cfg(target_os = "linux")]
-fn map_fixed_flags() -> MapFlags {
+const fn map_fixed_flags() -> MapFlags {
     MapFlags::MAP_FIXED_NOREPLACE
 }
 
@@ -44,7 +44,7 @@ pub enum MemoryError {
 
 /// Memory region with guard pages.
 ///
-/// Allocates `[GUARD][MEMORY][GUARD]` with the guard pages protected as PROT_NONE.
+/// Allocates `[GUARD][MEMORY][GUARD]` with the guard pages protected as `PROT_NONE`.
 /// Any access to guard pages will cause a segfault, catching buffer overflows.
 pub struct GuardedMemory {
     /// Pointer to the start of the entire region (including first guard).
@@ -70,13 +70,17 @@ impl GuardedMemory {
             return Err(MemoryError::InvalidSize(memory_size));
         }
 
-        let total_size = memory_size + 2 * GUARD_SIZE;
+        let total_size = memory_size
+            .checked_add(2 * GUARD_SIZE)
+            .ok_or(MemoryError::InvalidSize(memory_size))?;
+        let total_size_nz =
+            NonZeroUsize::new(total_size).ok_or(MemoryError::InvalidSize(memory_size))?;
 
         // Allocate entire region as PROT_NONE
         let region = unsafe {
             mmap_anonymous(
                 None,
-                NonZeroUsize::new(total_size).unwrap(),
+                total_size_nz,
                 ProtFlags::PROT_NONE,
                 MapFlags::MAP_PRIVATE | MapFlags::MAP_NORESERVE,
             )?
@@ -84,7 +88,13 @@ impl GuardedMemory {
 
         // Make middle portion readable/writable
         let memory_start = unsafe {
-            NonNull::new_unchecked((region.as_ptr() as *mut u8).add(GUARD_SIZE) as *mut c_void)
+            NonNull::new_unchecked(
+                region
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(GUARD_SIZE)
+                    .cast::<c_void>(),
+            )
         };
         unsafe {
             mprotect(
@@ -102,13 +112,17 @@ impl GuardedMemory {
     }
 
     /// Create with default memory size (4GB).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if memory allocation fails.
     pub fn with_default_size() -> Result<Self, MemoryError> {
         Self::new(DEFAULT_MEMORY_SIZE)
     }
 
     /// Allocate memory at a specific fixed address.
     ///
-    /// Uses MAP_FIXED_NOREPLACE to ensure the address is available.
+    /// Uses `MAP_FIXED_NOREPLACE` to ensure the address is available.
     /// The usable memory starts at `fixed_addr`, with a guard page before it.
     ///
     /// # Arguments
@@ -127,17 +141,22 @@ impl GuardedMemory {
             return Err(MemoryError::InvalidSize(memory_size));
         }
 
-        let total_size = memory_size + 2 * GUARD_SIZE;
+        let total_size = memory_size
+            .checked_add(2 * GUARD_SIZE)
+            .ok_or(MemoryError::InvalidSize(memory_size))?;
+        let total_size_nz =
+            NonZeroUsize::new(total_size).ok_or(MemoryError::InvalidSize(memory_size))?;
 
         // Region starts at (fixed_addr - GUARD_SIZE) to place usable memory at fixed_addr
-        let region_start = fixed_addr.saturating_sub(GUARD_SIZE as u64) as usize;
+        let region_start = usize::try_from(fixed_addr.saturating_sub(GUARD_SIZE as u64))
+            .map_err(|_| MemoryError::InvalidSize(memory_size))?;
 
         // Use MAP_FIXED_NOREPLACE to fail if address is already mapped
         // This is safer than MAP_FIXED which would silently unmap existing mappings
         let region = unsafe {
             mmap_anonymous(
-                NonZeroUsize::new(region_start),
-                NonZeroUsize::new(total_size).unwrap(),
+                Some(NonZeroUsize::new(region_start).ok_or(MemoryError::InvalidSize(memory_size))?),
+                total_size_nz,
                 ProtFlags::PROT_NONE,
                 MapFlags::MAP_PRIVATE | MapFlags::MAP_NORESERVE | map_fixed_flags(),
             )
@@ -152,7 +171,13 @@ impl GuardedMemory {
 
         // Make middle portion readable/writable
         let memory_start = unsafe {
-            NonNull::new_unchecked((region.as_ptr() as *mut u8).add(GUARD_SIZE) as *mut c_void)
+            NonNull::new_unchecked(
+                region
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(GUARD_SIZE)
+                    .cast::<c_void>(),
+            )
         };
         unsafe {
             mprotect(
@@ -170,17 +195,19 @@ impl GuardedMemory {
     }
 
     /// Returns pointer to usable memory (after first guard page).
-    pub fn as_ptr(&self) -> *mut u8 {
-        unsafe { (self.region.as_ptr() as *mut u8).add(GUARD_SIZE) }
+    #[must_use]
+    pub const fn as_ptr(&self) -> *mut u8 {
+        unsafe { self.region.as_ptr().cast::<u8>().add(GUARD_SIZE) }
     }
 
     /// Returns the size of the usable memory region.
-    pub fn size(&self) -> usize {
+    #[must_use]
+    pub const fn size(&self) -> usize {
         self.memory_size
     }
 
     /// Zero the entire memory region.
-    pub fn clear(&mut self) {
+    pub const fn clear(&mut self) {
         unsafe {
             std::ptr::write_bytes(self.as_ptr(), 0, self.memory_size);
         }
@@ -203,6 +230,7 @@ impl GuardedMemory {
     /// # Safety
     ///
     /// Caller must ensure `offset < self.size()`.
+    #[must_use]
     pub unsafe fn read_u8(&self, offset: usize) -> u8 {
         debug_assert!(offset < self.memory_size);
         unsafe { *self.as_ptr().add(offset) }
@@ -240,6 +268,10 @@ pub struct FixedMemory {
 
 impl FixedMemory {
     /// Allocate memory at a specific fixed address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if mmap fails or the fixed address is unavailable.
     pub fn new(fixed_addr: u64, size: usize) -> Result<Self, MemoryError> {
         use nix::errno::Errno;
         use std::num::NonZeroUsize;
@@ -248,12 +280,14 @@ impl FixedMemory {
             return Err(MemoryError::InvalidSize(size));
         }
 
-        let addr = fixed_addr as usize;
+        let addr = usize::try_from(fixed_addr).map_err(|_| MemoryError::InvalidSize(size))?;
+        let addr_nz = NonZeroUsize::new(addr).ok_or(MemoryError::InvalidSize(size))?;
+        let size_nz = NonZeroUsize::new(size).ok_or(MemoryError::InvalidSize(size))?;
 
         let region = unsafe {
             mmap_anonymous(
-                NonZeroUsize::new(addr),
-                NonZeroUsize::new(size).unwrap(),
+                Some(addr_nz),
+                size_nz,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_PRIVATE | map_fixed_flags(),
             )
@@ -270,12 +304,14 @@ impl FixedMemory {
     }
 
     /// Returns pointer to the memory region.
-    pub fn as_ptr(&self) -> *mut u8 {
-        self.addr.as_ptr() as *mut u8
+    #[must_use]
+    pub const fn as_ptr(&self) -> *mut u8 {
+        self.addr.as_ptr().cast::<u8>()
     }
 
     /// Returns the size of the memory region.
-    pub fn size(&self) -> usize {
+    #[must_use]
+    pub const fn size(&self) -> usize {
         self.size
     }
 }

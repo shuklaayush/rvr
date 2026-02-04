@@ -42,8 +42,8 @@ pub enum Stmt<X: Xlen> {
     /// Conditional execution.
     If {
         cond: Expr<X>,
-        then_stmts: Vec<Stmt<X>>,
-        else_stmts: Vec<Stmt<X>>,
+        then_stmts: Vec<Self>,
+        else_stmts: Vec<Self>,
     },
     /// External function call (for side effects).
     ExternCall { fn_name: String, args: Vec<Expr<X>> },
@@ -51,7 +51,7 @@ pub enum Stmt<X: Xlen> {
 
 impl<X: Xlen> Stmt<X> {
     /// Create a register write statement.
-    pub fn write_reg(reg: u8, value: Expr<X>) -> Self {
+    pub const fn write_reg(reg: u8, value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::Reg(reg),
             value,
@@ -59,7 +59,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a memory write statement with base register and constant offset.
-    pub fn write_mem(base: Expr<X>, offset: i16, value: Expr<X>, width: u8) -> Self {
+    pub const fn write_mem(base: Expr<X>, offset: i16, value: Expr<X>, width: u8) -> Self {
         Self::Write {
             target: WriteTarget::Mem {
                 base,
@@ -71,7 +71,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a memory write statement with computed address (offset = 0).
-    pub fn write_mem_addr(addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
+    pub const fn write_mem_addr(addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
         Self::Write {
             target: WriteTarget::Mem {
                 base: addr,
@@ -83,7 +83,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a CSR write statement.
-    pub fn write_csr(csr: u16, value: Expr<X>) -> Self {
+    pub const fn write_csr(csr: u16, value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::Csr(csr),
             value,
@@ -91,7 +91,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a PC write statement.
-    pub fn write_pc(value: Expr<X>) -> Self {
+    pub const fn write_pc(value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::Pc,
             value,
@@ -99,7 +99,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a temporary variable write.
-    pub fn write_temp(idx: u8, value: Expr<X>) -> Self {
+    pub const fn write_temp(idx: u8, value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::Temp(idx),
             value,
@@ -107,7 +107,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a reservation address write.
-    pub fn write_res_addr(value: Expr<X>) -> Self {
+    pub const fn write_res_addr(value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::ResAddr,
             value,
@@ -115,7 +115,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create a reservation valid flag write.
-    pub fn write_res_valid(value: Expr<X>) -> Self {
+    pub const fn write_res_valid(value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::ResValid,
             value,
@@ -123,7 +123,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create an exit flag write.
-    pub fn write_exited(value: Expr<X>) -> Self {
+    pub const fn write_exited(value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::Exited,
             value,
@@ -131,7 +131,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create an exit code write.
-    pub fn write_exit_code(value: Expr<X>) -> Self {
+    pub const fn write_exit_code(value: Expr<X>) -> Self {
         Self::Write {
             target: WriteTarget::ExitCode,
             value,
@@ -139,6 +139,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create an external call statement.
+    #[must_use]
     pub fn extern_call(fn_name: &str, args: Vec<Expr<X>>) -> Self {
         Self::ExternCall {
             fn_name: fn_name.to_string(),
@@ -147,7 +148,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create an if statement.
-    pub fn if_then(cond: Expr<X>, then_stmts: Vec<Self>) -> Self {
+    pub const fn if_then(cond: Expr<X>, then_stmts: Vec<Self>) -> Self {
         Self::If {
             cond,
             then_stmts,
@@ -156,7 +157,7 @@ impl<X: Xlen> Stmt<X> {
     }
 
     /// Create an if-else statement.
-    pub fn if_then_else(cond: Expr<X>, then_stmts: Vec<Self>, else_stmts: Vec<Self>) -> Self {
+    pub const fn if_then_else(cond: Expr<X>, then_stmts: Vec<Self>, else_stmts: Vec<Self>) -> Self {
         Self::If {
             cond,
             then_stmts,

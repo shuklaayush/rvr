@@ -17,7 +17,7 @@ pub struct IRBuilder<X: Xlen> {
 
 impl<X: Xlen> IRBuilder<X> {
     /// Create a new IR builder.
-    pub fn new(pc: X::Reg, size: u8) -> Self {
+    pub const fn new(pc: X::Reg, size: u8) -> Self {
         Self {
             pc,
             size,
@@ -27,19 +27,22 @@ impl<X: Xlen> IRBuilder<X> {
         }
     }
 
-    /// Set packed OpId (ext << 8 | idx) for tracing.
-    pub fn with_op(mut self, op: u16) -> Self {
+    /// Set packed `OpId` (ext << 8 | idx) for tracing.
+    #[must_use]
+    pub const fn with_op(mut self, op: u16) -> Self {
         self.op = op;
         self
     }
 
     /// Set raw instruction bytes for tracing.
-    pub fn with_raw(mut self, raw: u32) -> Self {
+    #[must_use]
+    pub const fn with_raw(mut self, raw: u32) -> Self {
         self.raw = raw;
         self
     }
 
     /// Write to a register.
+    #[must_use]
     pub fn write_reg(mut self, rd: u8, value: Expr<X>) -> Self {
         if rd != 0 {
             self.statements.push(Stmt::write_reg(rd, value));
@@ -48,6 +51,7 @@ impl<X: Xlen> IRBuilder<X> {
     }
 
     /// Write to memory with base register and constant offset.
+    #[must_use]
     pub fn write_mem(mut self, base: Expr<X>, offset: i16, value: Expr<X>, width: u8) -> Self {
         self.statements
             .push(Stmt::write_mem(base, offset, value, width));
@@ -55,6 +59,7 @@ impl<X: Xlen> IRBuilder<X> {
     }
 
     /// Write to memory with computed address (offset = 0).
+    #[must_use]
     pub fn write_mem_addr(mut self, addr: Expr<X>, value: Expr<X>, width: u8) -> Self {
         self.statements
             .push(Stmt::write_mem_addr(addr, value, width));
@@ -62,33 +67,39 @@ impl<X: Xlen> IRBuilder<X> {
     }
 
     /// Write to a CSR.
+    #[must_use]
     pub fn write_csr(mut self, csr: u16, value: Expr<X>) -> Self {
         self.statements.push(Stmt::write_csr(csr, value));
         self
     }
 
     /// Add an external call (for side effects).
+    #[must_use]
     pub fn extern_call(mut self, fn_name: &str, args: Vec<Expr<X>>) -> Self {
         self.statements.push(Stmt::extern_call(fn_name, args));
         self
     }
 
     /// Call external function and store result in rd.
+    #[must_use]
     pub fn extern_call_to_reg(mut self, rd: u8, fn_name: &str, args: Vec<Expr<X>>) -> Self {
         if rd != 0 {
-            let call = Expr::extern_call(fn_name, args, X::REG_BYTES as u8);
+            let width = u8::try_from(X::REG_BYTES).unwrap_or(0);
+            let call = Expr::extern_call(fn_name, args, width);
             self.statements.push(Stmt::write_reg(rd, call));
         }
         self
     }
 
     /// Add a conditional statement.
+    #[must_use]
     pub fn if_then(mut self, cond: Expr<X>, then_stmts: Vec<Stmt<X>>) -> Self {
         self.statements.push(Stmt::if_then(cond, then_stmts));
         self
     }
 
     /// Add a raw statement.
+    #[must_use]
     pub fn stmt(mut self, stmt: Stmt<X>) -> Self {
         self.statements.push(stmt);
         self
@@ -96,7 +107,7 @@ impl<X: Xlen> IRBuilder<X> {
 
     /// Build with fall-through terminator.
     pub fn build_fall(self) -> InstrIR<X> {
-        let next_pc = X::from_u64(X::to_u64(self.pc) + self.size as u64);
+        let next_pc = X::from_u64(X::to_u64(self.pc) + u64::from(self.size));
         InstrIR::new(
             self.pc,
             self.size,
@@ -199,11 +210,11 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let ir = IRBuilder::<Rv64>::new(0x80000000u64, 4)
+        let ir = IRBuilder::<Rv64>::new(0x8000_0000_u64, 4)
             .write_reg(1, Expr::imm(42))
             .build_fall();
 
-        assert_eq!(ir.pc, 0x80000000);
+        assert_eq!(ir.pc, 0x8000_0000);
         assert_eq!(ir.size, 4);
         assert_eq!(ir.statements.len(), 1);
         assert!(ir.terminator.is_fall());

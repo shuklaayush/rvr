@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstrArgs, reg_name};
 
 pub(super) fn format_instr(mnemonic: &str, args: &InstrArgs) -> String {
     match args {
@@ -49,12 +49,17 @@ pub(super) fn format_instr(mnemonic: &str, args: &InstrArgs) -> String {
             )
         }
         InstrArgs::U { rd, imm } => {
-            format!("{} {}, {:#x}", mnemonic, reg_name(*rd), (*imm as u32) >> 12)
+            format!(
+                "{} {}, {:#x}",
+                mnemonic,
+                reg_name(*rd),
+                imm.cast_unsigned() >> 12
+            )
         }
         InstrArgs::J { rd, imm } => {
             format!("{} {}, {}", mnemonic, reg_name(*rd), imm)
         }
         InstrArgs::None => mnemonic.to_string(),
-        _ => format!("{} <?>", mnemonic),
+        _ => format!("{mnemonic} <?>"),
     }
 }

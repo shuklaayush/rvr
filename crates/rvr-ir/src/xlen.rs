@@ -86,12 +86,12 @@ impl Xlen for Rv32 {
 
     #[inline]
     fn from_u64(val: u64) -> u32 {
-        val as u32
+        u32::try_from(val).expect("RV32 value fits in u32")
     }
 
     #[inline]
     fn to_u64(val: u32) -> u64 {
-        val as u64
+        u64::from(val)
     }
 }
 
@@ -105,12 +105,12 @@ impl Xlen for Rv64 {
 
     #[inline]
     fn sign_extend_32(val: u32) -> u64 {
-        val as i32 as i64 as u64
+        i64::from(val.cast_signed()).cast_unsigned()
     }
 
     #[inline]
     fn truncate_to_32(val: u64) -> u32 {
-        val as u32
+        u32::try_from(val).expect("RV32 value fits in u32")
     }
 
     #[inline]
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(Rv32::VALUE, 32);
         assert_eq!(Rv32::SHIFT_MASK, 0x1F);
         assert_eq!(Rv32::REG_BYTES, 4);
-        assert_eq!(Rv32::sign_extend_32(0xFFFFFFFF), 0xFFFFFFFF);
+        assert_eq!(Rv32::sign_extend_32(0xFFFF_FFFF), 0xFFFF_FFFF);
     }
 
     #[test]
@@ -142,8 +142,8 @@ mod tests {
         assert_eq!(Rv64::SHIFT_MASK, 0x3F);
         assert_eq!(Rv64::REG_BYTES, 8);
         // Sign extension: 0xFFFFFFFF (-1 as i32) becomes 0xFFFFFFFFFFFFFFFF
-        assert_eq!(Rv64::sign_extend_32(0xFFFFFFFF), 0xFFFFFFFFFFFFFFFF);
+        assert_eq!(Rv64::sign_extend_32(0xFFFF_FFFF), 0xFFFF_FFFF_FFFF_FFFF);
         // Positive value stays the same
-        assert_eq!(Rv64::sign_extend_32(0x7FFFFFFF), 0x7FFFFFFF);
+        assert_eq!(Rv64::sign_extend_32(0x7FFF_FFFF), 0x7FFF_FFFF);
     }
 }

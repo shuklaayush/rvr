@@ -2,8 +2,11 @@
 
 use rvr_isa::Xlen;
 
-use crate::constants::*;
-use crate::header::*;
+use crate::constants::{
+    EF_RISCV_RVC, EF_RISCV_RVE, ELF_CLASS_32, ELF_CLASS_64, ELF_DATA_LSB, ELF_MAGIC, SHF_ALLOC,
+    SHT_NOBITS, SHT_PROGBITS, SHT_SYMTAB, STT_FUNC,
+};
+use crate::header::{ElfHeader, LoadedSection, ProgramHeader, SectionHeader, Symbol};
 use crate::{ElfError, Result};
 
 /// Read little-endian u16 from bytes.
@@ -50,6 +53,10 @@ pub struct ElfFile<X: Xlen> {
 
 impl<X: Xlen> ElfFile<X> {
     /// Parse ELF file from raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ELF header, sections, or program headers are invalid.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let header = Self::parse_header(data)?;
 
@@ -89,7 +96,7 @@ impl<X: Xlen> ElfFile<X> {
 
     /// Look up a function symbol by name.
     ///
-    /// Only returns symbols with STT_FUNC type.
+    /// Only returns symbols with `STT_FUNC` type.
     pub fn lookup_function(&self, name: &str) -> Option<u64> {
         self.symbols
             .iter()
@@ -98,12 +105,12 @@ impl<X: Xlen> ElfFile<X> {
     }
 
     /// Check if ELF uses the E (embedded) extension with 16 registers.
-    pub fn is_rve(&self) -> bool {
+    pub const fn is_rve(&self) -> bool {
         (self.e_flags & EF_RISCV_RVE) != 0
     }
 
     /// Check if ELF uses the C (compressed) extension.
-    pub fn is_rvc(&self) -> bool {
+    pub const fn is_rvc(&self) -> bool {
         (self.e_flags & EF_RISCV_RVC) != 0
     }
 
@@ -133,11 +140,12 @@ impl<X: Xlen> ElfFile<X> {
             return Err(ElfError::NotLittleEndian);
         }
 
-        if X::VALUE == 64 {
+        let header = if X::VALUE == 64 {
             Self::parse_header_64(data, magic, class, data_encoding, version, abi, abi_version)
         } else {
             Self::parse_header_32(data, magic, class, data_encoding, version, abi, abi_version)
-        }
+        };
+        Ok(header)
     }
 
     fn parse_header_32(
@@ -148,17 +156,17 @@ impl<X: Xlen> ElfFile<X> {
         version: u8,
         abi: u8,
         abi_version: u8,
-    ) -> Result<ElfHeader<X>> {
-        Ok(ElfHeader {
+    ) -> ElfHeader<X> {
+        ElfHeader {
             magic,
             class,
             data: data_encoding,
             version,
             abi,
             abi_version,
-            entry: X::from_u64(read_le32(data, 24) as u64),
-            phoff: X::from_u64(read_le32(data, 28) as u64),
-            shoff: X::from_u64(read_le32(data, 32) as u64),
+            entry: X::from_u64(u64::from(read_le32(data, 24))),
+            phoff: X::from_u64(u64::from(read_le32(data, 28))),
+            shoff: X::from_u64(u64::from(read_le32(data, 32))),
             flags: read_le32(data, 36),
             ehsize: read_le16(data, 40),
             phentsize: read_le16(data, 42),
@@ -166,7 +174,7 @@ impl<X: Xlen> ElfFile<X> {
             shentsize: read_le16(data, 46),
             shnum: read_le16(data, 48),
             shstrndx: read_le16(data, 50),
-        })
+        }
     }
 
     fn parse_header_64(
@@ -177,8 +185,8 @@ impl<X: Xlen> ElfFile<X> {
         version: u8,
         abi: u8,
         abi_version: u8,
-    ) -> Result<ElfHeader<X>> {
-        Ok(ElfHeader {
+    ) -> ElfHeader<X> {
+        ElfHeader {
             magic,
             class,
             data: data_encoding,
@@ -195,15 +203,17 @@ impl<X: Xlen> ElfFile<X> {
             shentsize: read_le16(data, 58),
             shnum: read_le16(data, 60),
             shstrndx: read_le16(data, 62),
-        })
+        }
     }
 
     fn parse_program_headers(data: &[u8], header: &ElfHeader<X>) -> Result<Vec<ProgramHeader<X>>> {
-        let mut headers = Vec::with_capacity(header.phnum as usize);
+        let mut headers = Vec::with_capacity(usize::from(header.phnum));
+        let phoff =
+            usize::try_from(X::to_u64(header.phoff)).map_err(|_| ElfError::ProgramOutOfBounds)?;
+        let phentsize = usize::from(header.phentsize);
 
         for i in 0..header.phnum {
-            let offset =
-                X::to_u64(header.phoff) as usize + (i as usize) * (header.phentsize as usize);
+            let offset = phoff + usize::from(i) * phentsize;
             let ph = Self::parse_program_header(data, offset)?;
             headers.push(ph);
         }
@@ -232,23 +242,25 @@ impl<X: Xlen> ElfFile<X> {
             }
             Ok(ProgramHeader {
                 p_type: read_le32(data, offset),
-                offset: X::from_u64(read_le32(data, offset + 4) as u64),
-                vaddr: X::from_u64(read_le32(data, offset + 8) as u64),
-                paddr: X::from_u64(read_le32(data, offset + 12) as u64),
-                filesz: X::from_u64(read_le32(data, offset + 16) as u64),
-                memsz: X::from_u64(read_le32(data, offset + 20) as u64),
+                offset: X::from_u64(u64::from(read_le32(data, offset + 4))),
+                vaddr: X::from_u64(u64::from(read_le32(data, offset + 8))),
+                paddr: X::from_u64(u64::from(read_le32(data, offset + 12))),
+                filesz: X::from_u64(u64::from(read_le32(data, offset + 16))),
+                memsz: X::from_u64(u64::from(read_le32(data, offset + 20))),
                 flags: read_le32(data, offset + 24),
-                align: X::from_u64(read_le32(data, offset + 28) as u64),
+                align: X::from_u64(u64::from(read_le32(data, offset + 28))),
             })
         }
     }
 
     fn parse_all_sections(data: &[u8], header: &ElfHeader<X>) -> Result<Vec<SectionHeader<X>>> {
-        let mut sections = Vec::with_capacity(header.shnum as usize);
+        let mut sections = Vec::with_capacity(usize::from(header.shnum));
+        let shoff =
+            usize::try_from(X::to_u64(header.shoff)).map_err(|_| ElfError::SectionOutOfBounds)?;
+        let shentsize = usize::from(header.shentsize);
 
         for i in 0..header.shnum {
-            let offset =
-                X::to_u64(header.shoff) as usize + (i as usize) * (header.shentsize as usize);
+            let offset = shoff + usize::from(i) * shentsize;
             let sh = Self::parse_section_header(data, offset)?;
             sections.push(sh);
         }
@@ -280,14 +292,14 @@ impl<X: Xlen> ElfFile<X> {
             Ok(SectionHeader {
                 name: read_le32(data, offset),
                 sh_type: read_le32(data, offset + 4),
-                flags: X::from_u64(read_le32(data, offset + 8) as u64),
-                addr: X::from_u64(read_le32(data, offset + 12) as u64),
-                offset: X::from_u64(read_le32(data, offset + 16) as u64),
-                size: X::from_u64(read_le32(data, offset + 20) as u64),
+                flags: X::from_u64(u64::from(read_le32(data, offset + 8))),
+                addr: X::from_u64(u64::from(read_le32(data, offset + 12))),
+                offset: X::from_u64(u64::from(read_le32(data, offset + 16))),
+                size: X::from_u64(u64::from(read_le32(data, offset + 20))),
                 link: read_le32(data, offset + 24),
                 info: read_le32(data, offset + 28),
-                addralign: X::from_u64(read_le32(data, offset + 32) as u64),
-                entsize: X::from_u64(read_le32(data, offset + 36) as u64),
+                addralign: X::from_u64(u64::from(read_le32(data, offset + 32))),
+                entsize: X::from_u64(u64::from(read_le32(data, offset + 36))),
             })
         }
     }
@@ -296,7 +308,7 @@ impl<X: Xlen> ElfFile<X> {
         sections: &[SectionHeader<X>],
         header: &ElfHeader<X>,
     ) -> Option<SectionHeader<X>> {
-        let idx = header.shstrndx as usize;
+        let idx = usize::from(header.shstrndx);
         if idx < sections.len() {
             Some(sections[idx].clone())
         } else {
@@ -315,15 +327,14 @@ impl<X: Xlen> ElfFile<X> {
             // Load sections with SHF_ALLOC flag
             if (X::to_u64(section.flags) & SHF_ALLOC) != 0 {
                 let section_data = Self::load_section_data(data, section);
-                let name = if let Some(strtab) = strtab {
-                    Self::extract_string(
-                        data,
-                        X::to_u64(strtab.offset) as usize,
-                        section.name as usize,
-                    )
-                } else {
-                    "unknown".to_string()
-                };
+                let name = strtab.map_or_else(
+                    || "unknown".to_string(),
+                    |strtab| {
+                        let strtab_offset = usize::try_from(X::to_u64(strtab.offset)).unwrap_or(0);
+                        let name_offset = usize::try_from(section.name).unwrap_or(0);
+                        Self::extract_string(data, strtab_offset, name_offset)
+                    },
+                );
 
                 loaded.push(LoadedSection {
                     name,
@@ -339,8 +350,8 @@ impl<X: Xlen> ElfFile<X> {
     }
 
     fn load_section_data(data: &[u8], section: &SectionHeader<X>) -> Vec<u8> {
-        let size = X::to_u64(section.size) as usize;
-        let offset = X::to_u64(section.offset) as usize;
+        let size = usize::try_from(X::to_u64(section.size)).unwrap_or(0);
+        let offset = usize::try_from(X::to_u64(section.offset)).unwrap_or(0);
 
         match section.sh_type {
             SHT_PROGBITS => {
@@ -388,23 +399,22 @@ impl<X: Xlen> ElfFile<X> {
 
         // Find symbol table section (.symtab)
         let symtab = sections.iter().find(|s| s.sh_type == SHT_SYMTAB);
-        let symtab = match symtab {
-            Some(s) => s,
-            None => return symbols,
+        let Some(symtab) = symtab else {
+            return symbols;
         };
 
         // Find string table for symbol names (linked via sh_link)
-        let strtab_idx = symtab.link as usize;
+        let strtab_idx = usize::try_from(symtab.link).unwrap_or(0);
         let strtab = if strtab_idx < sections.len() {
             &sections[strtab_idx]
         } else {
             return symbols;
         };
 
-        let strtab_offset = X::to_u64(strtab.offset) as usize;
-        let symtab_offset = X::to_u64(symtab.offset) as usize;
-        let symtab_size = X::to_u64(symtab.size) as usize;
-        let entsize = X::to_u64(symtab.entsize) as usize;
+        let strtab_offset = usize::try_from(X::to_u64(strtab.offset)).unwrap_or(0);
+        let symtab_offset = usize::try_from(X::to_u64(symtab.offset)).unwrap_or(0);
+        let symtab_size = usize::try_from(X::to_u64(symtab.size)).unwrap_or(0);
+        let entsize = usize::try_from(X::to_u64(symtab.entsize)).unwrap_or(0);
 
         if entsize == 0 {
             return symbols;
@@ -430,9 +440,9 @@ impl<X: Xlen> ElfFile<X> {
                 return None;
             }
 
-            let name_idx = read_le32(data, offset) as usize;
+            let name_idx = usize::try_from(read_le32(data, offset)).unwrap_or(0);
             let info = data[offset + 4];
-            let _other = data[offset + 5];
+            let _ = data[offset + 5];
             let shndx = read_le16(data, offset + 6);
             let value = X::from_u64(read_le64(data, offset + 8));
             let size = X::from_u64(read_le64(data, offset + 16));
@@ -455,11 +465,11 @@ impl<X: Xlen> ElfFile<X> {
                 return None;
             }
 
-            let name_idx = read_le32(data, offset) as usize;
-            let value = X::from_u64(read_le32(data, offset + 4) as u64);
-            let size = X::from_u64(read_le32(data, offset + 8) as u64);
+            let name_idx = usize::try_from(read_le32(data, offset)).unwrap_or(0);
+            let value = X::from_u64(u64::from(read_le32(data, offset + 4)));
+            let size = X::from_u64(u64::from(read_le32(data, offset + 8)));
             let info = data[offset + 12];
-            let _other = data[offset + 13];
+            let _ = data[offset + 13];
             let shndx = read_le16(data, offset + 14);
 
             let name = Self::extract_string(data, strtab_offset, name_idx);
@@ -487,6 +497,10 @@ fn is_git_lfs_pointer(data: &[u8]) -> bool {
 }
 
 /// Peek at ELF header to determine XLEN (32 or 64) without full parsing.
+///
+/// # Errors
+///
+/// Returns an error if the header is too small, invalid, or unsupported.
 pub fn get_elf_xlen(data: &[u8]) -> Result<u8> {
     if data.len() < 5 {
         return Err(ElfError::TooSmall);

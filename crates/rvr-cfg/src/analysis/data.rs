@@ -2,7 +2,8 @@ use rvr_isa::{
     DecodedInstr, InstrArgs, OP_ADD, OP_ADDI, OP_AUIPC, OP_BEQ, OP_BGE, OP_BGEU, OP_BLT, OP_BLTU,
     OP_BNE, OP_C_ADD, OP_C_ADDI, OP_C_ADDI4SPN, OP_C_ADDI16SP, OP_C_BEQZ, OP_C_BNEZ, OP_C_J,
     OP_C_JAL, OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW, OP_C_LWSP,
-    OP_C_MV, OP_JAL, OP_JALR, OP_LB, OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW, OP_LWU, Xlen,
+    OP_C_MV, OP_JAL, OP_JALR, OP_LB, OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW, OP_LWU, OpId,
+    Xlen,
 };
 
 use super::{MAX_VALUES, NUM_REGS, extract_written_reg};
@@ -20,7 +21,7 @@ pub(super) struct RegisterValue {
 }
 
 impl RegisterValue {
-    pub(super) fn unknown() -> Self {
+    pub(super) const fn unknown() -> Self {
         Self {
             kind: ValueKind::Unknown,
             values: Vec::new(),
@@ -68,16 +69,20 @@ impl RegisterValue {
         while i < self.values.len() && j < other.values.len() {
             let a = self.values[i];
             let b = other.values[j];
-            if a == b {
-                merged.push(a);
-                i += 1;
-                j += 1;
-            } else if a < b {
-                merged.push(a);
-                i += 1;
-            } else {
-                merged.push(b);
-                j += 1;
+            match a.cmp(&b) {
+                std::cmp::Ordering::Equal => {
+                    merged.push(a);
+                    i += 1;
+                    j += 1;
+                }
+                std::cmp::Ordering::Less => {
+                    merged.push(a);
+                    i += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    merged.push(b);
+                    j += 1;
+                }
             }
 
             if merged.len() > MAX_VALUES {
@@ -131,7 +136,7 @@ impl RegisterState {
         self.regs[idx].clone()
     }
 
-    pub(super) fn get_ref(&self, reg: u8) -> &RegisterValue {
+    pub(super) const fn get_ref(&self, reg: u8) -> &RegisterValue {
         let idx = reg as usize;
         if idx >= NUM_REGS {
             return &self.regs[0];
@@ -194,7 +199,7 @@ pub(super) struct DecodedInstruction {
 }
 
 impl DecodedInstruction {
-    pub(super) fn unknown() -> Self {
+    pub(super) const fn unknown() -> Self {
         Self {
             kind: InstrKind::Unknown,
             rd: None,
@@ -209,132 +214,19 @@ impl DecodedInstruction {
     pub(super) fn from_instr<X: Xlen>(instr: &DecodedInstr<X>) -> Self {
         let opid = instr.opid;
         match opid {
-            OP_LUI | OP_C_LUI => match instr.args.clone() {
-                InstrArgs::U { rd, imm } => Self {
-                    kind: InstrKind::Lui,
-                    rd: Some(rd),
-                    rs1: None,
-                    rs2: None,
-                    imm,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
-            OP_AUIPC => match instr.args.clone() {
-                InstrArgs::U { rd, imm } => Self {
-                    kind: InstrKind::Auipc,
-                    rd: Some(rd),
-                    rs1: None,
-                    rs2: None,
-                    imm,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
+            OP_LUI | OP_C_LUI => Self::decode_u(instr, InstrKind::Lui),
+            OP_AUIPC => Self::decode_u(instr, InstrKind::Auipc),
             OP_ADDI | OP_C_ADDI | OP_C_ADDI16SP | OP_C_ADDI4SPN | OP_C_LI => {
-                match instr.args.clone() {
-                    InstrArgs::I { rd, rs1, imm } => Self {
-                        kind: InstrKind::Addi,
-                        rd: Some(rd),
-                        rs1: Some(rs1),
-                        rs2: None,
-                        imm,
-                        width: 0,
-                        is_unsigned: false,
-                    },
-                    _ => Self::unknown(),
-                }
+                Self::decode_i(instr, InstrKind::Addi)
             }
-            OP_ADD | OP_C_ADD => match instr.args.clone() {
-                InstrArgs::R { rd, rs1, rs2 } => Self {
-                    kind: InstrKind::Add,
-                    rd: Some(rd),
-                    rs1: Some(rs1),
-                    rs2: Some(rs2),
-                    imm: 0,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
-            OP_C_MV => match instr.args.clone() {
-                InstrArgs::R { rd, rs2, .. } => Self {
-                    kind: InstrKind::Move,
-                    rd: Some(rd),
-                    rs1: Some(rs2),
-                    rs2: None,
-                    imm: 0,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
-            OP_JAL | OP_C_J | OP_C_JAL => match instr.args.clone() {
-                InstrArgs::J { rd, imm } => Self {
-                    kind: InstrKind::Jal,
-                    rd: Some(rd),
-                    rs1: None,
-                    rs2: None,
-                    imm,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
-            OP_JALR | OP_C_JR | OP_C_JALR => match instr.args.clone() {
-                InstrArgs::I { rd, rs1, imm } => Self {
-                    kind: InstrKind::Jalr,
-                    rd: Some(rd),
-                    rs1: Some(rs1),
-                    rs2: None,
-                    imm,
-                    width: 0,
-                    is_unsigned: false,
-                },
-                _ => Self::unknown(),
-            },
+            OP_ADD | OP_C_ADD => Self::decode_r(instr, InstrKind::Add),
+            OP_C_MV => Self::decode_mv(instr),
+            OP_JAL | OP_C_J | OP_C_JAL => Self::decode_j(instr, InstrKind::Jal),
+            OP_JALR | OP_C_JR | OP_C_JALR => Self::decode_i(instr, InstrKind::Jalr),
             OP_LB | OP_LBU | OP_LH | OP_LHU | OP_LW | OP_LWU | OP_LD | OP_C_LW | OP_C_LWSP
-            | OP_C_LD | OP_C_LDSP => match instr.args.clone() {
-                InstrArgs::I { rd, rs1, imm } => {
-                    let (width, is_unsigned) = match opid {
-                        OP_LB => (1, false),
-                        OP_LBU => (1, true),
-                        OP_LH => (2, false),
-                        OP_LHU => (2, true),
-                        OP_LW => (4, false),
-                        OP_LWU => (4, true),
-                        OP_LD => (8, false),
-                        OP_C_LW | OP_C_LWSP => (4, false),
-                        OP_C_LD | OP_C_LDSP => (8, false),
-                        _ => (0, false),
-                    };
-                    Self {
-                        kind: InstrKind::Load,
-                        rd: Some(rd),
-                        rs1: Some(rs1),
-                        rs2: None,
-                        imm,
-                        width,
-                        is_unsigned,
-                    }
-                }
-                _ => Self::unknown(),
-            },
+            | OP_C_LD | OP_C_LDSP => Self::decode_load(opid, instr),
             OP_BEQ | OP_BNE | OP_BLT | OP_BGE | OP_BLTU | OP_BGEU | OP_C_BEQZ | OP_C_BNEZ => {
-                match instr.args.clone() {
-                    InstrArgs::B { rs1, rs2, imm } => Self {
-                        kind: InstrKind::Branch,
-                        rd: None,
-                        rs1: Some(rs1),
-                        rs2: Some(rs2),
-                        imm,
-                        width: 0,
-                        is_unsigned: false,
-                    },
-                    _ => Self::unknown(),
-                }
+                Self::decode_branch(instr)
             }
             _ => {
                 let rd = extract_written_reg(&instr.args);
@@ -345,7 +237,124 @@ impl DecodedInstruction {
         }
     }
 
-    pub(super) fn is_control_flow(&self) -> bool {
+    fn decode_u<X: Xlen>(instr: &DecodedInstr<X>, kind: InstrKind) -> Self {
+        match instr.args.clone() {
+            InstrArgs::U { rd, imm } => Self {
+                kind,
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
+                imm,
+                width: 0,
+                is_unsigned: false,
+            },
+            _ => Self::unknown(),
+        }
+    }
+
+    fn decode_i<X: Xlen>(instr: &DecodedInstr<X>, kind: InstrKind) -> Self {
+        match instr.args.clone() {
+            InstrArgs::I { rd, rs1, imm } => Self {
+                kind,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: None,
+                imm,
+                width: 0,
+                is_unsigned: false,
+            },
+            _ => Self::unknown(),
+        }
+    }
+
+    fn decode_r<X: Xlen>(instr: &DecodedInstr<X>, kind: InstrKind) -> Self {
+        match instr.args.clone() {
+            InstrArgs::R { rd, rs1, rs2 } => Self {
+                kind,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: Some(rs2),
+                imm: 0,
+                width: 0,
+                is_unsigned: false,
+            },
+            _ => Self::unknown(),
+        }
+    }
+
+    fn decode_mv<X: Xlen>(instr: &DecodedInstr<X>) -> Self {
+        match instr.args.clone() {
+            InstrArgs::R { rd, rs2, .. } => Self {
+                kind: InstrKind::Move,
+                rd: Some(rd),
+                rs1: Some(rs2),
+                rs2: None,
+                imm: 0,
+                width: 0,
+                is_unsigned: false,
+            },
+            _ => Self::unknown(),
+        }
+    }
+
+    fn decode_j<X: Xlen>(instr: &DecodedInstr<X>, kind: InstrKind) -> Self {
+        match instr.args.clone() {
+            InstrArgs::J { rd, imm } => Self {
+                kind,
+                rd: Some(rd),
+                rs1: None,
+                rs2: None,
+                imm,
+                width: 0,
+                is_unsigned: false,
+            },
+            _ => Self::unknown(),
+        }
+    }
+
+    fn decode_load<X: Xlen>(opid: OpId, instr: &DecodedInstr<X>) -> Self {
+        match instr.args.clone() {
+            InstrArgs::I { rd, rs1, imm } => {
+                let (width, is_unsigned) = match opid {
+                    OP_LB => (1, false),
+                    OP_LBU => (1, true),
+                    OP_LH => (2, false),
+                    OP_LHU => (2, true),
+                    OP_LW | OP_C_LW | OP_C_LWSP => (4, false),
+                    OP_LWU => (4, true),
+                    OP_LD | OP_C_LD | OP_C_LDSP => (8, false),
+                    _ => (0, false),
+                };
+                Self {
+                    kind: InstrKind::Load,
+                    rd: Some(rd),
+                    rs1: Some(rs1),
+                    rs2: None,
+                    imm,
+                    width,
+                    is_unsigned,
+                }
+            }
+            _ => Self::unknown(),
+        }
+    }
+
+    fn decode_branch<X: Xlen>(instr: &DecodedInstr<X>) -> Self {
+        match instr.args.clone() {
+            InstrArgs::B { rs1, rs2, imm } => Self {
+                kind: InstrKind::Branch,
+                rd: None,
+                rs1: Some(rs1),
+                rs2: Some(rs2),
+                imm,
+                width: 0,
+                is_unsigned: false,
+            },
+            _ => Self::unknown(),
+        }
+    }
+
+    pub(super) const fn is_control_flow(&self) -> bool {
         matches!(
             self.kind,
             InstrKind::Jal | InstrKind::Jalr | InstrKind::Branch

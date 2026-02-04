@@ -17,6 +17,7 @@ pub struct SourceLoc {
 
 impl SourceLoc {
     /// Create a new source location.
+    #[must_use]
     pub fn new(file: &str, line: u32, function: &str) -> Self {
         Self {
             file: file.to_string(),
@@ -26,6 +27,7 @@ impl SourceLoc {
     }
 
     /// Check if this is a valid source location.
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         !self.file.is_empty() && self.file != "??" && self.line > 0
     }
@@ -38,7 +40,7 @@ pub struct InstrIR<X: Xlen> {
     pub pc: X::Reg,
     /// Instruction size in bytes (2 or 4).
     pub size: u8,
-    /// Packed OpId (ext << 8 | idx) for tracing.
+    /// Packed `OpId` (ext << 8 | idx) for tracing.
     pub op: u16,
     /// Raw instruction bytes (16-bit for compressed, 32-bit for normal).
     pub raw: u32,
@@ -52,7 +54,7 @@ pub struct InstrIR<X: Xlen> {
 
 impl<X: Xlen> InstrIR<X> {
     /// Create a new instruction IR.
-    pub fn new(
+    pub const fn new(
         pc: X::Reg,
         size: u8,
         op: u16,
@@ -72,7 +74,7 @@ impl<X: Xlen> InstrIR<X> {
     }
 
     /// Create a new instruction IR with source location.
-    pub fn with_source_loc(
+    pub const fn with_source_loc(
         pc: X::Reg,
         size: u8,
         op: u16,
@@ -99,31 +101,32 @@ impl<X: Xlen> InstrIR<X> {
 
     /// Get the PC of the next instruction (pc + size).
     pub fn next_pc(&self) -> X::Reg {
-        X::from_u64(X::to_u64(self.pc) + self.size as u64)
+        X::from_u64(X::to_u64(self.pc) + u64::from(self.size))
     }
 
     /// Check if this is a compressed (16-bit) instruction.
-    pub fn is_compressed(&self) -> bool {
+    pub const fn is_compressed(&self) -> bool {
         self.size == 2
     }
 
     /// Check if this instruction is a branch.
-    pub fn is_branch(&self) -> bool {
+    pub const fn is_branch(&self) -> bool {
         self.terminator.is_branch()
     }
 
     /// Check if this instruction is any kind of jump.
-    pub fn is_jump(&self) -> bool {
+    pub const fn is_jump(&self) -> bool {
         self.terminator.is_jump()
     }
 
     /// Check if this instruction ends a basic block.
-    pub fn is_block_end(&self) -> bool {
+    pub const fn is_block_end(&self) -> bool {
         self.terminator.is_control_flow()
     }
 
     /// Set the raw instruction bytes.
-    pub fn with_raw(mut self, raw: u32) -> Self {
+    #[must_use]
+    pub const fn with_raw(mut self, raw: u32) -> Self {
         self.raw = raw;
         self
     }

@@ -40,25 +40,27 @@ impl SuspenderState for InstretSuspender {
 
 impl InstretSuspender {
     /// Create a new suspender with the given target.
-    pub fn new(target_instret: u64) -> Self {
+    #[must_use]
+    pub const fn new(target_instret: u64) -> Self {
         Self { target_instret }
     }
 
     /// Check if execution should suspend.
     #[inline]
-    pub fn should_suspend(&self, instret: u64) -> bool {
+    #[must_use]
+    pub const fn should_suspend(&self, instret: u64) -> bool {
         instret >= self.target_instret
     }
 
     /// Set target instret.
     #[inline]
-    pub fn set_target(&mut self, target: u64) {
+    pub const fn set_target(&mut self, target: u64) {
         self.target_instret = target;
     }
 
     /// Disable suspension by setting target to max.
     #[inline]
-    pub fn disable(&mut self) {
+    pub const fn disable(&mut self) {
         self.target_instret = u64::MAX;
     }
 }

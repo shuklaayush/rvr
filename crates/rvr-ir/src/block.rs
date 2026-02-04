@@ -18,7 +18,7 @@ pub struct BlockIR<X: Xlen> {
 
 impl<X: Xlen> BlockIR<X> {
     /// Create a new block.
-    pub fn new(start_pc: X::Reg) -> Self {
+    pub const fn new(start_pc: X::Reg) -> Self {
         Self {
             start_pc,
             end_pc: start_pc,
@@ -43,12 +43,12 @@ impl<X: Xlen> BlockIR<X> {
     }
 
     /// Get number of instructions.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.instructions.len()
     }
 
     /// Check if block is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.instructions.is_empty()
     }
 }

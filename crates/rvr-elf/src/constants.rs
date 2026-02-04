@@ -1,7 +1,7 @@
 //! ELF specification constants.
 
 // ELF header constants
-pub const ELF_MAGIC: u32 = 0x464C457F; // 0x7F 'E' 'L' 'F'
+pub const ELF_MAGIC: u32 = 0x464C_457F; // 0x7F 'E' 'L' 'F'
 pub const ELF_CLASS_32: u8 = 1;
 pub const ELF_CLASS_64: u8 = 2;
 pub const ELF_DATA_LSB: u8 = 1;
@@ -18,7 +18,7 @@ pub const PT_NOTE: u32 = 4;
 pub const PT_SHLIB: u32 = 5;
 pub const PT_PHDR: u32 = 6;
 pub const PT_TLS: u32 = 7;
-pub const PT_GNU_STACK: u32 = 0x6474E551;
+pub const PT_GNU_STACK: u32 = 0x6474_E551;
 
 // Program header flags
 pub const PF_X: u32 = 0x1; // Execute

@@ -13,8 +13,8 @@ use crate::{
 };
 
 mod decode;
-mod lift;
 mod disasm;
+mod lift;
 
 use decode::decode_32bit;
 use disasm::format_instr;
@@ -78,7 +78,8 @@ pub const OP_SRAW: OpId = OpId::new(EXT_I, 51);
 pub const OP_MRET: OpId = OpId::new(EXT_I, 52);
 
 /// Get mnemonic for a base instruction.
-pub fn base_mnemonic(opid: OpId) -> &'static str {
+#[must_use]
+pub const fn base_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
         0 => "lui",
         1 => "auipc",
@@ -176,7 +177,7 @@ impl<X: Xlen> InstructionExtension<X> for BaseExtension {
     }
 }
 
-/// Table-driven OpInfo for base I extension.
+/// Table-driven `OpInfo` for base I extension.
 const OP_INFO_I: &[OpInfo] = &[
     OpInfo {
         opid: OP_LUI,

@@ -16,10 +16,10 @@ pub const OP_CZERO_EQZ: OpId = OpId::new(EXT_ZICOND, 0);
 pub const OP_CZERO_NEZ: OpId = OpId::new(EXT_ZICOND, 1);
 
 // Opcodes
-const OPCODE_OP: u32 = 0b0110011;
+const OPCODE_OP: u32 = 0b011_0011;
 
 // Encoding constants
-const FUNCT7_ZICOND: u8 = 0b0000111;
+const FUNCT7_ZICOND: u8 = 0b000_0111;
 const FUNCT3_CZERO_EQZ: u8 = 0b101;
 const FUNCT3_CZERO_NEZ: u8 = 0b111;
 
@@ -102,18 +102,15 @@ impl<X: Xlen> InstructionExtension<X> for ZicondExtension {
 // === Lift helpers ===
 
 fn lift_czero_eqz<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
     // czero.eqz: rd = (rs2 == 0) ? 0 : rs1
     let cond = Expr::eq(Expr::reg(rs2), Expr::imm(X::from_u64(0)));
@@ -130,18 +127,15 @@ fn lift_czero_eqz<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
 }
 
 fn lift_czero_nez<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
     // czero.nez: rd = (rs2 != 0) ? 0 : rs1
     let cond = Expr::ne(Expr::reg(rs2), Expr::imm(X::from_u64(0)));
@@ -170,11 +164,11 @@ fn disasm_r<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
                 reg_name(rs2)
             )
         }
-        _ => format!("{} ???", mnemonic),
+        _ => format!("{mnemonic} ???"),
     }
 }
 
-/// Table-driven OpInfo for Zicond extension.
+/// Table-driven `OpInfo` for Zicond extension.
 const OP_INFO_ZICOND: &[OpInfo] = &[
     OpInfo {
         opid: OP_CZERO_EQZ,
@@ -191,6 +185,7 @@ const OP_INFO_ZICOND: &[OpInfo] = &[
 ];
 
 /// Get mnemonic for Zicond instruction.
+#[must_use]
 pub fn zicond_mnemonic(opid: OpId) -> Option<&'static str> {
     OP_INFO_ZICOND
         .iter()
@@ -205,11 +200,11 @@ mod tests {
 
     fn encode_r(opcode: u32, funct3: u8, funct7: u8, rd: u8, rs1: u8, rs2: u8) -> [u8; 4] {
         let raw = opcode
-            | ((rd as u32) << 7)
-            | ((funct3 as u32) << 12)
-            | ((rs1 as u32) << 15)
-            | ((rs2 as u32) << 20)
-            | ((funct7 as u32) << 25);
+            | ((u32::from(rd)) << 7)
+            | ((u32::from(funct3)) << 12)
+            | ((u32::from(rs1)) << 15)
+            | ((u32::from(rs2)) << 20)
+            | ((u32::from(funct7)) << 25);
         raw.to_le_bytes()
     }
 

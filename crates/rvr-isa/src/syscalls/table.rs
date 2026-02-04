@@ -15,10 +15,11 @@ pub enum SyscallAbi {
 
 impl SyscallAbi {
     #[inline]
-    pub fn syscall_reg(self) -> u8 {
+    #[must_use]
+    pub const fn syscall_reg(self) -> u8 {
         match self {
-            SyscallAbi::Standard => REG_A7,
-            SyscallAbi::Embedded => REG_T0,
+            Self::Standard => REG_A7,
+            Self::Embedded => REG_T0,
         }
     }
 }
@@ -48,6 +49,7 @@ pub struct SyscallEntry {
 }
 
 impl SyscallEntry {
+    #[must_use]
     pub const fn exit(num: u64) -> Self {
         Self {
             num,
@@ -55,6 +57,7 @@ impl SyscallEntry {
         }
     }
 
+    #[must_use]
     pub const fn runtime(num: u64, name: &'static str, args: u8) -> Self {
         Self {
             num,
@@ -62,6 +65,7 @@ impl SyscallEntry {
         }
     }
 
+    #[must_use]
     pub const fn ret(num: u64, value: i64) -> Self {
         Self {
             num,
@@ -80,7 +84,8 @@ pub struct SyscallTable {
 
 impl SyscallTable {
     /// Create a new syscall table with the given ABI.
-    pub fn new(abi: SyscallAbi) -> Self {
+    #[must_use]
+    pub const fn new(abi: SyscallAbi) -> Self {
         Self {
             abi,
             entries: Vec::new(),
@@ -89,28 +94,33 @@ impl SyscallTable {
     }
 
     /// Add a syscall entry.
+    #[must_use]
     pub fn with_entry(mut self, entry: SyscallEntry) -> Self {
         self.entries.push(entry);
         self
     }
 
     /// Add an exit syscall entry.
+    #[must_use]
     pub fn with_exit(self, num: u64) -> Self {
         self.with_entry(SyscallEntry::exit(num))
     }
 
     /// Add a runtime syscall entry.
+    #[must_use]
     pub fn with_runtime(self, num: u64, name: &'static str, args: u8) -> Self {
         self.with_entry(SyscallEntry::runtime(num, name, args))
     }
 
     /// Add a fixed-return syscall entry.
+    #[must_use]
     pub fn with_return(self, num: u64, value: i64) -> Self {
         self.with_entry(SyscallEntry::ret(num, value))
     }
 
     /// Set the default error code for unknown syscalls (default: -38 = ENOSYS).
-    pub fn default_error(mut self, code: i64) -> Self {
+    #[must_use]
+    pub const fn default_error(mut self, code: i64) -> Self {
         self.default_error = code;
         self
     }
@@ -147,8 +157,10 @@ impl SyscallTable {
         }
 
         // Default error return
-        let mut dispatch: Stmt<X> =
-            Stmt::write_reg(REG_A0, Expr::imm(X::from_u64(self.default_error as u64)));
+        let mut dispatch: Stmt<X> = Stmt::write_reg(
+            REG_A0,
+            Expr::imm(X::from_u64(self.default_error.cast_unsigned())),
+        );
 
         // Build non-exit dispatch chain
         for entry in non_exit_entries.iter().rev() {
@@ -163,7 +175,11 @@ impl SyscallTable {
                         a7_eq(entry.num),
                         vec![Stmt::write_reg(
                             REG_A0,
-                            Expr::extern_call(name, call_args, (X::REG_BYTES * 8) as u8),
+                            Expr::extern_call(
+                                name,
+                                call_args,
+                                u8::try_from(X::REG_BYTES * 8).expect("register width fits u8"),
+                            ),
                         )],
                         vec![dispatch],
                     )
@@ -172,7 +188,7 @@ impl SyscallTable {
                     a7_eq(entry.num),
                     vec![Stmt::write_reg(
                         REG_A0,
-                        Expr::imm(X::from_u64(value as u64)),
+                        Expr::imm(X::from_u64(value.cast_unsigned())),
                     )],
                     vec![dispatch],
                 ),
@@ -181,18 +197,18 @@ impl SyscallTable {
         }
 
         if !non_exit_entries.is_empty() {
-            if !exit_entries.is_empty() {
+            if exit_entries.is_empty() {
+                stmts.push(dispatch);
+            } else {
                 let mut is_exit = a7_eq(exit_entries[0].num);
                 for entry in exit_entries.iter().skip(1) {
                     is_exit = Expr::or(is_exit, a7_eq(entry.num));
                 }
                 stmts.push(Stmt::if_then(Expr::not(is_exit), vec![dispatch]));
-            } else {
-                stmts.push(dispatch);
             }
         }
 
-        let next_pc = instr.pc + X::Reg::from(instr.size as u32);
+        let next_pc = instr.pc + X::Reg::from(u32::from(instr.size));
         InstrIR::new(
             instr.pc,
             instr.size,

@@ -17,7 +17,7 @@ pub enum BranchHint {
 pub enum Terminator<X: Xlen> {
     /// Fall through to next instruction.
     Fall {
-        /// Target PC (next_pc). Optional for backward compatibility.
+        /// Target PC (`next_pc`). Optional for backward compatibility.
         target: Option<X::Reg>,
     },
     /// Unconditional jump to static target.
@@ -33,7 +33,7 @@ pub enum Terminator<X: Xlen> {
         cond: Expr<X>,
         /// Branch taken target.
         target: X::Reg,
-        /// Fall-through target (next_pc).
+        /// Fall-through target (`next_pc`).
         fall: Option<X::Reg>,
         hint: BranchHint,
     },
@@ -51,12 +51,12 @@ impl<X: Xlen> Default for Terminator<X> {
 
 impl<X: Xlen> Terminator<X> {
     /// Create a static jump terminator.
-    pub fn jump(target: X::Reg) -> Self {
+    pub const fn jump(target: X::Reg) -> Self {
         Self::Jump { target }
     }
 
     /// Create a dynamic jump terminator.
-    pub fn jump_dyn(addr: Expr<X>) -> Self {
+    pub const fn jump_dyn(addr: Expr<X>) -> Self {
         Self::JumpDyn {
             addr,
             resolved: None,
@@ -64,14 +64,14 @@ impl<X: Xlen> Terminator<X> {
     }
 
     /// Create a fall-through terminator with explicit target.
-    pub fn fall(target: X::Reg) -> Self {
+    pub const fn fall(target: X::Reg) -> Self {
         Self::Fall {
             target: Some(target),
         }
     }
 
     /// Create a conditional branch terminator.
-    pub fn branch(cond: Expr<X>, target: X::Reg) -> Self {
+    pub const fn branch(cond: Expr<X>, target: X::Reg) -> Self {
         Self::Branch {
             cond,
             target,
@@ -81,7 +81,7 @@ impl<X: Xlen> Terminator<X> {
     }
 
     /// Create a conditional branch terminator with fall-through target.
-    pub fn branch_with_fall(cond: Expr<X>, target: X::Reg, fall: X::Reg) -> Self {
+    pub const fn branch_with_fall(cond: Expr<X>, target: X::Reg, fall: X::Reg) -> Self {
         Self::Branch {
             cond,
             target,
@@ -91,11 +91,12 @@ impl<X: Xlen> Terminator<X> {
     }
 
     /// Create an exit terminator.
-    pub fn exit(code: Expr<X>) -> Self {
+    pub const fn exit(code: Expr<X>) -> Self {
         Self::Exit { code }
     }
 
     /// Create a trap terminator.
+    #[must_use]
     pub fn trap(message: &str) -> Self {
         Self::Trap {
             message: message.to_string(),
@@ -103,35 +104,34 @@ impl<X: Xlen> Terminator<X> {
     }
 
     /// Check if this terminator is a fall-through.
-    pub fn is_fall(&self) -> bool {
+    pub const fn is_fall(&self) -> bool {
         matches!(self, Self::Fall { .. })
     }
 
     /// Check if this terminator is any kind of jump.
-    pub fn is_jump(&self) -> bool {
+    pub const fn is_jump(&self) -> bool {
         matches!(self, Self::Jump { .. } | Self::JumpDyn { .. })
     }
 
     /// Check if this terminator is a static jump.
-    pub fn is_static_jump(&self) -> bool {
+    pub const fn is_static_jump(&self) -> bool {
         matches!(self, Self::Jump { .. })
     }
 
     /// Check if this terminator is a dynamic jump.
-    pub fn is_dyn_jump(&self) -> bool {
+    pub const fn is_dyn_jump(&self) -> bool {
         matches!(self, Self::JumpDyn { .. })
     }
 
     /// Check if this terminator is a branch.
-    pub fn is_branch(&self) -> bool {
+    pub const fn is_branch(&self) -> bool {
         matches!(self, Self::Branch { .. })
     }
 
     /// Get static targets (if any).
     pub fn static_targets(&self) -> Vec<X::Reg> {
         match self {
-            Self::Jump { target } => vec![*target],
-            Self::Branch { target, .. } => vec![*target],
+            Self::Jump { target } | Self::Branch { target, .. } => vec![*target],
             Self::JumpDyn {
                 resolved: Some(targets),
                 ..
@@ -141,12 +141,12 @@ impl<X: Xlen> Terminator<X> {
     }
 
     /// Check if this terminator is any kind of control flow (not fall-through).
-    pub fn is_control_flow(&self) -> bool {
+    pub const fn is_control_flow(&self) -> bool {
         !matches!(self, Self::Fall { .. })
     }
 
     /// Get the fall-through target PC, if any.
-    pub fn fall_target(&self) -> Option<X::Reg> {
+    pub const fn fall_target(&self) -> Option<X::Reg> {
         match self {
             Self::Fall { target } => *target,
             Self::Branch { fall, .. } => *fall,

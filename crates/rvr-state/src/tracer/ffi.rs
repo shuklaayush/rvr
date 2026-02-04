@@ -93,9 +93,10 @@ impl FfiTracerPtr {
     ///
     /// # Safety
     /// The returned pointer must be passed to `drop_tracer` when done.
+    #[must_use]
     pub fn from_boxed(tracer: Box<dyn Tracer>) -> Self {
         Self {
-            inner: Box::into_raw(tracer) as *mut c_void,
+            inner: Box::into_raw(tracer).cast::<c_void>(),
         }
     }
 
@@ -104,7 +105,7 @@ impl FfiTracerPtr {
     /// # Safety
     /// `inner` must be a valid pointer from `from_boxed`.
     unsafe fn as_tracer_mut(&mut self) -> &mut dyn Tracer {
-        unsafe { &mut **(self.inner as *mut Box<dyn Tracer>) }
+        unsafe { &mut **self.inner.cast::<Box<dyn Tracer>>() }
     }
 }
 
@@ -114,7 +115,7 @@ impl FfiTracerPtr {
 
 /// Initialize tracer (called at start of execution).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn trace_init(_tracer: *mut FfiTracerPtr) {
+pub const unsafe extern "C" fn trace_init(_tracer: *mut FfiTracerPtr) {
     // No-op for now - tracer is already initialized
 }
 

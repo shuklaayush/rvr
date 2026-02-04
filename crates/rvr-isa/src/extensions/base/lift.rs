@@ -1,4 +1,11 @@
-use super::*;
+use super::{
+    Expr, InstrArgs, OP_ADD, OP_ADDI, OP_ADDIW, OP_ADDW, OP_AND, OP_ANDI, OP_AUIPC, OP_BEQ, OP_BGE,
+    OP_BGEU, OP_BLT, OP_BLTU, OP_BNE, OP_EBREAK, OP_ECALL, OP_FENCE, OP_JAL, OP_JALR, OP_LB,
+    OP_LBU, OP_LD, OP_LH, OP_LHU, OP_LUI, OP_LW, OP_LWU, OP_MRET, OP_OR, OP_ORI, OP_SB, OP_SD,
+    OP_SH, OP_SLL, OP_SLLI, OP_SLLIW, OP_SLLW, OP_SLT, OP_SLTI, OP_SLTIU, OP_SLTU, OP_SRA, OP_SRAI,
+    OP_SRAIW, OP_SRAW, OP_SRL, OP_SRLI, OP_SRLIW, OP_SRLW, OP_SUB, OP_SUBW, OP_SW, OP_XOR, OP_XORI,
+    OpId, Stmt, Terminator, Xlen,
+};
 
 pub(super) fn lift_base<X: Xlen>(
     args: &InstrArgs,
@@ -70,8 +77,7 @@ pub(super) fn lift_base<X: Xlen>(
         // ebreak = normal breakpoint/stop, exit_code = 0
         // For error exits, use ecall with exit syscall or unimp (illegal instruction)
         OP_EBREAK => (Vec::new(), Terminator::exit(Expr::imm(X::from_u64(0)))),
-        OP_FENCE => (Vec::new(), Terminator::Fall { target: None }),
-        OP_MRET => (Vec::new(), Terminator::Fall { target: None }),
+        OP_FENCE | OP_MRET => (Vec::new(), Terminator::Fall { target: None }),
 
         _ => (Vec::new(), Terminator::trap("unknown base instruction")),
     }
@@ -101,7 +107,7 @@ where
 {
     match args {
         InstrArgs::R { rd, rs1, rs2 } => {
-            let mask = X::from_u64(X::VALUE as u64 - 1);
+            let mask = X::from_u64(u64::from(X::VALUE) - 1);
             let masked_shamt = Expr::and(Expr::read(*rs2), Expr::imm(mask));
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(*rd, op(Expr::read(*rs1), masked_shamt))]
@@ -143,7 +149,10 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as i64 as u64))),
+                    op(
+                        Expr::read(*rs1),
+                        Expr::imm(X::from_u64(i64::from(*imm).cast_unsigned())),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -163,7 +172,10 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))),
+                    op(
+                        Expr::read(*rs1),
+                        Expr::imm(X::from_u64(u64::from(imm.cast_unsigned() & 0x3F))),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -180,7 +192,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::imm(X::from_u64(*imm as i64 as u64)),
+                    Expr::imm(X::from_u64(i64::from(*imm).cast_unsigned())),
                 )]
             } else {
                 Vec::new()
@@ -196,9 +208,9 @@ fn lift_auipc<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminato
         InstrArgs::U { rd, imm } => {
             let stmts = if *rd != 0 {
                 // Pre-fold pc + imm at lift time since both are constants
-                let pc_val = X::to_u64(pc) as i64;
-                let imm_val = *imm as i64;
-                let result = X::from_u64((pc_val + imm_val) as u64);
+                let pc_val = X::to_u64(pc).cast_signed();
+                let imm_val = i64::from(*imm);
+                let result = X::from_u64((pc_val + imm_val).cast_unsigned());
                 vec![Stmt::write_reg(*rd, Expr::imm(result))]
             } else {
                 Vec::new()
@@ -214,7 +226,8 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
                 // Keep base and offset separate for better codegen
-                let val = Expr::mem(Expr::read(*rs1), *imm as i16, width, signed);
+                let offset = i16::try_from(*imm).expect("load offset fits i16");
+                let val = Expr::mem(Expr::read(*rs1), offset, width, signed);
                 vec![Stmt::write_reg(*rd, val)]
             } else {
                 Vec::new()
@@ -229,7 +242,7 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
             let base = Expr::read(*rs1);
-            let offset = *imm as i16;
+            let offset = i16::try_from(*imm).expect("store offset fits i16");
             (
                 vec![
                     Stmt::write_mem(base, offset, Expr::read(*rs2), width),
@@ -250,11 +263,11 @@ fn lift_jal<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, T
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(
                     *rd,
-                    Expr::imm(pc + X::from_u64(size as u64)),
+                    Expr::imm(pc + X::from_u64(u64::from(size))),
                 ));
             }
-            let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
-            let target = (X::to_u64(pc) as i64 + offset) as u64;
+            let offset = X::to_u64(X::sign_extend_32(imm.cast_unsigned())).cast_signed();
+            let target = (X::to_u64(pc).cast_signed() + offset).cast_unsigned();
             (stmts, Terminator::jump(X::from_u64(target)))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -274,13 +287,16 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(
                     *rd,
-                    Expr::imm(pc + X::from_u64(size as u64)),
+                    Expr::imm(pc + X::from_u64(u64::from(size))),
                 ));
             }
             // Clear low bit for 2-byte alignment (use !1 to get correct mask for XLEN)
             // Note: add(base, imm(0)) is optimized to just base by Expr::add
             let target = Expr::and(
-                Expr::add(base, Expr::imm(X::from_u64(*imm as i64 as u64))),
+                Expr::add(
+                    base,
+                    Expr::imm(X::from_u64(i64::from(*imm).cast_unsigned())),
+                ),
                 Expr::imm(X::from_u64(!1u64)),
             );
             (stmts, Terminator::jump_dyn(target))
@@ -295,8 +311,8 @@ where
 {
     match args {
         InstrArgs::B { rs1, rs2, imm } => {
-            let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
-            let target = (X::to_u64(pc) as i64 + offset) as u64;
+            let offset = X::to_u64(X::sign_extend_32(imm.cast_unsigned())).cast_signed();
+            let target = (X::to_u64(pc).cast_signed() + offset).cast_unsigned();
             (
                 Vec::new(),
                 Terminator::branch(

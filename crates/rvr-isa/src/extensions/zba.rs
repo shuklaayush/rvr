@@ -22,14 +22,14 @@ pub const OP_SH3ADD_UW: OpId = OpId::new(EXT_ZBA, 6);
 pub const OP_SLLI_UW: OpId = OpId::new(EXT_ZBA, 7);
 
 // Opcodes
-const OPCODE_OP: u32 = 0b0110011; // R-type 32-bit
-const OPCODE_OP_32: u32 = 0b0111011; // R-type 64-bit word ops
-const OPCODE_OP_IMM_32: u32 = 0b0011011; // I-type 64-bit word ops
+const OPCODE_OP: u32 = 0b011_0011; // R-type 32-bit
+const OPCODE_OP_32: u32 = 0b011_1011; // R-type 64-bit word ops
+const OPCODE_OP_IMM_32: u32 = 0b001_1011; // I-type 64-bit word ops
 
 // Encoding constants
-const FUNCT7_SHXADD: u8 = 0b0010000;
-const FUNCT7_ADD_UW: u8 = 0b0000100;
-const FUNCT6_SLLI_UW: u32 = 0b000010;
+const FUNCT7_SHXADD: u8 = 0b001_0000;
+const FUNCT7_ADD_UW: u8 = 0b000_0100;
+const FUNCT6_SLLI_UW: u32 = 0b00_0010;
 
 /// Zba extension (address generation).
 pub struct ZbaExtension;
@@ -102,7 +102,7 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
         if opcode == OPCODE_OP_IMM_32 && X::VALUE == 64 {
             let funct6 = (raw >> 26) & 0x3F;
             if funct3 == 0b001 && funct6 == FUNCT6_SLLI_UW {
-                let shamt = ((raw >> 20) & 0x3F) as i32;
+                let shamt = ((raw >> 20) & 0x3F).cast_signed();
                 return Some(DecodedInstr::new(
                     OP_SLLI_UW,
                     pc,
@@ -163,23 +163,20 @@ impl<X: Xlen> InstructionExtension<X> for ZbaExtension {
 // === Lift helpers ===
 
 fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
 
     // rd = rs2 + (rs1 << shift)
     // Note: add(reg(0), x) is optimized to x by Expr::add
-    let shifted = Expr::sll(Expr::reg(rs1), Expr::imm(X::from_u64(shift as u64)));
+    let shifted = Expr::sll(Expr::reg(rs1), Expr::imm(X::from_u64(u64::from(shift))));
     let result = Expr::add(Expr::reg(rs2), shifted);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
@@ -194,18 +191,15 @@ fn lift_shxadd<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
 }
 
 fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
 
     // rd = rs2 + zext32(rs1)
@@ -225,24 +219,21 @@ fn lift_add_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
 }
 
 fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
 
     // rd = rs2 + (zext32(rs1) << shift)
     // Note: add(reg(0), x) is optimized to x by Expr::add
     let rs1_zext = Expr::zext32(Expr::reg(rs1));
-    let shifted = Expr::sll(rs1_zext, Expr::imm(X::from_u64(shift as u64)));
+    let shifted = Expr::sll(rs1_zext, Expr::imm(X::from_u64(u64::from(shift))));
     let result = Expr::add(Expr::reg(rs2), shifted);
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
@@ -257,23 +248,21 @@ fn lift_shxadd_uw<X: Xlen>(instr: &DecodedInstr<X>, shift: u8) -> InstrIR<X> {
 }
 
 fn lift_slli_uw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, shamt) = match instr.args {
-        InstrArgs::I { rd, rs1, imm } => (rd, rs1, imm as u8),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::I { rd, rs1, imm } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
+    let shamt = u8::try_from(imm).expect("shamt fits u8");
 
     // rd = zext32(rs1) << shamt
     let rs1_zext = Expr::zext32(Expr::reg(rs1));
-    let result = Expr::sll(rs1_zext, Expr::imm(X::from_u64(shamt as u64)));
+    let result = Expr::sll(rs1_zext, Expr::imm(X::from_u64(u64::from(shamt))));
     let stmt = rvr_ir::Stmt::write_reg(rd, result);
 
     InstrIR::new(
@@ -299,7 +288,7 @@ fn disasm_r<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
                 reg_name(rs2)
             )
         }
-        _ => format!("{} ???", mnemonic),
+        _ => format!("{mnemonic} ???"),
     }
 }
 
@@ -308,11 +297,11 @@ fn disasm_i<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
         InstrArgs::I { rd, rs1, imm } => {
             format!("{} {}, {}, {}", mnemonic, reg_name(rd), reg_name(rs1), imm)
         }
-        _ => format!("{} ???", mnemonic),
+        _ => format!("{mnemonic} ???"),
     }
 }
 
-/// Table-driven OpInfo for Zba extension.
+/// Table-driven `OpInfo` for Zba extension.
 const OP_INFO_ZBA: &[OpInfo] = &[
     OpInfo {
         opid: OP_SH1ADD,
@@ -365,6 +354,7 @@ const OP_INFO_ZBA: &[OpInfo] = &[
 ];
 
 /// Get mnemonic for Zba instruction.
+#[must_use]
 pub fn zba_mnemonic(opid: OpId) -> Option<&'static str> {
     OP_INFO_ZBA
         .iter()
@@ -379,16 +369,20 @@ mod tests {
 
     fn encode_r(opcode: u32, funct3: u32, funct7: u8, rd: u8, rs1: u8, rs2: u8) -> [u8; 4] {
         let raw = opcode
-            | ((rd as u32) << 7)
+            | ((u32::from(rd)) << 7)
             | (funct3 << 12)
-            | ((rs1 as u32) << 15)
-            | ((rs2 as u32) << 20)
-            | ((funct7 as u32) << 25);
+            | ((u32::from(rs1)) << 15)
+            | ((u32::from(rs2)) << 20)
+            | ((u32::from(funct7)) << 25);
         raw.to_le_bytes()
     }
 
     fn encode_i(opcode: u32, funct3: u32, rd: u8, rs1: u8, imm: u32) -> [u8; 4] {
-        let raw = opcode | ((rd as u32) << 7) | (funct3 << 12) | ((rs1 as u32) << 15) | (imm << 20);
+        let raw = opcode
+            | ((u32::from(rd)) << 7)
+            | (funct3 << 12)
+            | ((u32::from(rs1)) << 15)
+            | (imm << 20);
         raw.to_le_bytes()
     }
 

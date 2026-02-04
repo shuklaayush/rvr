@@ -23,9 +23,9 @@ const OP_KECCAKF_PERMUTE: OpId = OpId::new(EXT_KECCAKF, 0);
 ///   14-12: funct3 = 0b000
 ///   11-7:  rd (unused, should be zero)
 ///   6-0:   opcode = 0b0001011 (custom-0)
-const CUSTOM_0_OPCODE: u32 = 0b0001011;
+const CUSTOM_0_OPCODE: u32 = 0b000_1011;
 const KECCAKF_FUNCT3: u32 = 0b000;
-const KECCAKF_FUNCT7: u32 = 0b0000001;
+const KECCAKF_FUNCT7: u32 = 0b000_0001;
 
 /// Keccak-F extension for RISC-V.
 ///
@@ -87,7 +87,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
 
     fn disasm(&self, instr: &DecodedInstr<X>) -> String {
         match &instr.args {
-            InstrArgs::R { rs1, .. } => format!("keccakf.permute x{}", rs1),
+            InstrArgs::R { rs1, .. } => format!("keccakf.permute x{rs1}"),
             _ => "keccakf.permute ???".to_string(),
         }
     }
@@ -110,7 +110,7 @@ impl<X: Xlen> InstructionExtension<X> for KeccakFExtension {
 fn encode_keccakf_permute(rs1: u8) -> [u8; 4] {
     let raw: u32 = CUSTOM_0_OPCODE
         | (KECCAKF_FUNCT3 << 12)
-        | ((rs1 as u32 & 0x1F) << 15)
+        | ((u32::from(rs1) & 0x1F) << 15)
         | (KECCAKF_FUNCT7 << 25);
     raw.to_le_bytes()
 }
@@ -143,7 +143,7 @@ fn main() {
 
     // Disassemble
     let disasm = registry.disasm(&instr);
-    println!("Disassembly: {}", disasm);
+    println!("Disassembly: {disasm}");
     assert!(disasm.contains("keccakf.permute"));
     assert!(disasm.contains("x10"));
 

@@ -36,7 +36,8 @@ pub const OP_AMOMINU_D: OpId = OpId::new(EXT_A, 20);
 pub const OP_AMOMAXU_D: OpId = OpId::new(EXT_A, 21);
 
 /// Get the mnemonic for an A extension instruction.
-pub fn a_mnemonic(opid: OpId) -> &'static str {
+#[must_use]
+pub const fn a_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
         0 => "lr.w",
         1 => "sc.w",
@@ -64,6 +65,91 @@ pub fn a_mnemonic(opid: OpId) -> &'static str {
     }
 }
 
+#[must_use]
+pub const fn decode_a_opid(funct5: u32, is_64: bool) -> Option<OpId> {
+    let opid = match funct5 {
+        0x02 => {
+            if is_64 {
+                OP_LR_D
+            } else {
+                OP_LR_W
+            }
+        }
+        0x03 => {
+            if is_64 {
+                OP_SC_D
+            } else {
+                OP_SC_W
+            }
+        }
+        0x01 => {
+            if is_64 {
+                OP_AMOSWAP_D
+            } else {
+                OP_AMOSWAP_W
+            }
+        }
+        0x00 => {
+            if is_64 {
+                OP_AMOADD_D
+            } else {
+                OP_AMOADD_W
+            }
+        }
+        0x04 => {
+            if is_64 {
+                OP_AMOXOR_D
+            } else {
+                OP_AMOXOR_W
+            }
+        }
+        0x0C => {
+            if is_64 {
+                OP_AMOAND_D
+            } else {
+                OP_AMOAND_W
+            }
+        }
+        0x08 => {
+            if is_64 {
+                OP_AMOOR_D
+            } else {
+                OP_AMOOR_W
+            }
+        }
+        0x10 => {
+            if is_64 {
+                OP_AMOMIN_D
+            } else {
+                OP_AMOMIN_W
+            }
+        }
+        0x14 => {
+            if is_64 {
+                OP_AMOMAX_D
+            } else {
+                OP_AMOMAX_W
+            }
+        }
+        0x18 => {
+            if is_64 {
+                OP_AMOMINU_D
+            } else {
+                OP_AMOMINU_W
+            }
+        }
+        0x1C => {
+            if is_64 {
+                OP_AMOMAXU_D
+            } else {
+                OP_AMOMAXU_W
+            }
+        }
+        _ => return None,
+    };
+    Some(opid)
+}
+
 /// A extension (atomics).
 pub struct AExtension;
 
@@ -77,104 +163,18 @@ impl<X: Xlen> InstructionExtension<X> for AExtension {
     }
 
     fn decode32(&self, raw: u32, pc: X::Reg) -> Option<DecodedInstr<X>> {
-        let opcode = decode_opcode(raw);
-        if opcode != 0x2F {
+        if decode_opcode(raw) != 0x2F {
             return None;
         }
 
         let funct3 = decode_funct3(raw);
-        let rd = decode_rd(raw);
-        let rs1 = decode_rs1(raw);
-        let rs2 = decode_rs2(raw);
-        let aq = ((raw >> 26) & 1) != 0;
-        let rl = ((raw >> 25) & 1) != 0;
-        let funct5 = (raw >> 27) & 0x1F;
-
         if funct3 != 2 && !(funct3 == 3 && X::VALUE == 64) {
             return None;
         }
 
         let is_64 = funct3 == 3;
-        let opid = match funct5 {
-            0x02 => {
-                if is_64 {
-                    OP_LR_D
-                } else {
-                    OP_LR_W
-                }
-            }
-            0x03 => {
-                if is_64 {
-                    OP_SC_D
-                } else {
-                    OP_SC_W
-                }
-            }
-            0x01 => {
-                if is_64 {
-                    OP_AMOSWAP_D
-                } else {
-                    OP_AMOSWAP_W
-                }
-            }
-            0x00 => {
-                if is_64 {
-                    OP_AMOADD_D
-                } else {
-                    OP_AMOADD_W
-                }
-            }
-            0x04 => {
-                if is_64 {
-                    OP_AMOXOR_D
-                } else {
-                    OP_AMOXOR_W
-                }
-            }
-            0x0C => {
-                if is_64 {
-                    OP_AMOAND_D
-                } else {
-                    OP_AMOAND_W
-                }
-            }
-            0x08 => {
-                if is_64 {
-                    OP_AMOOR_D
-                } else {
-                    OP_AMOOR_W
-                }
-            }
-            0x10 => {
-                if is_64 {
-                    OP_AMOMIN_D
-                } else {
-                    OP_AMOMIN_W
-                }
-            }
-            0x14 => {
-                if is_64 {
-                    OP_AMOMAX_D
-                } else {
-                    OP_AMOMAX_W
-                }
-            }
-            0x18 => {
-                if is_64 {
-                    OP_AMOMINU_D
-                } else {
-                    OP_AMOMINU_W
-                }
-            }
-            0x1C => {
-                if is_64 {
-                    OP_AMOMAXU_D
-                } else {
-                    OP_AMOMAXU_W
-                }
-            }
-            _ => return None,
-        };
+        let funct5 = (raw >> 27) & 0x1F;
+        let opid = decode_a_opid(funct5, is_64)?;
 
         Some(DecodedInstr::new(
             opid,
@@ -182,11 +182,11 @@ impl<X: Xlen> InstructionExtension<X> for AExtension {
             4,
             raw,
             InstrArgs::Amo {
-                rd,
-                rs1,
-                rs2,
-                aq,
-                rl,
+                rd: decode_rd(raw),
+                rs1: decode_rs1(raw),
+                rs2: decode_rs2(raw),
+                aq: ((raw >> 26) & 1) != 0,
+                rl: ((raw >> 25) & 1) != 0,
             },
         ))
     }
@@ -228,7 +228,7 @@ impl<X: Xlen> InstructionExtension<X> for AExtension {
                     reg_name(*rs1)
                 )
             }
-            _ => format!("{} <?>", mnemonic),
+            _ => format!("{mnemonic} <?>"),
         }
     }
 
@@ -237,7 +237,7 @@ impl<X: Xlen> InstructionExtension<X> for AExtension {
     }
 }
 
-/// Table-driven OpInfo for A extension.
+/// Table-driven `OpInfo` for A extension.
 const OP_INFO_A: &[OpInfo] = &[
     // .W variants (32-bit)
     OpInfo {

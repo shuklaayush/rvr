@@ -109,22 +109,22 @@ pub enum Expr<X: Xlen> {
     Var(String),
     Unary {
         op: UnaryOp,
-        expr: Box<Expr<X>>,
+        expr: Box<Self>,
     },
     Binary {
         op: BinaryOp,
-        left: Box<Expr<X>>,
-        right: Box<Expr<X>>,
+        left: Box<Self>,
+        right: Box<Self>,
     },
     Ternary {
         op: TernaryOp,
-        first: Box<Expr<X>>,
-        second: Box<Expr<X>>,
-        third: Box<Expr<X>>,
+        first: Box<Self>,
+        second: Box<Self>,
+        third: Box<Self>,
     },
     ExternCall {
         name: String,
-        args: Vec<Expr<X>>,
+        args: Vec<Self>,
         ret_width: u8,
     },
 }
@@ -133,12 +133,13 @@ pub enum Expr<X: Xlen> {
 #[allow(clippy::should_implement_trait)]
 impl<X: Xlen> Expr<X> {
     /// Create an immediate expression.
-    pub fn imm(val: X::Reg) -> Self {
+    pub const fn imm(val: X::Reg) -> Self {
         Self::Imm(val)
     }
 
     /// Create a register read expression.
-    pub fn reg(idx: u8) -> Self {
+    #[must_use]
+    pub const fn reg(idx: u8) -> Self {
         Self::Read(ReadExpr::Reg(idx))
     }
 
@@ -162,21 +163,24 @@ impl<X: Xlen> Expr<X> {
     }
 
     /// Create a CSR read expression.
-    pub fn csr(csr: u16) -> Self {
+    #[must_use]
+    pub const fn csr(csr: u16) -> Self {
         Self::Read(ReadExpr::Csr(csr))
     }
 
     /// Create a PC constant expression.
-    pub fn pc_const(pc: X::Reg) -> Self {
+    pub const fn pc_const(pc: X::Reg) -> Self {
         Self::PcConst(pc)
     }
 
     /// Create a C variable reference.
+    #[must_use]
     pub fn var(name: &str) -> Self {
         Self::Var(name.to_string())
     }
 
     /// Create an external function call expression.
+    #[must_use]
     pub fn extern_call(fn_name: &str, args: Vec<Self>, ret_width: u8) -> Self {
         Self::ExternCall {
             name: fn_name.to_string(),
@@ -204,8 +208,8 @@ impl<X: Xlen> Expr<X> {
     /// This includes Imm(0) and Read(Reg(0)) since x0 is hardwired to zero.
     fn is_zero(&self) -> bool {
         match self {
-            Expr::Imm(v) => X::to_u64(*v) == 0,
-            Expr::Read(ReadExpr::Reg(0)) => true,
+            Self::Imm(v) => X::to_u64(*v) == 0,
+            Self::Read(ReadExpr::Reg(0)) => true,
             _ => false,
         }
     }
@@ -222,7 +226,7 @@ impl<X: Xlen> Expr<X> {
     pub fn add(left: Self, right: Self) -> Self {
         // Constant fold and identity optimizations
         // Handles: add(imm, imm), add(x, 0), add(0, x), add(reg(0), x), add(x, reg(0))
-        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+        if let (Self::Imm(l), Self::Imm(r)) = (&left, &right) {
             return Self::Imm(X::from_u64(X::to_u64(*l).wrapping_add(X::to_u64(*r))));
         }
         if right.is_zero() {
@@ -236,7 +240,7 @@ impl<X: Xlen> Expr<X> {
 
     pub fn sub(left: Self, right: Self) -> Self {
         // Handles: sub(imm, imm), sub(x, 0), sub(0, x) -> neg(x)
-        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+        if let (Self::Imm(l), Self::Imm(r)) = (&left, &right) {
             return Self::Imm(X::from_u64(X::to_u64(*l).wrapping_sub(X::to_u64(*r))));
         }
         if right.is_zero() {
@@ -253,14 +257,14 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn and(left: Self, right: Self) -> Self {
-        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+        if let (Self::Imm(l), Self::Imm(r)) = (&left, &right) {
             return Self::Imm(X::from_u64(X::to_u64(*l) & X::to_u64(*r)));
         }
         Self::binary(BinaryOp::And, left, right)
     }
 
     pub fn or(left: Self, right: Self) -> Self {
-        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+        if let (Self::Imm(l), Self::Imm(r)) = (&left, &right) {
             return Self::Imm(X::from_u64(X::to_u64(*l) | X::to_u64(*r)));
         }
         if right.is_zero() {
@@ -273,7 +277,7 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn xor(left: Self, right: Self) -> Self {
-        if let (Expr::Imm(l), Expr::Imm(r)) = (&left, &right) {
+        if let (Self::Imm(l), Self::Imm(r)) = (&left, &right) {
             return Self::Imm(X::from_u64(X::to_u64(*l) ^ X::to_u64(*r)));
         }
         if right.is_zero() {
@@ -342,9 +346,10 @@ impl<X: Xlen> Expr<X> {
     /// Sign extend from 32 bits.
     pub fn sext32(val: Self) -> Self {
         // Constant fold: sext32(imm) -> imm with sign extension applied
-        if let Expr::Imm(v) = &val {
+        if let Self::Imm(v) = &val {
             let v64 = X::to_u64(*v);
-            let sext = (v64 as i32) as i64 as u64;
+            let low = u32::try_from(v64 & 0xffff_ffff).unwrap_or(0);
+            let sext = i64::from(low.cast_signed()).cast_unsigned();
             return Self::Imm(X::from_u64(sext));
         }
         Self::unary(UnaryOp::Sext32, val)
@@ -358,7 +363,8 @@ impl<X: Xlen> Expr<X> {
     // ===== Register/Memory shorthand =====
 
     /// Create a register read expression (alias for reg).
-    pub fn read(idx: u8) -> Self {
+    #[must_use]
+    pub const fn read(idx: u8) -> Self {
         Self::reg(idx)
     }
 
@@ -509,38 +515,40 @@ impl<X: Xlen> Expr<X> {
     }
 
     pub fn sext8(val: Self) -> Self {
-        if let Expr::Imm(v) = &val {
-            let sext = (X::to_u64(*v) as i8) as i64 as u64;
+        if let Self::Imm(v) = &val {
+            let low = u8::try_from(X::to_u64(*v) & 0xff).unwrap_or(0);
+            let sext = i64::from(i8::from_le_bytes([low])).cast_unsigned();
             return Self::Imm(X::from_u64(sext));
         }
         Self::unary(UnaryOp::Sext8, val)
     }
 
     pub fn sext16(val: Self) -> Self {
-        if let Expr::Imm(v) = &val {
-            let sext = (X::to_u64(*v) as i16) as i64 as u64;
+        if let Self::Imm(v) = &val {
+            let low = u16::try_from(X::to_u64(*v) & 0xffff).unwrap_or(0);
+            let sext = i64::from(i16::from_le_bytes(low.to_le_bytes())).cast_unsigned();
             return Self::Imm(X::from_u64(sext));
         }
         Self::unary(UnaryOp::Sext16, val)
     }
 
     pub fn zext8(val: Self) -> Self {
-        if let Expr::Imm(v) = &val {
+        if let Self::Imm(v) = &val {
             return Self::Imm(X::from_u64(X::to_u64(*v) & 0xff));
         }
         Self::unary(UnaryOp::Zext8, val)
     }
 
     pub fn zext16(val: Self) -> Self {
-        if let Expr::Imm(v) = &val {
+        if let Self::Imm(v) = &val {
             return Self::Imm(X::from_u64(X::to_u64(*v) & 0xffff));
         }
         Self::unary(UnaryOp::Zext16, val)
     }
 
     pub fn zext32(val: Self) -> Self {
-        if let Expr::Imm(v) = &val {
-            return Self::Imm(X::from_u64(X::to_u64(*v) & 0xffffffff));
+        if let Self::Imm(v) = &val {
+            return Self::Imm(X::from_u64(X::to_u64(*v) & 0xffff_ffff));
         }
         Self::unary(UnaryOp::Zext32, val)
     }
@@ -573,39 +581,48 @@ impl<X: Xlen> Expr<X> {
 
     // ===== Special reads =====
 
-    pub fn res_addr() -> Self {
+    #[must_use]
+    pub const fn res_addr() -> Self {
         Self::Read(ReadExpr::ResAddr)
     }
 
-    pub fn res_valid() -> Self {
+    #[must_use]
+    pub const fn res_valid() -> Self {
         Self::Read(ReadExpr::ResValid)
     }
 
-    pub fn instret() -> Self {
+    #[must_use]
+    pub const fn instret() -> Self {
         Self::Read(ReadExpr::Instret)
     }
 
-    pub fn cycle() -> Self {
+    #[must_use]
+    pub const fn cycle() -> Self {
         Self::Read(ReadExpr::Cycle)
     }
 
-    pub fn temp(idx: u8) -> Self {
+    #[must_use]
+    pub const fn temp(idx: u8) -> Self {
         Self::Read(ReadExpr::Temp(idx))
     }
 
-    pub fn trace_idx() -> Self {
+    #[must_use]
+    pub const fn trace_idx() -> Self {
         Self::Read(ReadExpr::TraceIdx)
     }
 
-    pub fn pc_idx() -> Self {
+    #[must_use]
+    pub const fn pc_idx() -> Self {
         Self::Read(ReadExpr::PcIdx)
     }
 
-    pub fn exited() -> Self {
+    #[must_use]
+    pub const fn exited() -> Self {
         Self::Read(ReadExpr::Exited)
     }
 
-    pub fn exit_code() -> Self {
+    #[must_use]
+    pub const fn exit_code() -> Self {
         Self::Read(ReadExpr::ExitCode)
     }
 

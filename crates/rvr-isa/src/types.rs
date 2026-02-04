@@ -21,7 +21,7 @@ pub struct DecodedInstr<X: Xlen> {
 }
 
 impl<X: Xlen> DecodedInstr<X> {
-    pub fn new(opid: OpId, pc: X::Reg, size: u8, raw: u32, args: InstrArgs) -> Self {
+    pub const fn new(opid: OpId, pc: X::Reg, size: u8, raw: u32, args: InstrArgs) -> Self {
         Self {
             opid,
             pc,
@@ -33,7 +33,7 @@ impl<X: Xlen> DecodedInstr<X> {
 }
 
 /// Instruction argument patterns (covers all RISC-V formats + custom).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstrArgs {
     /// R-type: rd, rs1, rs2
     R { rd: u8, rs1: u8, rs2: u8 },
@@ -70,18 +70,20 @@ pub enum InstrArgs {
 /// Compact instruction identifier (2 bytes).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct OpId {
-    /// Extension (EXT_I, EXT_M, etc.)
+    /// Extension (`EXT_I`, `EXT_M`, etc.)
     pub ext: u8,
     /// Index within extension
     pub idx: u8,
 }
 
 impl OpId {
+    #[must_use]
     pub const fn new(ext: u8, idx: u8) -> Self {
         Self { ext, idx }
     }
 
-    /// Pack OpId into uint16_t: (ext << 8) | idx.
+    /// Pack `OpId` into `uint16_t`: (ext << 8) | idx.
+    #[must_use]
     pub const fn pack(self) -> u16 {
         ((self.ext as u16) << 8) | (self.idx as u16)
     }
@@ -201,6 +203,7 @@ pub const REG_ABI_NAMES: [&str; 32] = [
 
 /// Get register ABI name.
 #[inline]
+#[must_use]
 pub fn reg_name(reg: u8) -> &'static str {
     REG_ABI_NAMES.get(reg as usize).copied().unwrap_or("??")
 }
@@ -214,7 +217,7 @@ mod tests {
         assert_eq!(Rv32::VALUE, 32);
         assert_eq!(Rv32::SHIFT_MASK, 0x1F);
         assert_eq!(Rv32::REG_BYTES, 4);
-        assert_eq!(Rv32::sign_extend_32(0xFFFFFFFF), 0xFFFFFFFF);
+        assert_eq!(Rv32::sign_extend_32(0xFFFF_FFFF), 0xFFFF_FFFF);
     }
 
     #[test]
@@ -223,9 +226,9 @@ mod tests {
         assert_eq!(Rv64::SHIFT_MASK, 0x3F);
         assert_eq!(Rv64::REG_BYTES, 8);
         // Sign extension: 0xFFFFFFFF (-1 as i32) becomes 0xFFFFFFFFFFFFFFFF
-        assert_eq!(Rv64::sign_extend_32(0xFFFFFFFF), 0xFFFFFFFFFFFFFFFF);
+        assert_eq!(Rv64::sign_extend_32(0xFFFF_FFFF), 0xFFFF_FFFF_FFFF_FFFF);
         // Positive value stays the same
-        assert_eq!(Rv64::sign_extend_32(0x7FFFFFFF), 0x7FFFFFFF);
+        assert_eq!(Rv64::sign_extend_32(0x7FFF_FFFF), 0x7FFF_FFFF);
     }
 
     #[test]

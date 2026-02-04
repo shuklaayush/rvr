@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    Expr, InstrArgs, OP_C_ADD, OP_C_ADDI, OP_C_ADDI4SPN, OP_C_ADDI16SP, OP_C_ADDIW, OP_C_ADDW,
+    OP_C_AND, OP_C_ANDI, OP_C_BEQZ, OP_C_BNEZ, OP_C_EBREAK, OP_C_INVALID, OP_C_J, OP_C_JAL,
+    OP_C_JALR, OP_C_JR, OP_C_LD, OP_C_LDSP, OP_C_LI, OP_C_LUI, OP_C_LW, OP_C_LWSP, OP_C_MV,
+    OP_C_NOP, OP_C_OR, OP_C_SD, OP_C_SDSP, OP_C_SLLI, OP_C_SRAI, OP_C_SRLI, OP_C_SUB, OP_C_SUBW,
+    OP_C_SW, OP_C_SWSP, OP_C_XOR, Stmt, Terminator, Xlen,
+};
 
 pub(super) fn lift_c<X: Xlen>(
     args: &InstrArgs,
@@ -100,7 +106,10 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as i64 as u64))),
+                    op(
+                        Expr::read(*rs1),
+                        Expr::imm(X::from_u64(i64::from(*imm).cast_unsigned())),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -120,7 +129,10 @@ where
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    op(Expr::read(*rs1), Expr::imm(X::from_u64(*imm as u64 & 0x3F))),
+                    op(
+                        Expr::read(*rs1),
+                        Expr::imm(X::from_u64(u64::from(imm.cast_unsigned() & 0x3F))),
+                    ),
                 )]
             } else {
                 Vec::new()
@@ -137,7 +149,7 @@ fn lift_lui<X: Xlen>(args: &InstrArgs) -> (Vec<Stmt<X>>, Terminator<X>) {
             let stmts = if *rd != 0 {
                 vec![Stmt::write_reg(
                     *rd,
-                    Expr::imm(X::from_u64(*imm as i64 as u64)),
+                    Expr::imm(X::from_u64(i64::from(*imm).cast_unsigned())),
                 )]
             } else {
                 Vec::new()
@@ -153,7 +165,8 @@ fn lift_load<X: Xlen>(args: &InstrArgs, width: u8, signed: bool) -> (Vec<Stmt<X>
         InstrArgs::I { rd, rs1, imm } => {
             let stmts = if *rd != 0 {
                 // Keep base and offset separate for better codegen
-                let val = Expr::mem(Expr::read(*rs1), *imm as i16, width, signed);
+                let offset = i16::try_from(*imm).expect("load offset fits i16");
+                let val = Expr::mem(Expr::read(*rs1), offset, width, signed);
                 vec![Stmt::write_reg(*rd, val)]
             } else {
                 Vec::new()
@@ -168,7 +181,7 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
     match args {
         InstrArgs::S { rs1, rs2, imm } => {
             let base = Expr::read(*rs1);
-            let offset = *imm as i16;
+            let offset = i16::try_from(*imm).expect("store offset fits i16");
             (
                 vec![
                     Stmt::write_mem(base, offset, Expr::read(*rs2), width),
@@ -185,8 +198,8 @@ fn lift_store<X: Xlen>(args: &InstrArgs, width: u8) -> (Vec<Stmt<X>>, Terminator
 fn lift_j<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::J { imm, .. } => {
-            let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
-            let target = (X::to_u64(pc) as i64 + offset) as u64;
+            let offset = X::to_u64(X::sign_extend_32(imm.cast_unsigned())).cast_signed();
+            let target = (X::to_u64(pc).cast_signed() + offset).cast_unsigned();
             (Vec::new(), Terminator::jump(X::from_u64(target)))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -200,11 +213,11 @@ fn lift_jal<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, T
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(
                     *rd,
-                    Expr::imm(pc + X::from_u64(size as u64)),
+                    Expr::imm(pc + X::from_u64(u64::from(size))),
                 ));
             }
-            let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
-            let target = (X::to_u64(pc) as i64 + offset) as u64;
+            let offset = X::to_u64(X::sign_extend_32(imm.cast_unsigned())).cast_signed();
+            let target = (X::to_u64(pc).cast_signed() + offset).cast_unsigned();
             (stmts, Terminator::jump(X::from_u64(target)))
         }
         _ => (Vec::new(), Terminator::trap("invalid args")),
@@ -234,7 +247,7 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
             if *rd != 0 {
                 stmts.push(Stmt::write_reg(
                     *rd,
-                    Expr::imm(pc + X::from_u64(size as u64)),
+                    Expr::imm(pc + X::from_u64(u64::from(size))),
                 ));
             }
             // Don't mask - C.JALR has imm=0 and targets are always aligned
@@ -247,8 +260,8 @@ fn lift_jalr<X: Xlen>(args: &InstrArgs, pc: X::Reg, size: u8) -> (Vec<Stmt<X>>, 
 fn lift_beqz<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::B { rs1, imm, .. } => {
-            let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
-            let target = (X::to_u64(pc) as i64 + offset) as u64;
+            let offset = X::to_u64(X::sign_extend_32(imm.cast_unsigned())).cast_signed();
+            let target = (X::to_u64(pc).cast_signed() + offset).cast_unsigned();
             let cond = Expr::eq(Expr::read(*rs1), Expr::imm(X::from_u64(0)));
             (Vec::new(), Terminator::branch(cond, X::from_u64(target)))
         }
@@ -259,8 +272,8 @@ fn lift_beqz<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminator
 fn lift_bnez<X: Xlen>(args: &InstrArgs, pc: X::Reg) -> (Vec<Stmt<X>>, Terminator<X>) {
     match args {
         InstrArgs::B { rs1, imm, .. } => {
-            let offset = X::to_u64(X::sign_extend_32(*imm as u32)) as i64;
-            let target = (X::to_u64(pc) as i64 + offset) as u64;
+            let offset = X::to_u64(X::sign_extend_32(imm.cast_unsigned())).cast_signed();
+            let target = (X::to_u64(pc).cast_signed() + offset).cast_unsigned();
             let cond = Expr::ne(Expr::read(*rs1), Expr::imm(X::from_u64(0)));
             (Vec::new(), Terminator::branch(cond, X::from_u64(target)))
         }

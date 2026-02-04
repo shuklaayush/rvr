@@ -25,7 +25,8 @@ pub struct BasicBlock {
 }
 
 impl BasicBlock {
-    pub fn new(start: u64, end: u64, instruction_count: usize, last_pc: u64) -> Self {
+    #[must_use]
+    pub const fn new(start: u64, end: u64, instruction_count: usize, last_pc: u64) -> Self {
         Self {
             start,
             end,
@@ -35,7 +36,8 @@ impl BasicBlock {
     }
 
     /// Size of block in bytes.
-    pub fn size(&self) -> u64 {
+    #[must_use]
+    pub const fn size(&self) -> u64 {
         self.end - self.start
     }
 }
@@ -46,9 +48,9 @@ pub struct BlockTable<X: Xlen> {
     pub blocks: Vec<BasicBlock>,
     /// Absorbed PC -> merged block start mapping (for dispatch table).
     pub absorbed_to_merged: HashMap<u64, u64>,
-    /// Block continuations: merged_start -> list of (start, end) ranges.
+    /// Block continuations: `merged_start` -> list of (start, end) ranges.
     pub block_continuations: HashMap<u64, Vec<(u64, u64)>>,
-    /// Taken path inlines: branch_pc -> (inline_start, inline_end).
+    /// Taken path inlines: `branch_pc` -> (`inline_start`, `inline_end`).
     pub taken_inlines: HashMap<u64, (u64, u64)>,
     /// Predecessors map: PC -> set of predecessor PCs.
     pub predecessors: FxHashMap<u64, FxHashSet<u64>>,
@@ -58,7 +60,7 @@ pub struct BlockTable<X: Xlen> {
     pub unresolved_jumps: FxHashSet<u64>,
     /// Call return map: callee -> set of return addresses.
     pub call_return_map: FxHashMap<u64, FxHashSet<u64>>,
-    /// Block to function mapping: block_start -> function_entry.
+    /// Block to function mapping: `block_start` -> `function_entry`.
     pub block_to_function: FxHashMap<u64, u64>,
     /// Reference to instruction table.
     instruction_table: InstructionTable<X>,
@@ -68,6 +70,19 @@ pub struct BlockTable<X: Xlen> {
 pub const DEFAULT_SUPERBLOCK_DEPTH: usize = 100;
 pub const DEFAULT_TAIL_DUP_SIZE: usize = 100;
 pub const DEFAULT_TAKEN_INLINE_SIZE: usize = 50;
+
+type SuperblockPlan = (
+    FxHashSet<u64>,
+    HashMap<u64, Vec<u64>>,
+    Vec<(u64, (u64, u64))>,
+);
+
+struct SuperblockContext<'a, X: Xlen> {
+    entry_points: &'a [u64],
+    start_to_idx: &'a HashMap<u64, usize>,
+    merge_targets: &'a FxHashSet<u64>,
+    registry: &'a ExtensionRegistry<X>,
+}
 
 impl<X: Xlen> BlockTable<X> {
     /// Create a new block table from an instruction table with CFG analysis.
@@ -97,6 +112,7 @@ impl<X: Xlen> BlockTable<X> {
     }
 
     /// Create a block table with linear blocks (one instruction per block).
+    #[must_use]
     pub fn linear(instruction_table: InstructionTable<X>) -> Self {
         let mut table = Self {
             blocks: Vec::new(),
@@ -125,7 +141,7 @@ impl<X: Xlen> BlockTable<X> {
                 pc += 2; // Skip to next slot
                 continue;
             }
-            let size = self.instruction_table.instruction_size_at_pc(pc) as u64;
+            let size = u64::from(self.instruction_table.instruction_size_at_pc(pc));
             if size == 0 {
                 pc += 2;
                 continue;
@@ -159,7 +175,7 @@ impl<X: Xlen> BlockTable<X> {
     ) {
         // Sort leaders
         let mut sorted_leaders: Vec<u64> = leaders.iter().copied().collect();
-        sorted_leaders.sort();
+        sorted_leaders.sort_unstable();
 
         let end = self.instruction_table.end_address();
 
@@ -180,7 +196,7 @@ impl<X: Xlen> BlockTable<X> {
                     break;
                 }
 
-                let size = self.instruction_table.instruction_size_at_pc(pc) as u64;
+                let size = u64::from(self.instruction_table.instruction_size_at_pc(pc));
                 if size == 0 {
                     break;
                 }
@@ -216,21 +232,25 @@ impl<X: Xlen> BlockTable<X> {
     }
 
     /// Get instruction table reference.
-    pub fn instruction_table(&self) -> &InstructionTable<X> {
+    #[must_use]
+    pub const fn instruction_table(&self) -> &InstructionTable<X> {
         &self.instruction_table
     }
 
     /// Get number of blocks.
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.blocks.len()
     }
 
     /// Check if empty.
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
     /// Get block by index.
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<&BasicBlock> {
         self.blocks.get(index)
     }
@@ -250,7 +270,7 @@ impl<X: Xlen> BlockTable<X> {
             return 0;
         }
 
-        let entry_points = self.instruction_table.entry_points();
+        let entry_points: Vec<u64> = self.instruction_table.entry_points().to_vec();
 
         // Build lookup map
         let start_to_idx: HashMap<u64, usize> = self
@@ -266,7 +286,7 @@ impl<X: Xlen> BlockTable<X> {
             if absorbed.contains(&block.start) {
                 continue;
             }
-            if let Some(target) = self.get_merge_target(block, entry_points, registry) {
+            if let Some(target) = self.get_merge_target(block, &entry_points, registry) {
                 absorbed.insert(target);
             }
         }
@@ -292,7 +312,7 @@ impl<X: Xlen> BlockTable<X> {
 
             // Follow continuation chain
             loop {
-                let target = self.get_merge_target(&current_block, entry_points, registry);
+                let target = self.get_merge_target(&current_block, &entry_points, registry);
                 match target {
                     Some(target_pc) if absorbed.contains(&target_pc) => {
                         if let Some(&target_idx) = start_to_idx.get(&target_pc) {
@@ -371,143 +391,41 @@ impl<X: Xlen> BlockTable<X> {
         }
 
         let entry_points = self.instruction_table.entry_points();
-
-        // Build lookup maps
         let start_to_idx: HashMap<u64, usize> = self
             .blocks
             .iter()
             .enumerate()
             .map(|(i, b)| (b.start, i))
             .collect();
-
         let last_pc_to_block_start: HashMap<u64, u64> =
             self.blocks.iter().map(|b| (b.last_pc, b.start)).collect();
 
-        // Find blocks eligible for tail duplication
-        let mut to_duplicate = FxHashSet::default();
-
-        for block in &self.blocks {
-            // Skip entry points
-            if entry_points.contains(&block.start) {
-                continue;
-            }
-
-            // Skip blocks that are too large
-            if block.instruction_count > max_dup_size {
-                continue;
-            }
-
-            // Must have multiple predecessors (join point)
-            let preds = match self.predecessors.get(&block.start) {
-                Some(p) if p.len() >= 2 => p,
-                _ => continue,
-            };
-
-            // Only duplicate blocks that end in fall-through.
-            // Jump/branch terminators must stay explicit to preserve control flow.
-            let ends_with_fall = match self.instruction_table.get_at_pc(block.last_pc) {
-                Some(instr) => matches!(
-                    registry.lift(instr).terminator,
-                    rvr_ir::Terminator::Fall { .. }
-                ),
-                None => false,
-            };
-            if !ends_with_fall {
-                continue;
-            }
-
-            // All predecessors must end with explicit unconditional jumps.
-            // Avoid fall-through preds to keep dispatch mapping correct.
-            let all_unconditional = preds.iter().all(|&pred_pc| {
-                if let Some(instr) = self.instruction_table.get_at_pc(pred_pc) {
-                    let ir = registry.lift(instr);
-                    matches!(ir.terminator, rvr_ir::Terminator::Jump { .. })
-                } else {
-                    false
-                }
-            });
-
-            if all_unconditional {
-                to_duplicate.insert(block.start);
-            }
-        }
-
+        let to_duplicate =
+            self.collect_tail_duplicate_candidates(entry_points, max_dup_size, registry);
         if to_duplicate.is_empty() {
             return 0;
         }
 
-        // For each block to duplicate, add it to each predecessor's continuations
         for &dup_start in &to_duplicate {
-            let dup_idx = match start_to_idx.get(&dup_start) {
-                Some(&idx) => idx,
-                None => continue,
+            let Some(&dup_idx) = start_to_idx.get(&dup_start) else {
+                continue;
             };
-            let dup_block = &self.blocks[dup_idx];
-
-            let preds = match self.predecessors.get(&dup_start) {
-                Some(p) => p.clone(),
-                None => continue,
+            let dup_range = {
+                let dup_block = &self.blocks[dup_idx];
+                (dup_block.start, dup_block.end)
+            };
+            let Some(preds) = self.predecessors.get(&dup_start) else {
+                continue;
             };
 
-            // Filter to only predecessors with direct (non-dynamic) control flow
-            // This avoids tail-duplicating into blocks that are only reachable via
-            // indirect jumps (which have conservative targets)
-            //
-            // Also prefer predecessors with Jump/Branch over Fall (explicit jumps are
-            // more likely to be the "real" predecessor vs dead code that happens to fall through)
-            let mut valid_preds: Vec<(u64, bool)> = preds
-                .iter()
-                .filter_map(|&pred_pc| {
-                    last_pc_to_block_start
-                        .get(&pred_pc)
-                        .and_then(|&pred_start| {
-                            // Check if the predecessor instruction has direct control flow to dup_start
-                            let instr = self.instruction_table.get_at_pc(pred_pc)?;
-                            let ir = registry.lift(instr);
-                            let (is_direct, is_explicit) = match &ir.terminator {
-                                rvr_ir::Terminator::Jump { .. } => (true, true),
-                                rvr_ir::Terminator::Branch { .. } => (true, true),
-                                rvr_ir::Terminator::Fall { .. } => (true, false), // Fall is direct but not explicit
-                                _ => (false, false), // Skip JumpDyn (indirect jumps)
-                            };
-                            if is_direct {
-                                Some((pred_start, is_explicit))
-                            } else {
-                                None
-                            }
-                        })
-                })
-                .collect();
-
-            // Sort: prefer explicit jumps over falls, then by address for determinism
-            valid_preds.sort_by(|a, b| {
-                // Explicit jumps (true) come before falls (false)
-                b.1.cmp(&a.1).then(a.0.cmp(&b.0))
-            });
-
-            let valid_preds: Vec<_> = valid_preds.into_iter().map(|(addr, _)| addr).collect();
-
-            // If no valid predecessors, skip this block
+            let valid_preds =
+                self.collect_tail_duplicate_predecessors(preds, &last_pc_to_block_start, registry);
             if valid_preds.is_empty() {
                 continue;
             }
-
-            let mut first_pred = true;
-            for pred_start in valid_preds {
-                self.block_continuations
-                    .entry(pred_start)
-                    .or_default()
-                    .push((dup_block.start, dup_block.end));
-
-                // Map duplicated block to first predecessor for dispatch table
-                if first_pred {
-                    self.absorbed_to_merged.insert(dup_start, pred_start);
-                    first_pred = false;
-                }
-            }
+            self.apply_tail_duplication(dup_start, dup_range, &valid_preds);
         }
 
-        // Remove duplicated blocks
         let new_blocks: Vec<_> = self
             .blocks
             .iter()
@@ -523,6 +441,115 @@ impl<X: Xlen> BlockTable<X> {
         eliminated
     }
 
+    fn collect_tail_duplicate_candidates(
+        &self,
+        entry_points: &[u64],
+        max_dup_size: usize,
+        registry: &ExtensionRegistry<X>,
+    ) -> FxHashSet<u64> {
+        let mut to_duplicate = FxHashSet::default();
+
+        for block in &self.blocks {
+            if entry_points.contains(&block.start) {
+                continue;
+            }
+            if block.instruction_count > max_dup_size {
+                continue;
+            }
+
+            let Some(preds) = self.predecessors.get(&block.start) else {
+                continue;
+            };
+            if preds.len() < 2 {
+                continue;
+            }
+
+            if !self.block_ends_with_fall(block, registry) {
+                continue;
+            }
+
+            if preds
+                .iter()
+                .all(|&pred_pc| self.pred_is_unconditional_jump(pred_pc, registry))
+            {
+                to_duplicate.insert(block.start);
+            }
+        }
+
+        to_duplicate
+    }
+
+    fn block_ends_with_fall(&self, block: &BasicBlock, registry: &ExtensionRegistry<X>) -> bool {
+        self.instruction_table
+            .get_at_pc(block.last_pc)
+            .is_some_and(|instr| {
+                matches!(
+                    registry.lift(instr).terminator,
+                    rvr_ir::Terminator::Fall { .. }
+                )
+            })
+    }
+
+    fn pred_is_unconditional_jump(&self, pred_pc: u64, registry: &ExtensionRegistry<X>) -> bool {
+        self.instruction_table
+            .get_at_pc(pred_pc)
+            .is_some_and(|instr| {
+                let ir = registry.lift(instr);
+                matches!(ir.terminator, rvr_ir::Terminator::Jump { .. })
+            })
+    }
+
+    fn collect_tail_duplicate_predecessors(
+        &self,
+        preds: &FxHashSet<u64>,
+        last_pc_to_block_start: &HashMap<u64, u64>,
+        registry: &ExtensionRegistry<X>,
+    ) -> Vec<u64> {
+        let mut valid_preds: Vec<(u64, bool)> = preds
+            .iter()
+            .filter_map(|&pred_pc| {
+                let pred_start = *last_pc_to_block_start.get(&pred_pc)?;
+                let instr = self.instruction_table.get_at_pc(pred_pc)?;
+                let ir = registry.lift(instr);
+                let (is_direct, is_explicit) = match &ir.terminator {
+                    rvr_ir::Terminator::Jump { .. } | rvr_ir::Terminator::Branch { .. } => {
+                        (true, true)
+                    }
+                    rvr_ir::Terminator::Fall { .. } => (true, false),
+                    _ => (false, false),
+                };
+                if is_direct {
+                    Some((pred_start, is_explicit))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        valid_preds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        valid_preds.into_iter().map(|(addr, _)| addr).collect()
+    }
+
+    fn apply_tail_duplication(
+        &mut self,
+        dup_start: u64,
+        dup_range: (u64, u64),
+        valid_preds: &[u64],
+    ) {
+        let mut first_pred = true;
+        for &pred_start in valid_preds {
+            self.block_continuations
+                .entry(pred_start)
+                .or_default()
+                .push(dup_range);
+
+            if first_pred {
+                self.absorbed_to_merged.insert(dup_start, pred_start);
+                first_pred = false;
+            }
+        }
+    }
+
     /// Form superblocks by absorbing fall-through blocks after branches.
     ///
     /// Returns number of blocks absorbed.
@@ -532,155 +559,32 @@ impl<X: Xlen> BlockTable<X> {
         }
 
         let entry_points = self.instruction_table.entry_points();
-
-        // Build lookup map
         let start_to_idx: HashMap<u64, usize> = self
             .blocks
             .iter()
             .enumerate()
             .map(|(i, b)| (b.start, i))
             .collect();
-
-        // Build set of blocks that are already merge targets
         let merge_targets: FxHashSet<u64> = self.absorbed_to_merged.values().copied().collect();
 
-        // Find superblock chains
-        let mut absorbed = FxHashSet::default();
-        let mut superblock_heads = FxHashSet::default();
-        let mut superblock_chains: HashMap<u64, Vec<u64>> = HashMap::new();
+        let (absorbed, superblock_chains, pending_inlines) = self.collect_superblock_chains(
+            entry_points,
+            &start_to_idx,
+            &merge_targets,
+            max_depth,
+            registry,
+        );
 
-        for block in &self.blocks {
-            if absorbed.contains(&block.start) {
-                continue;
-            }
-
-            // Skip blocks that are merge targets
-            if merge_targets.contains(&block.start) {
-                continue;
-            }
-
-            // Check if block ends with a branch
-            let instr = match self.instruction_table.get_at_pc(block.last_pc) {
-                Some(i) => i,
-                None => continue,
-            };
-
-            let ir = registry.lift(instr);
-            let (is_branch, taken_pc) = match &ir.terminator {
-                rvr_ir::Terminator::Branch { target, .. } => (true, X::to_u64(*target)),
-                _ => continue,
-            };
-
-            if !is_branch {
-                continue;
-            }
-
-            // Try to inline the taken path
-            if !entry_points.contains(&taken_pc)
-                && start_to_idx.contains_key(&taken_pc)
-                && !absorbed.contains(&taken_pc)
-                && !merge_targets.contains(&taken_pc)
-                && let Some(preds) = self.predecessors.get(&taken_pc)
-                && preds.len() == 1
-            {
-                let taken_idx = start_to_idx[&taken_pc];
-                let taken_block = &self.blocks[taken_idx];
-                if taken_block.instruction_count <= DEFAULT_TAKEN_INLINE_SIZE {
-                    // Check if taken block ends with branch
-                    if let Some(taken_instr) = self.instruction_table.get_at_pc(taken_block.last_pc)
-                    {
-                        let taken_ir = registry.lift(taken_instr);
-                        if !matches!(taken_ir.terminator, rvr_ir::Terminator::Branch { .. }) {
-                            self.taken_inlines
-                                .insert(block.last_pc, (taken_block.start, taken_block.end));
-                        }
-                    }
-                }
-            }
-
-            // Get fall-through target
-            let fall_pc = block.end;
-            if entry_points.contains(&fall_pc) || !start_to_idx.contains_key(&fall_pc) {
-                continue;
-            }
-
-            superblock_heads.insert(block.start);
-
-            // Build superblock chain
-            let mut chain = Vec::new();
-            let mut current_pc = fall_pc;
-            let mut depth = 0;
-
-            while depth < max_depth {
-                if absorbed.contains(&current_pc) || entry_points.contains(&current_pc) {
-                    break;
-                }
-                if !start_to_idx.contains_key(&current_pc) {
-                    break;
-                }
-                if merge_targets.contains(&current_pc) || superblock_heads.contains(&current_pc) {
-                    break;
-                }
-
-                // Check for multiple predecessors
-                if let Some(preds) = self.predecessors.get(&current_pc)
-                    && preds.len() > 1
-                {
-                    break;
-                }
-
-                let current_idx = start_to_idx[&current_pc];
-                let current_block = &self.blocks[current_idx];
-
-                // Check terminator
-                let term_instr = match self.instruction_table.get_at_pc(current_block.last_pc) {
-                    Some(i) => i,
-                    None => break,
-                };
-
-                let term_ir = registry.lift(term_instr);
-
-                // Absorb this block
-                chain.push(current_pc);
-                absorbed.insert(current_pc);
-                depth += 1;
-
-                // Only continue with FALL/JUMP
-                match &term_ir.terminator {
-                    rvr_ir::Terminator::Fall { target } => {
-                        current_pc = target.map(|t| X::to_u64(t)).unwrap_or(current_block.end);
-                    }
-                    rvr_ir::Terminator::Jump { target } => {
-                        current_pc = X::to_u64(*target);
-                    }
-                    _ => break,
-                }
-            }
-
-            if !chain.is_empty() {
-                superblock_chains.insert(block.start, chain);
-            }
+        for (pc, range) in pending_inlines {
+            self.taken_inlines.insert(pc, range);
         }
 
         if absorbed.is_empty() {
             return 0;
         }
 
-        // Update block_continuations and absorbed_to_merged
-        for (head_start, chain) in &superblock_chains {
-            for &absorbed_start in chain {
-                self.absorbed_to_merged.insert(absorbed_start, *head_start);
+        self.apply_superblock_chains(&superblock_chains, &start_to_idx);
 
-                let absorbed_idx = start_to_idx[&absorbed_start];
-                let absorbed_block = &self.blocks[absorbed_idx];
-                self.block_continuations
-                    .entry(*head_start)
-                    .or_default()
-                    .push((absorbed_block.start, absorbed_block.end));
-            }
-        }
-
-        // Remove absorbed blocks (keep original ends - continuations handle absorbed code)
         let new_blocks: Vec<_> = self
             .blocks
             .iter()
@@ -698,6 +602,176 @@ impl<X: Xlen> BlockTable<X> {
             );
         }
         absorbed_count
+    }
+
+    fn collect_superblock_chains(
+        &self,
+        entry_points: &[u64],
+        start_to_idx: &HashMap<u64, usize>,
+        merge_targets: &FxHashSet<u64>,
+        max_depth: usize,
+        registry: &ExtensionRegistry<X>,
+    ) -> SuperblockPlan {
+        let mut absorbed = FxHashSet::default();
+        let mut superblock_heads = FxHashSet::default();
+        let mut superblock_chains: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut pending_inlines = Vec::new();
+        let context = SuperblockContext {
+            entry_points,
+            start_to_idx,
+            merge_targets,
+            registry,
+        };
+
+        for block in &self.blocks {
+            if absorbed.contains(&block.start) || merge_targets.contains(&block.start) {
+                continue;
+            }
+
+            let Some(instr) = self.instruction_table.get_at_pc(block.last_pc) else {
+                continue;
+            };
+            let ir = registry.lift(instr);
+            let rvr_ir::Terminator::Branch { target, .. } = &ir.terminator else {
+                continue;
+            };
+            let taken_pc = X::to_u64(*target);
+
+            if let Some(inline) = self.maybe_inline_taken_path(block, taken_pc, &absorbed, &context)
+            {
+                pending_inlines.push(inline);
+            }
+
+            let fall_pc = block.end;
+            if entry_points.contains(&fall_pc) || !start_to_idx.contains_key(&fall_pc) {
+                continue;
+            }
+
+            superblock_heads.insert(block.start);
+
+            let chain = self.build_superblock_chain(
+                fall_pc,
+                &superblock_heads,
+                &mut absorbed,
+                &context,
+                max_depth,
+            );
+
+            if !chain.is_empty() {
+                superblock_chains.insert(block.start, chain);
+            }
+        }
+
+        (absorbed, superblock_chains, pending_inlines)
+    }
+
+    fn maybe_inline_taken_path(
+        &self,
+        block: &BasicBlock,
+        taken_pc: u64,
+        absorbed: &FxHashSet<u64>,
+        context: &SuperblockContext<'_, X>,
+    ) -> Option<(u64, (u64, u64))> {
+        if context.entry_points.contains(&taken_pc)
+            || !context.start_to_idx.contains_key(&taken_pc)
+            || absorbed.contains(&taken_pc)
+            || context.merge_targets.contains(&taken_pc)
+        {
+            return None;
+        }
+
+        let preds = self.predecessors.get(&taken_pc)?;
+        if preds.len() != 1 {
+            return None;
+        }
+
+        let taken_idx = context.start_to_idx[&taken_pc];
+        let taken_block = &self.blocks[taken_idx];
+        if taken_block.instruction_count > DEFAULT_TAKEN_INLINE_SIZE {
+            return None;
+        }
+
+        let taken_instr = self.instruction_table.get_at_pc(taken_block.last_pc)?;
+        let taken_ir = context.registry.lift(taken_instr);
+        if matches!(taken_ir.terminator, rvr_ir::Terminator::Branch { .. }) {
+            return None;
+        }
+
+        Some((block.last_pc, (taken_block.start, taken_block.end)))
+    }
+
+    fn build_superblock_chain(
+        &self,
+        mut current_pc: u64,
+        superblock_heads: &FxHashSet<u64>,
+        absorbed: &mut FxHashSet<u64>,
+        context: &SuperblockContext<'_, X>,
+        max_depth: usize,
+    ) -> Vec<u64> {
+        let mut chain = Vec::new();
+        let mut depth = 0;
+
+        while depth < max_depth {
+            if absorbed.contains(&current_pc) || context.entry_points.contains(&current_pc) {
+                break;
+            }
+            if !context.start_to_idx.contains_key(&current_pc) {
+                break;
+            }
+            if context.merge_targets.contains(&current_pc) || superblock_heads.contains(&current_pc)
+            {
+                break;
+            }
+            if self
+                .predecessors
+                .get(&current_pc)
+                .is_some_and(|preds| preds.len() > 1)
+            {
+                break;
+            }
+
+            let current_idx = context.start_to_idx[&current_pc];
+            let current_block = &self.blocks[current_idx];
+            let Some(term_instr) = self.instruction_table.get_at_pc(current_block.last_pc) else {
+                break;
+            };
+            let term_ir = context.registry.lift(term_instr);
+
+            chain.push(current_pc);
+            absorbed.insert(current_pc);
+            depth += 1;
+
+            match &term_ir.terminator {
+                rvr_ir::Terminator::Fall { target } => {
+                    current_pc = target.map_or(current_block.end, |t| X::to_u64(t));
+                }
+                rvr_ir::Terminator::Jump { target } => {
+                    current_pc = X::to_u64(*target);
+                }
+                _ => break,
+            }
+        }
+
+        chain
+    }
+
+    fn apply_superblock_chains(
+        &mut self,
+        superblock_chains: &HashMap<u64, Vec<u64>>,
+        start_to_idx: &HashMap<u64, usize>,
+    ) {
+        for (head_start, chain) in superblock_chains {
+            for &absorbed_start in chain {
+                self.absorbed_to_merged.insert(absorbed_start, *head_start);
+
+                let absorbed_idx = start_to_idx[&absorbed_start];
+                let absorbed_block = &self.blocks[absorbed_idx];
+                self.block_continuations
+                    .entry(*head_start)
+                    .or_default()
+                    .push((absorbed_block.start, absorbed_block.end));
+            }
+        }
     }
 
     /// Apply all transforms in order: merge, tail-dup, superblock.
@@ -721,7 +795,7 @@ impl<X: Xlen> BlockTable<X> {
         (merged, tail_duped, superblocked)
     }
 
-    /// Fix stale absorbed_to_merged mappings by following chains.
+    /// Fix stale `absorbed_to_merged` mappings by following chains.
     ///
     /// After multiple transform passes, a block A might map to block B,
     /// which was subsequently absorbed into block C. This method follows
@@ -808,14 +882,14 @@ mod tests {
             0x93, 0x00, 0xa0, 0x02, // addi x1, x0, 42
             0x13, 0x01, 0xb0, 0x03, // addi x2, x0, 59
         ];
-        let instr_table = InstructionTable::from_bytes(&code, 0x80000000, &registry);
+        let instr_table = InstructionTable::from_bytes(&code, 0x8000_0000, &registry);
         let block_table = BlockTable::linear(instr_table);
 
         assert_eq!(block_table.len(), 2);
-        assert_eq!(block_table.blocks[0].start, 0x80000000);
-        assert_eq!(block_table.blocks[0].end, 0x80000004);
-        assert_eq!(block_table.blocks[1].start, 0x80000004);
-        assert_eq!(block_table.blocks[1].end, 0x80000008);
+        assert_eq!(block_table.blocks[0].start, 0x8000_0000);
+        assert_eq!(block_table.blocks[0].end, 0x8000_0004);
+        assert_eq!(block_table.blocks[1].start, 0x8000_0004);
+        assert_eq!(block_table.blocks[1].end, 0x8000_0008);
     }
 
     #[test]
@@ -827,7 +901,7 @@ mod tests {
             0x13, 0x00, 0x00, 0x00, // nop (unreachable)
             0x93, 0x00, 0xa0, 0x02, // addi x1, x0, 42
         ];
-        let instr_table = InstructionTable::from_bytes(&code, 0x80000000, &registry);
+        let instr_table = InstructionTable::from_bytes(&code, 0x8000_0000, &registry);
         let block_table = BlockTable::from_instruction_table(instr_table, &registry);
 
         // Should have at least 2 blocks (branch creates leader at target)

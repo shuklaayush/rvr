@@ -72,7 +72,7 @@ pub struct RvState<
     /// Has the VM exited?
     pub has_exited: u8,
 
-    /// Exit code (valid when has_exited is true).
+    /// Exit code (valid when `has_exited` is true).
     pub exit_code: u8,
 
     /// Alignment padding (for brk alignment).
@@ -101,6 +101,7 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
     ///
     /// The memory pointer must be valid for the lifetime of the state,
     /// or null if memory will be set later.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             regs: [X::from_u64(0); NUM_REGS],
@@ -121,23 +122,25 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
     }
 
     /// Tracer kind ID for C API.
+    #[must_use]
     pub const fn tracer_kind() -> u32 {
         T::KIND
     }
 
     /// Whether suspender adds fields to the struct.
+    #[must_use]
     pub const fn has_suspender() -> bool {
         S::HAS_FIELDS
     }
 
     /// Get state as a mutable pointer (for FFI).
-    pub fn as_mut_ptr(&mut self) -> *mut Self {
-        self as *mut Self
+    pub const fn as_mut_ptr(&mut self) -> *mut Self {
+        std::ptr::from_mut::<Self>(self)
     }
 
     /// Get state as a void pointer (for FFI).
-    pub fn as_void_ptr(&mut self) -> *mut std::ffi::c_void {
-        self as *mut Self as *mut std::ffi::c_void
+    pub const fn as_void_ptr(&mut self) -> *mut std::ffi::c_void {
+        std::ptr::from_mut::<Self>(self).cast::<std::ffi::c_void>()
     }
 
     /// Reset state to initial values.
@@ -152,55 +155,55 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
     }
 
     /// Check if the VM has exited.
-    pub fn has_exited(&self) -> bool {
+    pub const fn has_exited(&self) -> bool {
         self.has_exited != 0
     }
 
-    /// Get the exit code (only valid if has_exited is true).
-    pub fn exit_code(&self) -> u8 {
+    /// Get the exit code (only valid if `has_exited` is true).
+    pub const fn exit_code(&self) -> u8 {
         self.exit_code
     }
 
     /// Clear the exit flag to allow further execution.
-    pub fn clear_exit(&mut self) {
+    pub const fn clear_exit(&mut self) {
         self.has_exited = 0;
         self.exit_code = 0;
     }
 
     /// Get the instruction count.
-    pub fn instret(&self) -> u64 {
+    pub const fn instret(&self) -> u64 {
         self.instret
     }
 
     /// Get the program counter.
-    pub fn pc(&self) -> X::Reg {
+    pub const fn pc(&self) -> X::Reg {
         self.pc
     }
 
     /// Set the program counter.
-    pub fn set_pc(&mut self, pc: X::Reg) {
+    pub const fn set_pc(&mut self, pc: X::Reg) {
         self.pc = pc;
     }
 
     /// Get a register value.
-    pub fn get_reg(&self, idx: usize) -> X::Reg {
+    pub const fn get_reg(&self, idx: usize) -> X::Reg {
         self.regs[idx]
     }
 
     /// Set a register value.
-    pub fn set_reg(&mut self, idx: usize, val: X::Reg) {
+    pub const fn set_reg(&mut self, idx: usize, val: X::Reg) {
         if idx != 0 {
             self.regs[idx] = val;
         }
     }
 
     /// Set memory pointer.
-    pub fn set_memory(&mut self, memory: *mut u8) {
+    pub const fn set_memory(&mut self, memory: *mut u8) {
         self.memory = memory;
     }
 
     /// Get memory pointer.
-    pub fn memory(&self) -> *mut u8 {
+    pub const fn memory(&self) -> *mut u8 {
         self.memory
     }
 }

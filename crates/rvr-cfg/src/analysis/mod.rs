@@ -1,7 +1,7 @@
 //! Control flow analysis used to identify basic block leaders and targets.
 
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use tracing::{debug, trace, trace_span};
 
 use rvr_isa::{InstrArgs, Xlen};
@@ -122,141 +122,232 @@ fn collect_potential_targets<X: Xlen>(
     let mut regs: [Option<u64>; NUM_REGS] = [None; NUM_REGS];
     regs[0] = Some(0);
 
+    scan_instruction_targets(
+        instruction_table,
+        &mut regs,
+        &mut function_entries,
+        &mut internal_targets,
+        &mut return_sites,
+    );
+
+    (function_entries, internal_targets, return_sites)
+}
+
+fn scan_instruction_targets<X: Xlen>(
+    instruction_table: &InstructionTable<X>,
+    regs: &mut [Option<u64>; NUM_REGS],
+    function_entries: &mut FxHashSet<u64>,
+    internal_targets: &mut FxHashSet<u64>,
+    return_sites: &mut FxHashSet<u64>,
+) {
+    let mut context = TargetScanContext {
+        instruction_table,
+        function_entries,
+        internal_targets,
+        return_sites,
+    };
     let mut pc = instruction_table.base_address();
     let end = instruction_table.end_address();
+    let slot_size = u64::try_from(InstructionTable::<X>::SLOT_SIZE).unwrap_or(0);
+
     while pc < end {
         if !instruction_table.is_valid_pc(pc) {
-            pc += InstructionTable::<X>::SLOT_SIZE as u64;
+            pc += slot_size;
             continue;
         }
 
-        let size = instruction_table.instruction_size_at_pc(pc) as u64;
+        let size = u64::from(instruction_table.instruction_size_at_pc(pc));
         if size == 0 {
-            pc += InstructionTable::<X>::SLOT_SIZE as u64;
+            pc += slot_size;
             continue;
         }
 
-        let instr = match instruction_table.get_at_pc(pc) {
-            Some(instr) => instr,
-            None => {
-                pc += size;
-                continue;
-            }
+        let Some(instr) = instruction_table.get_at_pc(pc) else {
+            pc += size;
+            continue;
         };
 
         let decoded = DecodedInstruction::from_instr(instr);
-        match decoded.kind {
-            InstrKind::Lui => {
-                if let Some(rd) = decoded.rd {
-                    regs[rd as usize] = Some(sign_extend_i32(decoded.imm));
-                }
-            }
-            InstrKind::Auipc => {
-                if let Some(rd) = decoded.rd {
-                    regs[rd as usize] = Some(add_signed(pc, decoded.imm));
-                }
-            }
-            InstrKind::Addi => {
-                if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
-                    if let Some(base) = regs[rs1 as usize] {
-                        let computed = add_signed(base, decoded.imm);
-                        regs[rd as usize] = Some(computed);
-                        if instruction_table.is_valid_pc(computed) {
-                            function_entries.insert(computed);
-                        }
-                    } else {
-                        regs[rd as usize] = None;
-                    }
-                }
-            }
-            InstrKind::Add => {
-                if let (Some(rd), Some(rs1), Some(rs2)) = (decoded.rd, decoded.rs1, decoded.rs2) {
-                    if let (Some(lhs), Some(rhs)) = (regs[rs1 as usize], regs[rs2 as usize]) {
-                        let computed = lhs.wrapping_add(rhs);
-                        regs[rd as usize] = Some(computed);
-                        if instruction_table.is_valid_pc(computed) {
-                            function_entries.insert(computed);
-                        }
-                    } else {
-                        regs[rd as usize] = None;
-                    }
-                }
-            }
-            InstrKind::Move => {
-                if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
-                    regs[rd as usize] = regs[rs1 as usize];
-                }
-            }
-            InstrKind::Load => {
-                if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
-                    if let Some(base) = regs[rs1 as usize] {
-                        let addr = add_signed(base, decoded.imm);
-                        let maybe_val =
-                            instruction_table.read_readonly(addr, decoded.width as usize);
-                        if let Some(raw) = maybe_val {
-                            let extended =
-                                extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
-                            regs[rd as usize] = Some(extended);
-                            if instruction_table.is_valid_pc(extended) {
-                                internal_targets.insert(extended);
-                            }
-                        } else {
-                            regs[rd as usize] = None;
-                        }
-                    } else {
-                        regs[rd as usize] = None;
-                    }
-                }
-            }
-            InstrKind::Jal => {
-                let target = add_signed(pc, decoded.imm);
-                if decoded.is_call() {
-                    if instruction_table.is_valid_pc(target) {
-                        function_entries.insert(target);
-                        return_sites.insert(pc + size);
-                    }
-                } else if instruction_table.is_valid_pc(target) {
-                    internal_targets.insert(target);
-                }
-
-                if let Some(rd) = decoded.rd {
-                    regs[rd as usize] = Some(pc + size);
-                }
-            }
-            InstrKind::Jalr => {
-                if let Some(rs1) = decoded.rs1
-                    && let Some(base) = regs[rs1 as usize]
-                {
-                    let target = add_signed(base, decoded.imm) & !1u64;
-                    if instruction_table.is_valid_pc(target) {
-                        function_entries.insert(target);
-                    }
-                }
-                if decoded.is_call() {
-                    return_sites.insert(pc + size);
-                }
-                if let Some(rd) = decoded.rd {
-                    regs[rd as usize] = Some(pc + size);
-                }
-            }
-            InstrKind::Branch => {
-                let target = add_signed(pc, decoded.imm);
-                if instruction_table.is_valid_pc(target) {
-                    internal_targets.insert(target);
-                }
-                internal_targets.insert(pc + size);
-            }
-            InstrKind::Unknown => {
-                if let Some(rd) = extract_written_reg(&instr.args) {
-                    regs[rd as usize] = None;
-                }
-            }
-        }
+        update_targets_for_decoded(&mut context, regs, pc, size, instr, &decoded);
 
         pc += size;
     }
+}
 
-    (function_entries, internal_targets, return_sites)
+struct TargetScanContext<'a, X: Xlen> {
+    instruction_table: &'a InstructionTable<X>,
+    function_entries: &'a mut FxHashSet<u64>,
+    internal_targets: &'a mut FxHashSet<u64>,
+    return_sites: &'a mut FxHashSet<u64>,
+}
+
+fn update_targets_for_decoded<X: Xlen>(
+    context: &mut TargetScanContext<'_, X>,
+    regs: &mut [Option<u64>; NUM_REGS],
+    pc: u64,
+    size: u64,
+    instr: &rvr_isa::DecodedInstr<X>,
+    decoded: &DecodedInstruction,
+) {
+    match decoded.kind {
+        InstrKind::Lui => handle_lui(regs, decoded),
+        InstrKind::Auipc => handle_auipc(regs, decoded, pc),
+        InstrKind::Addi => handle_addi(regs, decoded, context),
+        InstrKind::Add => handle_add(regs, decoded, context),
+        InstrKind::Move => handle_move(regs, decoded),
+        InstrKind::Load => handle_load(regs, decoded, context),
+        InstrKind::Jal => handle_jal(regs, decoded, context, pc, size),
+        InstrKind::Jalr => handle_jalr(regs, decoded, context, pc, size),
+        InstrKind::Branch => handle_branch(decoded, context, pc, size),
+        InstrKind::Unknown => handle_unknown(regs, instr),
+    }
+}
+
+fn handle_lui(regs: &mut [Option<u64>; NUM_REGS], decoded: &DecodedInstruction) {
+    if let Some(rd) = decoded.rd {
+        regs[rd as usize] = Some(sign_extend_i32(decoded.imm));
+    }
+}
+
+fn handle_auipc(regs: &mut [Option<u64>; NUM_REGS], decoded: &DecodedInstruction, pc: u64) {
+    if let Some(rd) = decoded.rd {
+        regs[rd as usize] = Some(add_signed(pc, decoded.imm));
+    }
+}
+
+fn handle_addi<X: Xlen>(
+    regs: &mut [Option<u64>; NUM_REGS],
+    decoded: &DecodedInstruction,
+    context: &mut TargetScanContext<'_, X>,
+) {
+    if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
+        if let Some(base) = regs[rs1 as usize] {
+            let computed = add_signed(base, decoded.imm);
+            regs[rd as usize] = Some(computed);
+            if context.instruction_table.is_valid_pc(computed) {
+                context.function_entries.insert(computed);
+            }
+        } else {
+            regs[rd as usize] = None;
+        }
+    }
+}
+
+fn handle_add<X: Xlen>(
+    regs: &mut [Option<u64>; NUM_REGS],
+    decoded: &DecodedInstruction,
+    context: &mut TargetScanContext<'_, X>,
+) {
+    if let (Some(rd), Some(rs1), Some(rs2)) = (decoded.rd, decoded.rs1, decoded.rs2) {
+        if let (Some(lhs), Some(rhs)) = (regs[rs1 as usize], regs[rs2 as usize]) {
+            let computed = lhs.wrapping_add(rhs);
+            regs[rd as usize] = Some(computed);
+            if context.instruction_table.is_valid_pc(computed) {
+                context.function_entries.insert(computed);
+            }
+        } else {
+            regs[rd as usize] = None;
+        }
+    }
+}
+
+const fn handle_move(regs: &mut [Option<u64>; NUM_REGS], decoded: &DecodedInstruction) {
+    if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
+        regs[rd as usize] = regs[rs1 as usize];
+    }
+}
+
+fn handle_load<X: Xlen>(
+    regs: &mut [Option<u64>; NUM_REGS],
+    decoded: &DecodedInstruction,
+    context: &mut TargetScanContext<'_, X>,
+) {
+    if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
+        if let Some(base) = regs[rs1 as usize] {
+            let addr = add_signed(base, decoded.imm);
+            let maybe_val = context
+                .instruction_table
+                .read_readonly(addr, decoded.width as usize);
+            if let Some(raw) = maybe_val {
+                let extended = extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
+                regs[rd as usize] = Some(extended);
+                if context.instruction_table.is_valid_pc(extended) {
+                    context.internal_targets.insert(extended);
+                }
+            } else {
+                regs[rd as usize] = None;
+            }
+        } else {
+            regs[rd as usize] = None;
+        }
+    }
+}
+
+fn handle_jal<X: Xlen>(
+    regs: &mut [Option<u64>; NUM_REGS],
+    decoded: &DecodedInstruction,
+    context: &mut TargetScanContext<'_, X>,
+    pc: u64,
+    size: u64,
+) {
+    let target = add_signed(pc, decoded.imm);
+    if decoded.is_call() {
+        if context.instruction_table.is_valid_pc(target) {
+            context.function_entries.insert(target);
+            context.return_sites.insert(pc + size);
+        }
+    } else if context.instruction_table.is_valid_pc(target) {
+        context.internal_targets.insert(target);
+    }
+
+    if let Some(rd) = decoded.rd {
+        regs[rd as usize] = Some(pc + size);
+    }
+}
+
+fn handle_jalr<X: Xlen>(
+    regs: &mut [Option<u64>; NUM_REGS],
+    decoded: &DecodedInstruction,
+    context: &mut TargetScanContext<'_, X>,
+    pc: u64,
+    size: u64,
+) {
+    if let Some(rs1) = decoded.rs1
+        && let Some(base) = regs[rs1 as usize]
+    {
+        let target = add_signed(base, decoded.imm) & !1u64;
+        if context.instruction_table.is_valid_pc(target) {
+            context.function_entries.insert(target);
+        }
+    }
+    if decoded.is_call() {
+        context.return_sites.insert(pc + size);
+    }
+    if let Some(rd) = decoded.rd {
+        regs[rd as usize] = Some(pc + size);
+    }
+}
+
+fn handle_branch<X: Xlen>(
+    decoded: &DecodedInstruction,
+    context: &mut TargetScanContext<'_, X>,
+    pc: u64,
+    size: u64,
+) {
+    let target = add_signed(pc, decoded.imm);
+    if context.instruction_table.is_valid_pc(target) {
+        context.internal_targets.insert(target);
+    }
+    context.internal_targets.insert(pc + size);
+}
+
+const fn handle_unknown<X: Xlen>(
+    regs: &mut [Option<u64>; NUM_REGS],
+    instr: &rvr_isa::DecodedInstr<X>,
+) {
+    if let Some(rd) = extract_written_reg(&instr.args) {
+        regs[rd as usize] = None;
+    }
 }
 
 fn build_call_return_map<X: Xlen>(
@@ -265,25 +356,23 @@ fn build_call_return_map<X: Xlen>(
     let mut call_return_map: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
     let mut pc = instruction_table.base_address();
     let end = instruction_table.end_address();
+    let slot_size = u64::try_from(InstructionTable::<X>::SLOT_SIZE).unwrap_or(0);
 
     while pc < end {
         if !instruction_table.is_valid_pc(pc) {
-            pc += InstructionTable::<X>::SLOT_SIZE as u64;
+            pc += slot_size;
             continue;
         }
 
-        let size = instruction_table.instruction_size_at_pc(pc) as u64;
+        let size = u64::from(instruction_table.instruction_size_at_pc(pc));
         if size == 0 {
-            pc += InstructionTable::<X>::SLOT_SIZE as u64;
+            pc += slot_size;
             continue;
         }
 
-        let instr = match instruction_table.get_at_pc(pc) {
-            Some(instr) => instr,
-            None => {
-                pc += size;
-                continue;
-            }
+        let Some(instr) = instruction_table.get_at_pc(pc) else {
+            pc += size;
+            continue;
         };
         let decoded = DecodedInstruction::from_instr(instr);
 
@@ -312,12 +401,12 @@ fn worklist<X: Xlen>(
     // Pre-allocate with estimated capacity to reduce rehashing
     let estimated_size = function_entries.len() + internal_targets.len();
     let mut states: FxHashMap<u64, RegisterState> =
-        FxHashMap::with_capacity_and_hasher(estimated_size, Default::default());
+        FxHashMap::with_capacity_and_hasher(estimated_size, FxBuildHasher);
     let mut worklist = Vec::with_capacity(estimated_size);
     let mut in_worklist: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(estimated_size, Default::default());
+        FxHashSet::with_capacity_and_hasher(estimated_size, FxBuildHasher);
     let mut successors: FxHashMap<u64, FxHashSet<u64>> =
-        FxHashMap::with_capacity_and_hasher(estimated_size, Default::default());
+        FxHashMap::with_capacity_and_hasher(estimated_size, FxBuildHasher);
     let mut unresolved_dynamic_jumps: FxHashSet<u64> = FxHashSet::default();
 
     // Add all entry points to worklist
@@ -335,9 +424,10 @@ fn worklist<X: Xlen>(
         }
     }
 
-    let max_iterations = (instruction_table.end_address() - instruction_table.base_address())
-        as usize
-        * MAX_ITERATIONS_MULTIPLIER;
+    let span = instruction_table.end_address() - instruction_table.base_address();
+    let max_iterations = usize::try_from(span)
+        .unwrap_or(usize::MAX / MAX_ITERATIONS_MULTIPLIER)
+        .saturating_mul(MAX_ITERATIONS_MULTIPLIER);
 
     let mut idx = 0;
     while idx < worklist.len() {
@@ -354,14 +444,13 @@ fn worklist<X: Xlen>(
             None => continue,
         };
 
-        let size = instruction_table.instruction_size_at_pc(pc) as u64;
+        let size = u64::from(instruction_table.instruction_size_at_pc(pc));
         if size == 0 {
             continue;
         }
 
-        let instr = match instruction_table.get_at_pc(pc) {
-            Some(instr) => instr,
-            None => continue,
+        let Some(instr) = instruction_table.get_at_pc(pc) else {
+            continue;
         };
         let decoded = DecodedInstruction::from_instr(instr);
 
@@ -428,14 +517,13 @@ fn scan_jump_table_targets<X: Xlen>(
             break;
         }
 
-        let size = instruction_table.instruction_size_at_pc(pc) as u64;
+        let size = u64::from(instruction_table.instruction_size_at_pc(pc));
         if size == 0 {
             break;
         }
 
-        let instr = match instruction_table.get_at_pc(pc) {
-            Some(instr) => instr,
-            None => break,
+        let Some(instr) = instruction_table.get_at_pc(pc) else {
+            break;
         };
 
         // This instruction is a valid jump target
@@ -683,7 +771,7 @@ fn compute_leaders<X: Xlen>(
     leaders.extend(return_sites.iter().copied());
 
     for (&pc, succs) in successors {
-        let size = instruction_table.instruction_size_at_pc(pc) as u64;
+        let size = u64::from(instruction_table.instruction_size_at_pc(pc));
         if size == 0 {
             continue;
         }
@@ -738,12 +826,12 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
         // Scan for 4-byte pointers (at 4-byte alignment)
         let mut offset = 0usize;
         while offset + 4 <= data.len() {
-            let val = u32::from_le_bytes([
+            let val = u64::from(u32::from_le_bytes([
                 data[offset],
                 data[offset + 1],
                 data[offset + 2],
                 data[offset + 3],
-            ]) as u64;
+            ]));
             if instruction_table.is_valid_pc(val) {
                 internal_targets.insert(val);
             }
@@ -765,7 +853,7 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
                     data[offset + 7],
                 ]);
                 // Only add if the high bits are non-zero (otherwise already caught by 4-byte scan)
-                if val > u32::MAX as u64 && instruction_table.is_valid_pc(val) {
+                if val > u64::from(u32::MAX) && instruction_table.is_valid_pc(val) {
                     internal_targets.insert(val);
                 }
                 offset += 8;
@@ -774,7 +862,7 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
     }
 }
 
-fn extract_written_reg(args: &InstrArgs) -> Option<u8> {
+const fn extract_written_reg(args: &InstrArgs) -> Option<u8> {
     match *args {
         InstrArgs::R { rd, .. }
         | InstrArgs::R4 { rd, .. }
@@ -795,23 +883,22 @@ fn extract_written_reg(args: &InstrArgs) -> Option<u8> {
 }
 
 fn add_signed(base: u64, imm: i32) -> u64 {
-    let imm = imm as i64 as i128;
-    let base = base as i128;
-    (base + imm) as u64
+    let imm = u64::from_ne_bytes(i64::from(imm).to_ne_bytes());
+    base.wrapping_add(imm)
 }
 
 fn sign_extend_i32(value: i32) -> u64 {
-    value as i64 as u64
+    u64::from_ne_bytes(i64::from(value).to_ne_bytes())
 }
 
-fn extend_loaded_value(value: u64, width: u8, is_unsigned: bool) -> u64 {
+const fn extend_loaded_value(value: u64, width: u8, is_unsigned: bool) -> u64 {
     match width {
         1 => {
             let masked = value & 0xFF;
             if is_unsigned {
                 masked
             } else if masked & 0x80 != 0 {
-                masked | 0xFFFFFFFFFFFFFF00
+                masked | 0xFFFF_FFFF_FFFF_FF00
             } else {
                 masked
             }
@@ -821,7 +908,7 @@ fn extend_loaded_value(value: u64, width: u8, is_unsigned: bool) -> u64 {
             if is_unsigned {
                 masked
             } else if masked & 0x8000 != 0 {
-                masked | 0xFFFFFFFFFFFF0000
+                masked | 0xFFFF_FFFF_FFFF_0000
             } else {
                 masked
             }
@@ -831,7 +918,7 @@ fn extend_loaded_value(value: u64, width: u8, is_unsigned: bool) -> u64 {
             if is_unsigned {
                 masked
             } else if masked & 0x8000_0000 != 0 {
-                masked | 0xFFFFFFFF00000000
+                masked | 0xFFFF_FFFF_0000_0000
             } else {
                 masked
             }
@@ -847,7 +934,7 @@ fn binary_search_le(sorted: &[u64], target: u64) -> Option<u64> {
     let mut lo = 0usize;
     let mut hi = sorted.len();
     while lo < hi {
-        let mid = (lo + hi) / 2;
+        let mid = usize::midpoint(lo, hi);
         if sorted[mid] <= target {
             lo = mid + 1;
         } else {

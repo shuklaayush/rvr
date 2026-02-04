@@ -16,27 +16,30 @@ pub struct RoSegment {
 }
 
 impl RoSegment {
-    pub fn new(start: u64, end: u64, data: Vec<u8>) -> Self {
+    #[must_use]
+    pub const fn new(start: u64, end: u64, data: Vec<u8>) -> Self {
         Self { start, end, data }
     }
 
     /// Check if address is within this segment.
-    pub fn contains(&self, addr: u64) -> bool {
+    #[must_use]
+    pub const fn contains(&self, addr: u64) -> bool {
         addr >= self.start && addr < self.end
     }
 
     /// Read a value from this segment (little-endian, up to 8 bytes).
+    #[must_use]
     pub fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        if !self.contains(addr) || addr + size as u64 > self.end {
+        if !self.contains(addr) || addr + u64::try_from(size).unwrap_or(0) > self.end {
             return None;
         }
-        let offset = (addr - self.start) as usize;
+        let offset = usize::try_from(addr - self.start).ok()?;
         if offset + size > self.data.len() {
             return None;
         }
         let mut value = 0u64;
         for i in 0..size {
-            value |= (self.data[offset + i] as u64) << (i * 8);
+            value |= u64::from(self.data[offset + i]) << (i * 8);
         }
         Some(value)
     }
@@ -83,6 +86,7 @@ impl<X: Xlen> InstructionTable<X> {
     pub const SLOT_SIZE: usize = 2;
 
     /// Create a new instruction table from raw bytes.
+    #[must_use]
     pub fn from_bytes(code: &[u8], base_address: u64, registry: &ExtensionRegistry<X>) -> Self {
         let end_address = base_address + code.len() as u64;
         let total_slots = code.len().div_ceil(Self::SLOT_SIZE);
@@ -100,8 +104,14 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Create a new instruction table with specific address range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the address range does not fit within the host pointer size.
+    #[must_use]
     pub fn new(base_address: u64, end_address: u64, entry_point: u64) -> Self {
-        let total_size = (end_address - base_address) as usize;
+        let total_size = usize::try_from(end_address - base_address)
+            .expect("address range does not fit within host pointer size");
         let total_slots = total_size.div_ceil(Self::SLOT_SIZE);
 
         Self {
@@ -118,7 +128,8 @@ impl<X: Xlen> InstructionTable<X> {
         let mut offset = 0;
 
         while offset + 2 <= code.len() {
-            let pc = self.base_address + (start_slot * Self::SLOT_SIZE + offset) as u64;
+            let pc_offset = u64::try_from(start_slot * Self::SLOT_SIZE + offset).unwrap_or(0);
+            let pc = self.base_address + pc_offset;
             let slot = start_slot + offset / Self::SLOT_SIZE;
 
             if slot >= self.slots.len() {
@@ -128,7 +139,7 @@ impl<X: Xlen> InstructionTable<X> {
             if let Some(instr) = registry.decode(&code[offset..], X::from_u64(pc)) {
                 let size = instr.size as usize;
                 let raw = if size == 2 {
-                    u16::from_le_bytes([code[offset], code[offset + 1]]) as u32
+                    u32::from(u16::from_le_bytes([code[offset], code[offset + 1]]))
                 } else if size == 4 && offset + 4 <= code.len() {
                     u32::from_le_bytes([
                         code[offset],
@@ -139,10 +150,11 @@ impl<X: Xlen> InstructionTable<X> {
                 } else {
                     0
                 };
+                let size_u8 = u8::try_from(size).unwrap_or(0);
 
                 self.slots[slot] = Slot {
                     instr: Some(instr),
-                    size: size as u8,
+                    size: size_u8,
                     raw,
                 };
 
@@ -168,7 +180,11 @@ impl<X: Xlen> InstructionTable<X> {
             return;
         }
 
-        let start_slot = ((segment_start - self.base_address) / Self::SLOT_SIZE as u64) as usize;
+        let Ok(start_slot) = usize::try_from(
+            (segment_start - self.base_address) / u64::try_from(Self::SLOT_SIZE).unwrap_or(1),
+        ) else {
+            return;
+        };
         self.decode_segment(code, start_slot, segment_start, registry);
     }
 
@@ -193,7 +209,7 @@ impl<X: Xlen> InstructionTable<X> {
             if let Some(instr) = registry.decode(&code[offset..], X::from_u64(pc)) {
                 let size = instr.size as usize;
                 let raw = if size == 2 {
-                    u16::from_le_bytes([code[offset], code[offset + 1]]) as u32
+                    u32::from(u16::from_le_bytes([code[offset], code[offset + 1]]))
                 } else if size == 4 && offset + 4 <= code.len() {
                     u32::from_le_bytes([
                         code[offset],
@@ -204,10 +220,11 @@ impl<X: Xlen> InstructionTable<X> {
                 } else {
                     0
                 };
+                let size_u8 = u8::try_from(size).unwrap_or(0);
 
                 self.slots[slot] = Slot {
                     instr: Some(instr),
-                    size: size as u8,
+                    size: size_u8,
                     raw,
                 };
 
@@ -228,6 +245,7 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Get read-only segments for scanning.
+    #[must_use]
     pub fn ro_segments(&self) -> &[RoSegment] {
         &self.ro_segments
     }
@@ -235,16 +253,19 @@ impl<X: Xlen> InstructionTable<X> {
     // ============= Accessors =============
 
     /// Get base address.
-    pub fn base_address(&self) -> u64 {
+    #[must_use]
+    pub const fn base_address(&self) -> u64 {
         self.base_address
     }
 
     /// Get end address (exclusive).
-    pub fn end_address(&self) -> u64 {
+    #[must_use]
+    pub const fn end_address(&self) -> u64 {
         self.end_address
     }
 
     /// Get all entry points for CFG analysis.
+    #[must_use]
     pub fn entry_points(&self) -> &[u64] {
         &self.entry_points
     }
@@ -264,21 +285,24 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Get total number of slots.
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.slots.len()
     }
 
     /// Check if table is empty.
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }
 
     /// Convert PC to slot index.
+    #[must_use]
     pub fn pc_to_index(&self, pc: u64) -> Option<usize> {
         if pc < self.base_address || pc >= self.end_address {
             return None;
         }
-        let offset = (pc - self.base_address) as usize;
+        let offset = usize::try_from(pc - self.base_address).ok()?;
         if !offset.is_multiple_of(Self::SLOT_SIZE) {
             return None;
         }
@@ -286,60 +310,66 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Convert slot index to PC.
+    #[must_use]
     pub fn index_to_pc(&self, index: usize) -> u64 {
-        self.base_address + (index * Self::SLOT_SIZE) as u64
+        let index = u64::try_from(index).unwrap_or(0);
+        self.base_address + index * u64::try_from(Self::SLOT_SIZE).unwrap_or(0)
     }
 
     /// Check if slot is valid.
+    #[must_use]
     pub fn is_valid_index(&self, index: usize) -> bool {
         self.slots
             .get(index)
-            .map(|slot| slot.instr.is_some())
-            .unwrap_or(false)
+            .is_some_and(|slot| slot.instr.is_some())
     }
 
     /// Check if PC points to a valid instruction.
+    #[must_use]
     pub fn is_valid_pc(&self, pc: u64) -> bool {
         self.pc_to_index(pc)
-            .map(|idx| self.is_valid_index(idx))
-            .unwrap_or(false)
+            .is_some_and(|idx| self.is_valid_index(idx))
     }
 
     /// Get instruction at slot index.
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<&DecodedInstr<X>> {
         self.slots.get(index).and_then(|slot| slot.instr.as_ref())
     }
 
     /// Get instruction at PC.
+    #[must_use]
     pub fn get_at_pc(&self, pc: u64) -> Option<&DecodedInstr<X>> {
         self.pc_to_index(pc).and_then(|idx| self.get(idx))
     }
 
     /// Get instruction size at slot index.
+    #[must_use]
     pub fn instruction_size(&self, index: usize) -> u8 {
-        self.slots.get(index).map(|slot| slot.size).unwrap_or(0)
+        self.slots.get(index).map_or(0, |slot| slot.size)
     }
 
     /// Get instruction size at PC.
+    #[must_use]
     pub fn instruction_size_at_pc(&self, pc: u64) -> u8 {
         self.pc_to_index(pc)
-            .map(|idx| self.instruction_size(idx))
-            .unwrap_or(0)
+            .map_or(0, |idx| self.instruction_size(idx))
     }
 
     /// Get raw opcode at slot index.
+    #[must_use]
     pub fn raw_opcode(&self, index: usize) -> u32 {
-        self.slots.get(index).map(|slot| slot.raw).unwrap_or(0)
+        self.slots.get(index).map_or(0, |slot| slot.raw)
     }
 
     /// Get raw opcode at PC.
+    #[must_use]
     pub fn raw_opcode_at_pc(&self, pc: u64) -> u32 {
-        self.pc_to_index(pc)
-            .map(|idx| self.raw_opcode(idx))
-            .unwrap_or(0)
+        self.pc_to_index(pc).map_or(0, |idx| self.raw_opcode(idx))
     }
 
     /// Read a value from read-only memory.
+    #[must_use]
     pub fn read_readonly(&self, addr: u64, size: usize) -> Option<u64> {
         for segment in &self.ro_segments {
             if let Some(value) = segment.read(addr, size) {
@@ -350,9 +380,10 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Get PC of next instruction after given index.
+    #[must_use]
     pub fn next_pc(&self, index: usize) -> u64 {
         let size = self.instruction_size(index);
-        self.index_to_pc(index) + size as u64
+        self.index_to_pc(index) + u64::from(size)
     }
 
     /// Iterate over all valid instruction indices.

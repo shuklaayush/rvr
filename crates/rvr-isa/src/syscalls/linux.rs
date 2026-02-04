@@ -51,6 +51,7 @@ pub struct LinuxHandler {
 }
 
 impl LinuxHandler {
+    #[must_use]
     pub fn new(abi: SyscallAbi) -> Self {
         Self {
             table: linux_table(abi),
@@ -71,7 +72,15 @@ impl<X: Xlen> SyscallHandler<X> for LinuxHandler {
 }
 
 fn linux_table(abi: SyscallAbi) -> SyscallTable {
-    use syscall_nr::*;
+    use syscall_nr::{
+        SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOCK_GETTIME64, SYS_CLOSE, SYS_EXIT, SYS_EXIT_GROUP,
+        SYS_FCNTL, SYS_FSTAT, SYS_GETCWD, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID,
+        SYS_MADVISE, SYS_MMAP, SYS_MPROTECT, SYS_MREMAP, SYS_MUNMAP, SYS_OPENAT, SYS_PREAD64,
+        SYS_PRLIMIT64, SYS_READ, SYS_RISCV_HWPROBE, SYS_RSEQ, SYS_SCHED_GET_PRIORITY_MAX,
+        SYS_SCHED_GET_PRIORITY_MIN, SYS_SCHED_GETPARAM, SYS_SCHED_GETSCHEDULER,
+        SYS_SCHED_SETSCHEDULER, SYS_SET_TID_ADDRESS, SYS_SETPRIORITY, SYS_SYSINFO, SYS_TGKILL,
+        SYS_WRITE,
+    };
     SyscallTable::new(abi)
         .with_exit(SYS_EXIT)
         .with_exit(SYS_EXIT_GROUP)

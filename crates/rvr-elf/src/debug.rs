@@ -1,6 +1,6 @@
 //! Debug info extraction using llvm-addr2line.
 //!
-//! Resolves instruction addresses to source file:line:function mappings
+//! Resolves instruction addresses to source <file:line:function> mappings
 //! for generating #line directives in emitted C code.
 
 use std::collections::HashMap;
@@ -18,6 +18,7 @@ pub struct DebugInfo {
 
 impl DebugInfo {
     /// Create empty debug info.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -31,6 +32,10 @@ impl DebugInfo {
     /// * `elf_path` - Path to the ELF file.
     /// * `addresses` - Addresses to resolve.
     /// * `addr2line_cmd` - The llvm-addr2line command (e.g., "llvm-addr2line-20").
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if temp file creation, addr2line execution, or output parsing fails.
     pub fn load(elf_path: &str, addresses: &[u64], addr2line_cmd: &str) -> Result<Self, String> {
         if addresses.is_empty() {
             return Ok(Self::new());
@@ -38,13 +43,12 @@ impl DebugInfo {
 
         // Write addresses to temp file (one hex address per line)
         let mut tmp =
-            NamedTempFile::new().map_err(|e| format!("failed to create temp file: {}", e))?;
+            NamedTempFile::new().map_err(|e| format!("failed to create temp file: {e}"))?;
         for addr in addresses {
-            writeln!(tmp, "0x{:x}", addr)
-                .map_err(|e| format!("failed to write temp file: {}", e))?;
+            writeln!(tmp, "0x{addr:x}").map_err(|e| format!("failed to write temp file: {e}"))?;
         }
         tmp.flush()
-            .map_err(|e| format!("failed to flush temp file: {}", e))?;
+            .map_err(|e| format!("failed to flush temp file: {e}"))?;
 
         // Run llvm-addr2line via shell with file redirection
         let cmd = format!(
@@ -57,13 +61,13 @@ impl DebugInfo {
         let output = Command::new("sh")
             .args(["-c", &cmd])
             .output()
-            .map_err(|e| format!("failed to run {}: {}", addr2line_cmd, e))?;
+            .map_err(|e| format!("failed to run {addr2line_cmd}: {e}"))?;
 
         // tmp is automatically cleaned up when dropped
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("llvm-addr2line failed: {}", stderr));
+            return Err(format!("llvm-addr2line failed: {stderr}"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -91,22 +95,25 @@ impl DebugInfo {
     }
 
     /// Get source location for an address.
+    #[must_use]
     pub fn get(&self, address: u64) -> Option<&SourceLoc> {
         self.locations.get(&address)
     }
 
     /// Number of resolved locations.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.locations.len()
     }
 
     /// Check if empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.locations.is_empty()
     }
 }
 
-/// Parse addr2line output into a SourceLoc.
+/// Parse addr2line output into a `SourceLoc`.
 fn parse_location(func_line: &str, loc_line: &str) -> SourceLoc {
     // Function name
     let function = if func_line == "??" {
@@ -116,18 +123,19 @@ fn parse_location(func_line: &str, loc_line: &str) -> SourceLoc {
     };
 
     // Location: "file:line" or "file:line (discriminator N)"
-    let (file, line) = if let Some(colon_idx) = loc_line.rfind(':') {
-        let file = &loc_line[..colon_idx];
-        let line_part = &loc_line[colon_idx + 1..];
+    let (file, line) = loc_line.rfind(':').map_or_else(
+        || (String::from("??"), 0),
+        |colon_idx| {
+            let file = &loc_line[..colon_idx];
+            let line_part = &loc_line[colon_idx + 1..];
 
-        // Strip discriminator if present
-        let line_str = line_part.split_whitespace().next().unwrap_or("0");
+            // Strip discriminator if present
+            let line_str = line_part.split_whitespace().next().unwrap_or("0");
 
-        let line = line_str.parse::<u32>().unwrap_or(0);
-        (file.to_string(), line)
-    } else {
-        (String::from("??"), 0)
-    };
+            let line = line_str.parse::<u32>().unwrap_or(0);
+            (file.to_string(), line)
+        },
+    );
 
     SourceLoc::new(&file, line, &function)
 }

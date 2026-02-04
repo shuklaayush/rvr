@@ -23,21 +23,21 @@ pub const OP_ZIP: OpId = OpId::new(EXT_ZBKB, 4);
 pub const OP_UNZIP: OpId = OpId::new(EXT_ZBKB, 5);
 
 // Opcodes
-const OPCODE_OP: u32 = 0b0110011;
-const OPCODE_OP_IMM: u32 = 0b0010011;
-const OPCODE_OP_32: u32 = 0b0111011;
+const OPCODE_OP: u32 = 0b011_0011;
+const OPCODE_OP_IMM: u32 = 0b001_0011;
+const OPCODE_OP_32: u32 = 0b011_1011;
 
 // Encoding constants
-const FUNCT7_PACK: u8 = 0b0000100;
+const FUNCT7_PACK: u8 = 0b000_0100;
 const FUNCT3_PACK: u8 = 0b100;
 const FUNCT3_PACKH: u8 = 0b111;
 
 // BREV8 is encoded as grevi with shamt=7
-const IMM_BREV8: u32 = 0b011010000111;
+const IMM_BREV8: u32 = 0b0110_1000_0111;
 
 // ZIP/UNZIP (RV32 only)
-const IMM_ZIP: u32 = 0b000010001111;
-const IMM_UNZIP: u32 = 0b000010001111;
+const IMM_ZIP: u32 = 0b0000_1000_1111;
+const IMM_UNZIP: u32 = 0b0000_1000_1111;
 
 /// Zbkb extension (bit manipulation for cryptography).
 pub struct ZbkbExtension;
@@ -173,18 +173,15 @@ impl<X: Xlen> InstructionExtension<X> for ZbkbExtension {
 // === Lift helpers ===
 
 fn lift_pack<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
     // pack: rd = (rs2[XLEN/2-1:0] << (XLEN/2)) | rs1[XLEN/2-1:0]
     let result = Expr::pack(Expr::reg(rs1), Expr::reg(rs2));
@@ -200,18 +197,15 @@ fn lift_pack<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
 }
 
 fn lift_packh<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
     // packh: rd = (rs2[7:0] << 8) | rs1[7:0]
     let result = Expr::pack8(Expr::reg(rs1), Expr::reg(rs2));
@@ -227,18 +221,15 @@ fn lift_packh<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
 }
 
 fn lift_packw<X: Xlen>(instr: &DecodedInstr<X>) -> InstrIR<X> {
-    let (rd, rs1, rs2) = match instr.args {
-        InstrArgs::R { rd, rs1, rs2 } => (rd, rs1, rs2),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::R { rd, rs1, rs2 } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
     // packw: rd = sext((rs2[15:0] << 16) | rs1[15:0])
     let result = Expr::pack16(Expr::reg(rs1), Expr::reg(rs2));
@@ -257,18 +248,15 @@ fn lift_unary<X: Xlen, F>(instr: &DecodedInstr<X>, op: F) -> InstrIR<X>
 where
     F: FnOnce(Expr<X>) -> Expr<X>,
 {
-    let (rd, rs1) = match instr.args {
-        InstrArgs::I { rd, rs1, .. } => (rd, rs1),
-        _ => {
-            return InstrIR::new(
-                instr.pc,
-                instr.size,
-                instr.opid.pack(),
-                instr.raw,
-                Vec::new(),
-                Terminator::trap("bad args"),
-            );
-        }
+    let InstrArgs::I { rd, rs1, .. } = instr.args else {
+        return InstrIR::new(
+            instr.pc,
+            instr.size,
+            instr.opid.pack(),
+            instr.raw,
+            Vec::new(),
+            Terminator::trap("bad args"),
+        );
     };
     let result = op(Expr::reg(rs1));
     let stmt = Stmt::write_reg(rd, result);
@@ -295,7 +283,7 @@ fn disasm_r<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
                 reg_name(rs2)
             )
         }
-        _ => format!("{} ???", mnemonic),
+        _ => format!("{mnemonic} ???"),
     }
 }
 
@@ -304,11 +292,11 @@ fn disasm_unary<X: Xlen>(instr: &DecodedInstr<X>, mnemonic: &str) -> String {
         InstrArgs::I { rd, rs1, .. } => {
             format!("{} {}, {}", mnemonic, reg_name(rd), reg_name(rs1))
         }
-        _ => format!("{} ???", mnemonic),
+        _ => format!("{mnemonic} ???"),
     }
 }
 
-/// Table-driven OpInfo for Zbkb extension.
+/// Table-driven `OpInfo` for Zbkb extension.
 const OP_INFO_ZBKB: &[OpInfo] = &[
     OpInfo {
         opid: OP_PACK,
@@ -349,6 +337,7 @@ const OP_INFO_ZBKB: &[OpInfo] = &[
 ];
 
 /// Get mnemonic for Zbkb instruction.
+#[must_use]
 pub fn zbkb_mnemonic(opid: OpId) -> Option<&'static str> {
     OP_INFO_ZBKB
         .iter()
@@ -363,17 +352,20 @@ mod tests {
 
     fn encode_r(opcode: u32, funct3: u8, funct7: u8, rd: u8, rs1: u8, rs2: u8) -> [u8; 4] {
         let raw = opcode
-            | ((rd as u32) << 7)
-            | ((funct3 as u32) << 12)
-            | ((rs1 as u32) << 15)
-            | ((rs2 as u32) << 20)
-            | ((funct7 as u32) << 25);
+            | ((u32::from(rd)) << 7)
+            | ((u32::from(funct3)) << 12)
+            | ((u32::from(rs1)) << 15)
+            | ((u32::from(rs2)) << 20)
+            | ((u32::from(funct7)) << 25);
         raw.to_le_bytes()
     }
 
     fn encode_i(opcode: u32, funct3: u32, rd: u8, rs1: u8, imm12: u32) -> [u8; 4] {
-        let raw =
-            opcode | ((rd as u32) << 7) | (funct3 << 12) | ((rs1 as u32) << 15) | (imm12 << 20);
+        let raw = opcode
+            | ((u32::from(rd)) << 7)
+            | (funct3 << 12)
+            | ((u32::from(rs1)) << 15)
+            | (imm12 << 20);
         raw.to_le_bytes()
     }
 

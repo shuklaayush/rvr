@@ -2,7 +2,9 @@
 
 use rvr_isa::Xlen;
 
-use crate::constants::*;
+use crate::constants::{
+    EF_RISCV_RVC, EF_RISCV_RVE, MAX_SEGMENTS, PF_R, PF_W, PF_X, PT_LOAD, SHF_EXECINSTR, STT_FUNC,
+};
 use crate::file::ElfFile;
 use crate::header::{LoadedSection, ProgramHeader, Symbol};
 use crate::{ElfError, Result};
@@ -22,7 +24,7 @@ pub struct MemorySegment<X: Xlen> {
 
 impl<X: Xlen> MemorySegment<X> {
     /// Size of file data (non-BSS).
-    pub fn filesz(&self) -> u64 {
+    pub const fn filesz(&self) -> u64 {
         self.data.len() as u64
     }
 
@@ -37,27 +39,27 @@ impl<X: Xlen> MemorySegment<X> {
     }
 
     /// Check if segment is read-only (no write flag).
-    pub fn is_readonly(&self) -> bool {
+    pub const fn is_readonly(&self) -> bool {
         (self.flags & PF_W) == 0
     }
 
-    /// Check if segment is executable (has PF_X flag).
-    pub fn is_executable(&self) -> bool {
+    /// Check if segment is executable (has `PF_X` flag).
+    pub const fn is_executable(&self) -> bool {
         (self.flags & PF_X) != 0
     }
 
     /// Check if segment might be executable based on section flags.
-    /// This is a fallback for ELFs with buggy linker scripts that don't set PF_X.
+    /// This is a fallback for ELFs with buggy linker scripts that don't set `PF_X`.
     pub fn has_executable_sections(&self, sections: &[LoadedSection<X>]) -> bool {
-        let seg_start = X::to_u64(self.virtual_start);
-        let seg_end = X::to_u64(self.virtual_end);
+        let segment_start = X::to_u64(self.virtual_start);
+        let segment_end = X::to_u64(self.virtual_end);
 
         for section in sections {
             // Check if section overlaps with this segment
-            let sec_start = X::to_u64(section.addr);
-            let sec_end = sec_start + X::to_u64(section.size);
+            let section_start = X::to_u64(section.addr);
+            let section_end = section_start + X::to_u64(section.size);
 
-            if sec_start < seg_end && sec_end > seg_start {
+            if section_start < segment_end && section_end > segment_start {
                 // Section overlaps - check if it has SHF_EXECINSTR
                 if (section.flags & SHF_EXECINSTR) != 0 {
                     return true;
@@ -80,6 +82,10 @@ pub struct ElfImage<X: Xlen> {
 
 impl<X: Xlen> ElfImage<X> {
     /// Parse ELF from raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ELF file is invalid or has unsupported segments.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let elf = ElfFile::<X>::parse(data)?;
         let loadable = Self::validate_segments(&elf, data)?;
@@ -106,7 +112,7 @@ impl<X: Xlen> ElfImage<X> {
 
     /// Look up a function symbol by name.
     ///
-    /// Only returns symbols with STT_FUNC type.
+    /// Only returns symbols with `STT_FUNC` type.
     pub fn lookup_function(&self, name: &str) -> Option<u64> {
         self.symbols
             .iter()
@@ -134,12 +140,12 @@ impl<X: Xlen> ElfImage<X> {
     }
 
     /// Check if ELF uses the E (embedded) extension with 16 registers.
-    pub fn is_rve(&self) -> bool {
+    pub const fn is_rve(&self) -> bool {
         (self.e_flags & EF_RISCV_RVE) != 0
     }
 
     /// Check if ELF uses the C (compressed) extension.
-    pub fn is_rvc(&self) -> bool {
+    pub const fn is_rvc(&self) -> bool {
         (self.e_flags & EF_RISCV_RVC) != 0
     }
 
@@ -156,7 +162,7 @@ impl<X: Xlen> ElfImage<X> {
 
     /// Get total loaded size (sum of all segment memsz).
     pub fn total_size(&self) -> u64 {
-        self.memory_segments.iter().map(|s| s.memsz()).sum()
+        self.memory_segments.iter().map(MemorySegment::memsz).sum()
     }
 
     fn validate_segments(elf: &ElfFile<X>, file_data: &[u8]) -> Result<Vec<ProgramHeader<X>>> {
@@ -164,8 +170,10 @@ impl<X: Xlen> ElfImage<X> {
 
         for phdr in &elf.program_headers {
             if phdr.p_type == PT_LOAD && X::to_u64(phdr.memsz) > 0 {
-                let offset = X::to_u64(phdr.offset) as usize;
-                let filesz = X::to_u64(phdr.filesz) as usize;
+                let offset = usize::try_from(X::to_u64(phdr.offset))
+                    .map_err(|_| ElfError::ProgramOutOfBounds)?;
+                let filesz = usize::try_from(X::to_u64(phdr.filesz))
+                    .map_err(|_| ElfError::ProgramOutOfBounds)?;
 
                 if offset + filesz > file_data.len() {
                     return Err(ElfError::SegmentBeyondFile);
@@ -191,15 +199,15 @@ impl<X: Xlen> ElfImage<X> {
 
         // Check for overlapping virtual ranges
         for (i, seg_i) in loadable.iter().enumerate() {
-            let seg_i_start = X::to_u64(seg_i.vaddr);
-            let seg_i_end = seg_i_start + X::to_u64(seg_i.memsz);
+            let start_i = X::to_u64(seg_i.vaddr);
+            let end_i = start_i + X::to_u64(seg_i.memsz);
 
             for seg_j in loadable.iter().skip(i + 1) {
-                let seg_j_start = X::to_u64(seg_j.vaddr);
-                let seg_j_end = seg_j_start + X::to_u64(seg_j.memsz);
+                let start_j = X::to_u64(seg_j.vaddr);
+                let end_j = start_j + X::to_u64(seg_j.memsz);
 
                 // Check if ranges overlap
-                if !(seg_i_end <= seg_j_start || seg_j_end <= seg_i_start) {
+                if !(end_i <= start_j || end_j <= start_i) {
                     return Err(ElfError::OverlappingSegments);
                 }
             }
@@ -215,8 +223,9 @@ impl<X: Xlen> ElfImage<X> {
         let mut segments = Vec::with_capacity(program_headers.len());
 
         for phdr in program_headers {
-            let offset = X::to_u64(phdr.offset) as usize;
-            let filesz = X::to_u64(phdr.filesz) as usize;
+            let offset =
+                usize::try_from(X::to_u64(phdr.offset)).expect("segment offset fits usize");
+            let filesz = usize::try_from(X::to_u64(phdr.filesz)).expect("segment size fits usize");
             let vaddr = phdr.vaddr;
             let memsz = phdr.memsz;
 
@@ -244,11 +253,11 @@ mod tests {
     #[test]
     fn test_from_bytecode() {
         let bytecode = vec![0x93, 0x00, 0x10, 0x00]; // ADDI x1, x0, 1
-        let image = ElfImage::<Rv64>::from_bytecode(bytecode.clone(), 0x80000000u64);
+        let image = ElfImage::<Rv64>::from_bytecode(bytecode.clone(), 0x8000_0000_u64);
 
-        assert_eq!(image.entry_point, 0x80000000);
+        assert_eq!(image.entry_point, 0x8000_0000);
         assert_eq!(image.memory_segments.len(), 1);
-        assert_eq!(image.memory_segments[0].virtual_start, 0x80000000);
+        assert_eq!(image.memory_segments[0].virtual_start, 0x8000_0000);
         assert_eq!(image.memory_segments[0].data, bytecode);
     }
 

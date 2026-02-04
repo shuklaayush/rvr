@@ -3,7 +3,7 @@
 //! Provides a small, table-driven mechanism for lowering ECALL to IR.
 //! The default handler matches riscv-tests semantics (exit with a0).
 //! Linux-style syscalls are handled via a syscall table that dispatches
-//! to runtime C helpers (rv_sys_*).
+//! to runtime C helpers (`rv_sys_*`).
 //!
 //! # Usage
 //!

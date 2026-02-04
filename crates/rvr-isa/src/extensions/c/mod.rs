@@ -5,7 +5,6 @@ use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 use super::InstructionExtension;
 use crate::{DecodedInstr, EXT_C, InstrArgs, OpClass, OpId, OpInfo, reg_name};
 
-
 // Quadrant 0
 pub const OP_C_ADDI4SPN: OpId = OpId::new(EXT_C, 0);
 pub const OP_C_LW: OpId = OpId::new(EXT_C, 1);
@@ -50,7 +49,8 @@ pub const OP_C_SDSP: OpId = OpId::new(EXT_C, 33); // RV64C
 pub const OP_C_INVALID: OpId = OpId::new(EXT_C, 34);
 
 /// Get the mnemonic for a C extension instruction.
-pub fn c_mnemonic(opid: OpId) -> &'static str {
+#[must_use]
+pub const fn c_mnemonic(opid: OpId) -> &'static str {
     match opid.idx {
         0 => "c.addi4spn",
         1 => "c.lw",
@@ -115,16 +115,18 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
         };
 
         // Return invalid instruction instead of None for illegal encodings
-        let (opid, args) = result.unwrap_or((
-            OP_C_INVALID,
-            InstrArgs::I {
-                rd: 0,
-                rs1: 0,
-                imm: raw as i32,
-            },
-        ));
+        let (opid, args) = result.unwrap_or_else(|| {
+            (
+                OP_C_INVALID,
+                InstrArgs::I {
+                    rd: 0,
+                    rs1: 0,
+                    imm: i32::from(raw),
+                },
+            )
+        });
 
-        Some(DecodedInstr::new(opid, pc, 2, raw as u32, args))
+        Some(DecodedInstr::new(opid, pc, 2, u32::from(raw), args))
     }
 
     fn lift(&self, instr: &DecodedInstr<X>) -> InstrIR<X> {
@@ -149,7 +151,7 @@ impl<X: Xlen> InstructionExtension<X> for CExtension {
     }
 }
 
-/// Table-driven OpInfo for C extension.
+/// Table-driven `OpInfo` for C extension.
 const OP_INFO_C: &[OpInfo] = &[
     // Quadrant 0
     OpInfo {

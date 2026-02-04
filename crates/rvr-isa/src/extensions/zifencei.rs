@@ -56,7 +56,7 @@ impl<X: Xlen> InstructionExtension<X> for ZifenceiExtension {
     }
 }
 
-/// Table-driven OpInfo for Zifencei extension.
+/// Table-driven `OpInfo` for Zifencei extension.
 const OP_INFO_ZIFENCEI: &[OpInfo] = &[OpInfo {
     opid: OP_FENCE_I,
     name: "fence.i",
