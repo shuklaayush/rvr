@@ -38,14 +38,6 @@ pub const CSR_MCYCLEH: u32 = 0xB80;
 pub const CSR_MINSTRET: u32 = 0xB02;
 pub const CSR_MINSTRETH: u32 = 0xB82;
 
-pub(super) fn expand_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut result = template.replace("{{", "{").replace("}}", "}");
-    for (from, to) in replacements {
-        result = result.replace(from, to);
-    }
-    result
-}
-
 /// Header generation configuration.
 pub struct HeaderConfig<X: Xlen> {
     /// Base name for output files.

@@ -86,7 +86,8 @@ impl Xlen for Rv32 {
 
     #[inline]
     fn from_u64(val: u64) -> u32 {
-        u32::try_from(val).expect("RV32 value fits in u32")
+        let masked = val & u64::from(u32::MAX);
+        u32::try_from(masked).expect("RV32 value fits in u32")
     }
 
     #[inline]

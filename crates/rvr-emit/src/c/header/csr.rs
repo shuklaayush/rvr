@@ -21,7 +21,7 @@ const CSR_HEADER_BODY_MID2: &str = r");
         case CSR_INSTRETH:
             return (";
 const CSR_HEADER_BODY_MID3: &str = r")(";
-const CSR_HEADER_BODY_SUFFIX: &str = r") >> 32);
+const CSR_HEADER_BODY_SUFFIX: &str = r" >> 32);
         default:
             return ";
 const CSR_HEADER_BODY_END: &str = r"->csrs[csr];
