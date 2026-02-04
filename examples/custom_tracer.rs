@@ -15,11 +15,7 @@ use std::process::Command;
 use rvr::{EmitConfig, Pipeline, Runner, Rv64, TracerConfig};
 use rvr_isa::ExtensionRegistry;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (elf_path, output_dir) = parse_args()?;
-
-    // Minimal tracer that counts instructions and register accesses.
-    let tracer_header = r#"/* Minimal custom tracer */
+const TRACER_HEADER: &str = r#"/* Minimal custom tracer */
 #pragma once
 
 #include <stdint.h>
@@ -154,6 +150,12 @@ static inline void trace_csr_write(Tracer* t, uint64_t pc, uint16_t op, uint16_t
 }
 "#;
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (elf_path, output_dir) = parse_args();
+
+    // Minimal tracer that counts instructions and register accesses.
+    let tracer_header = TRACER_HEADER;
+
     let mut config = EmitConfig::<Rv64>::default();
     config.tracer_config = TracerConfig::custom_inline("mini", tracer_header, Vec::new());
 
@@ -189,11 +191,11 @@ static inline void trace_csr_write(Tracer* t, uint64_t pc, uint16_t op, uint16_t
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+fn parse_args() -> (PathBuf, PathBuf) {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
         std::process::exit(1);
     }
-    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
+    (PathBuf::from(&args[1]), PathBuf::from(&args[2]))
 }

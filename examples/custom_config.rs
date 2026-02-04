@@ -30,7 +30,7 @@ use rvr::{AddressMode, EmitConfig, InstretMode, Pipeline, Rv64};
 use rvr_isa::{ExtensionRegistry, syscalls::LinuxHandler, syscalls::SyscallAbi};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (elf_path, output_dir) = parse_args()?;
+    let (elf_path, output_dir) = parse_args();
 
     // Explicit RV64 configuration (use RV32 for rv32 binaries)
     let mut config = EmitConfig::<Rv64>::default();
@@ -85,11 +85,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+fn parse_args() -> (PathBuf, PathBuf) {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
         std::process::exit(1);
     }
-    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
+    (PathBuf::from(&args[1]), PathBuf::from(&args[2]))
 }

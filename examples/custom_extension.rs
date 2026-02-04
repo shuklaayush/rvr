@@ -84,7 +84,7 @@ impl InstructionExtension<Rv64> for ToyExtension {
 
     fn disasm(&self, instr: &DecodedInstr<Rv64>) -> String {
         match &instr.args {
-            InstrArgs::R { rd, rs1, rs2 } => format!("toy.add x{}, x{}, x{}", rd, rs1, rs2),
+            InstrArgs::R { rd, rs1, rs2 } => format!("toy.add x{rd}, x{rs1}, x{rs2}"),
             _ => "toy.add <invalid>".to_string(),
         }
     }
@@ -104,7 +104,7 @@ impl InstructionExtension<Rv64> for ToyExtension {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (elf_path, output_dir) = parse_args()?;
+    let (elf_path, output_dir) = parse_args();
 
     let data = std::fs::read(&elf_path)?;
     let image = rvr::ElfImage::<Rv64>::parse(&data)?;
@@ -137,11 +137,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+fn parse_args() -> (PathBuf, PathBuf) {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
         std::process::exit(1);
     }
-    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
+    (PathBuf::from(&args[1]), PathBuf::from(&args[2]))
 }

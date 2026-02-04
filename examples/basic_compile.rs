@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The output directory will contain:
-//! - `{name}.h` - Header with RvState struct and helpers
+//! - `{name}.h` - Header with `RvState` struct and helpers
 //! - `{name}_blocks.h` - Block declarations
 //! - `{name}_part*.c` - Recompiled code partitions
 //! - `{name}_dispatch.c` - Dispatch table
@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (elf_path, output_dir) = parse_args()?;
+    let (elf_path, output_dir) = parse_args();
 
     // Compile with auto-detected XLEN (RV32 or RV64).
     let lib_path = rvr::compile(&elf_path, &output_dir)?;
@@ -37,11 +37,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+fn parse_args() -> (PathBuf, PathBuf) {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
         eprintln!("Usage: {} <elf_path> <output_dir>", args[0]);
         std::process::exit(1);
     }
-    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
+    (PathBuf::from(&args[1]), PathBuf::from(&args[2]))
 }
