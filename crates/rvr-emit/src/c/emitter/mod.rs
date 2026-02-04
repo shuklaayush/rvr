@@ -7,6 +7,13 @@
 //! - Optional tracing hooks (`trace_block`, `trace_pc`, `trace_branch`_*)
 //! - Optional tohost handling for riscv-tests
 
+mod block;
+mod expr;
+mod terminator;
+
+#[cfg(test)]
+mod tests;
+
 use rvr_ir::Xlen;
 
 use super::signature::{FnSignature, state_ref};
@@ -124,10 +131,3 @@ impl<X: Xlen> CEmitter<X> {
         self.sig.fixed_addresses
     }
 }
-
-mod block;
-mod expr;
-mod terminator;
-
-#[cfg(test)]
-mod tests;

@@ -1,14 +1,14 @@
 //! Differential execution command.
 
+mod pure_c;
+
 use std::path::{Path, PathBuf};
 
 use rvr_emit::Backend;
 
 use crate::cli::{EXIT_FAILURE, EXIT_SUCCESS};
-use rvr::test_support::{diff, trace};
-mod pure_c;
-
 use pure_c::run_pure_c_comparison;
+use rvr::test_support::{diff, trace};
 
 #[derive(Clone, Copy, Debug)]
 enum DiffBackend {

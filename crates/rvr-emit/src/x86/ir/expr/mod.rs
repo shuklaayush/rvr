@@ -1,5 +1,7 @@
 //! IR expression lowering for x86-64.
 
+mod ops;
+
 use rvr_ir::{BinaryOp, Expr, InstrIR, ReadExpr, Terminator, TernaryOp, UnaryOp, Xlen};
 
 use crate::x86::X86Emitter;
@@ -598,5 +600,3 @@ impl<X: Xlen> X86Emitter<X> {
         }
     }
 }
-
-mod ops;

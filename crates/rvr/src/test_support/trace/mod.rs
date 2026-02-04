@@ -3,6 +3,19 @@
 //! Compares instruction traces between rvr and Spike (the RISC-V reference simulator)
 //! to catch bugs at the instruction level rather than just end-state.
 
+mod compare;
+mod parse;
+mod util;
+
+#[cfg(test)]
+mod tests;
+
+pub use compare::{align_traces_at, compare_traces_with_config};
+pub use parse::parse_trace_file;
+pub use util::{
+    elf_entry_point, elf_to_isa, find_spike, isa_from_test_name, run_command_with_timeout,
+};
+
 use std::fmt;
 
 /// A single instruction trace entry.
@@ -112,16 +125,3 @@ impl Default for CompareConfig {
         }
     }
 }
-
-mod compare;
-mod parse;
-mod util;
-
-#[cfg(test)]
-mod tests;
-
-pub use compare::{align_traces_at, compare_traces_with_config};
-pub use parse::parse_trace_file;
-pub use util::{
-    elf_entry_point, elf_to_isa, find_spike, isa_from_test_name, run_command_with_timeout,
-};

@@ -196,39 +196,38 @@
 //! `Pipeline::new()` uses `ExtensionRegistry::standard()` which enables all
 //! common extensions (I, M, A, C, Zicsr, Zifencei, Zba, Zbb, Zbs, Zbkb, Zicond).
 
-// Core types - always available
+// Modules
+mod compile;
+mod error;
+mod pipeline;
+mod recompiler;
+mod runner;
+
+pub mod bench;
+pub mod build_utils;
+pub mod gdb;
+pub mod metrics;
+pub mod perf;
+pub mod test_support;
+
+#[cfg(test)]
+mod tests;
+
+// Re-exports from internal modules
+pub use compile::{
+    CompileOptions, compile, compile_with_options, lift_to_c, lift_to_c_with_options,
+};
+pub use error::{Error, Result};
+pub use pipeline::{Pipeline, PipelineStats};
+pub use recompiler::Recompiler;
+pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
+
+// Re-exports from dependencies
 pub use rvr_elf::{ElfImage, get_elf_xlen};
 pub use rvr_emit::c::TracerConfig;
 pub use rvr_emit::{
     AddressMode, AnalysisMode, Backend, Compiler, EmitConfig, FixedAddressConfig, InstretMode,
     SyscallMode,
 };
-pub use rvr_isa::{Rv32, Rv64, Xlen};
-
-// CSR constants for use with Runner::get_csr/set_csr
 pub use rvr_isa::extensions::{CSR_CYCLE, CSR_INSTRET, CSR_TIME};
-
-pub mod perf;
-mod pipeline;
-pub use pipeline::{Pipeline, PipelineStats};
-
-mod runner;
-pub use runner::{PerfCounters, RunError, RunResult, RunResultWithPerf, Runner};
-
-pub mod bench;
-pub mod build_utils;
-mod compile;
-mod error;
-pub mod gdb;
-pub mod metrics;
-mod recompiler;
-pub mod test_support;
-
-pub use compile::{
-    CompileOptions, compile, compile_with_options, lift_to_c, lift_to_c_with_options,
-};
-pub use error::{Error, Result};
-pub use recompiler::Recompiler;
-
-#[cfg(test)]
-mod tests;
+pub use rvr_isa::{Rv32, Rv64, Xlen};

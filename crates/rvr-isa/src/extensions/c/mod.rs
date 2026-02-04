@@ -1,9 +1,16 @@
 //! C extension (compressed instructions) - decode, lift, disasm.
 
+mod decode;
+mod disasm;
+mod lift;
+
 use rvr_ir::{Expr, InstrIR, Stmt, Terminator, Xlen};
 
 use super::InstructionExtension;
 use crate::{DecodedInstr, EXT_C, InstrArgs, OpClass, OpId, OpInfo, reg_name};
+use decode::{decode_q0, decode_q1, decode_q2};
+use disasm::format_c_instr;
+use lift::lift_c;
 
 // Quadrant 0
 pub const OP_C_ADDI4SPN: OpId = OpId::new(EXT_C, 0);
@@ -361,13 +368,3 @@ const OP_INFO_C: &[OpInfo] = &[
         size_hint: 2,
     },
 ];
-
-// Decode helpers
-
-mod decode;
-mod disasm;
-mod lift;
-
-use decode::{decode_q0, decode_q1, decode_q2};
-use disasm::format_c_instr;
-use lift::lift_c;

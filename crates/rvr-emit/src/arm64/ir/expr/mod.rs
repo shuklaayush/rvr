@@ -1,5 +1,8 @@
 //! IR expression lowering for ARM64.
 
+mod ops_binary;
+mod ops_unary;
+
 use rvr_ir::{
     BinaryOp, Expr, InstrIR, ReadExpr, Stmt, Terminator, TernaryOp, UnaryOp, WriteTarget, Xlen,
 };
@@ -797,6 +800,3 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
     }
 }
-
-mod ops_binary;
-mod ops_unary;

@@ -6,6 +6,14 @@
 //! - Memory and CSR access functions
 //! - Helper functions for bitmanip operations
 
+mod csr;
+mod dispatch;
+mod helpers;
+mod memory;
+mod prelude;
+mod state;
+mod trace;
+
 use std::fmt::Write;
 
 use rvr_ir::Xlen;
@@ -145,11 +153,3 @@ __attribute__((preserve_none)) void rv_trap({});
         cfg.base_name, cfg.sig.params, decls
     )
 }
-
-mod csr;
-mod dispatch;
-mod helpers;
-mod memory;
-mod prelude;
-mod state;
-mod trace;
