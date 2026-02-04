@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CSR_CYCLE, CSR_CYCLEH, CSR_INSTRET, CSR_INSTRETH, CSR_MCYCLE, CSR_MCYCLEH, CSR_MINSTRET,
+    CSR_MINSTRETH, CSR_MISA, HeaderConfig, Write, Xlen,
+};
 
 pub(super) fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let htif_include = if cfg.htif_enabled {
@@ -8,14 +11,14 @@ pub(super) fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String 
     };
 
     // Include tracer header when tracing is enabled
-    let tracer_include = if !cfg.tracer_config.is_none() {
-        "#include \"rv_tracer.h\"\n".to_string()
-    } else {
+    let tracer_include = if cfg.tracer_config.is_none() {
         String::new()
+    } else {
+        "#include \"rv_tracer.h\"\n".to_string()
     };
 
     format!(
-        r#"#pragma once
+        r"#pragma once
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -25,19 +28,17 @@ pub(super) fn gen_pragma_and_includes<X: Xlen>(cfg: &HeaderConfig<X>) -> String 
 #include <assert.h>
 #include <sys/mman.h>
 
-{htif}{tracer}/* Branch prediction hints */
+{htif_include}{tracer_include}/* Branch prediction hints */
 static inline int likely(int x) {{ return __builtin_expect(!!(x), 1); }}
 static inline int unlikely(int x) {{ return __builtin_expect(!!(x), 0); }}
 
-"#,
-        htif = htif_include,
-        tracer = tracer_include,
+",
     )
 }
 
 pub(super) fn gen_constants<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let mut s = format!(
-        r#"/* Architecture constants (C23 constexpr) */
+        r"/* Architecture constants (C23 constexpr) */
 constexpr int XLEN = {xlen};
 
 /* Memory configuration */
@@ -63,7 +64,7 @@ constexpr uint32_t CSR_MINSTRETH = {csr_minstreth:#x};
 constexpr uint32_t RV_DIV_BY_ZERO = UINT32_MAX;
 constexpr int32_t  RV_INT32_MIN   = INT32_MIN;
 
-"#,
+",
         xlen = X::VALUE,
         memory_bits = cfg.memory_bits,
         entry_point = cfg.entry_point,
@@ -82,11 +83,11 @@ constexpr int32_t  RV_INT32_MIN   = INT32_MIN;
     if let Some(fixed) = cfg.fixed_addresses {
         write!(
             s,
-            r#"/* Fixed addresses for state and memory (requires runtime mapping) */
+            r"/* Fixed addresses for state and memory (requires runtime mapping) */
 constexpr uint64_t RV_STATE_ADDR  = {:#x}ull;
 constexpr uint64_t RV_MEMORY_ADDR = {:#x}ull;
 
-"#,
+",
             fixed.state_addr, fixed.memory_addr
         )
         .unwrap();

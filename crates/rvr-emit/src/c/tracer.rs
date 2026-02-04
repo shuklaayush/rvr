@@ -4,6 +4,7 @@
 //! tracer or loads a custom header and describes which tracer fields are
 //! passed directly to block functions.
 
+use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
 
@@ -36,12 +37,14 @@ pub enum TracerKind {
 
 impl TracerKind {
     /// Check if this kind is none.
+    #[must_use]
     pub fn is_none(&self) -> bool {
         *self == Self::None
     }
 
     /// String label for metadata.
-    pub fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Preflight => "preflight",
@@ -56,7 +59,8 @@ impl TracerKind {
     }
 
     /// Numeric kind id for C API (matches runtime expectations).
-    pub fn as_c_kind(self) -> u32 {
+    #[must_use]
+    pub const fn as_c_kind(self) -> u32 {
         match self {
             Self::None => 0,
             Self::Preflight => 1,
@@ -84,17 +88,18 @@ pub enum TracerSource {
 
 impl TracerSource {
     /// Name used for display/logging.
+    #[must_use]
     pub fn name(&self) -> &str {
         match self {
-            TracerSource::Builtin(kind) => kind.as_str(),
-            TracerSource::Inline { name, .. } => name,
-            TracerSource::File { name, .. } => name,
+            Self::Builtin(kind) => kind.as_str(),
+            Self::Inline { name, .. } | Self::File { name, .. } => name,
         }
     }
 
     /// Return true when this represents a disabled tracer.
-    pub fn is_none(&self) -> bool {
-        matches!(self, TracerSource::Builtin(TracerKind::None))
+    #[must_use]
+    pub const fn is_none(&self) -> bool {
+        matches!(self, Self::Builtin(TracerKind::None))
     }
 }
 
@@ -138,7 +143,7 @@ impl PassedVar {
 pub enum PassedVarKind {
     /// Pointer: {rtype}* name
     Ptr,
-    /// Index: uint32_t name
+    /// Index: `uint32_t` name
     Index,
     /// Value: {rtype} name
     Value,
@@ -155,6 +160,7 @@ pub struct TracerConfig {
 
 impl TracerConfig {
     /// Create config for a built-in tracer kind.
+    #[must_use]
     pub fn builtin(kind: TracerKind) -> Self {
         let passed_vars = match kind {
             TracerKind::Preflight => vec![
@@ -172,36 +178,43 @@ impl TracerConfig {
     }
 
     /// No tracing.
+    #[must_use]
     pub fn none() -> Self {
         Self::builtin(TracerKind::None)
     }
 
-    /// Preflight tracer with default passed vars (data, data_idx, pc, pc_idx).
+    /// Preflight tracer with default passed vars (data, `data_idx`, pc, `pc_idx`).
+    #[must_use]
     pub fn preflight() -> Self {
         Self::builtin(TracerKind::Preflight)
     }
 
     /// Stats tracer.
+    #[must_use]
     pub fn stats() -> Self {
         Self::builtin(TracerKind::Stats)
     }
 
     /// FFI tracer.
+    #[must_use]
     pub fn ffi() -> Self {
         Self::builtin(TracerKind::Ffi)
     }
 
     /// Dynamic tracer.
+    #[must_use]
     pub fn dynamic() -> Self {
         Self::builtin(TracerKind::Dynamic)
     }
 
     /// Debug tracer.
+    #[must_use]
     pub fn debug() -> Self {
         Self::builtin(TracerKind::Debug)
     }
 
     /// Spike-compatible tracer.
+    #[must_use]
     pub fn spike() -> Self {
         Self::builtin(TracerKind::Spike)
     }
@@ -237,6 +250,7 @@ impl TracerConfig {
     }
 
     /// Replace passed vars.
+    #[must_use]
     pub fn with_passed_vars(mut self, vars: Vec<PassedVar>) -> Self {
         self.passed_vars = vars;
         self
@@ -248,29 +262,34 @@ impl TracerConfig {
     }
 
     /// Check if tracing is disabled.
-    pub fn is_none(&self) -> bool {
+    #[must_use]
+    pub const fn is_none(&self) -> bool {
         self.source.is_none()
     }
 
     /// Return built-in tracer kind if configured.
-    pub fn builtin_kind(&self) -> Option<TracerKind> {
+    #[must_use]
+    pub const fn builtin_kind(&self) -> Option<TracerKind> {
         match &self.source {
             TracerSource::Builtin(kind) => Some(*kind),
             _ => None,
         }
     }
 
-    /// Check if RvState needs a Tracer field.
-    pub fn has_tracer_struct(&self) -> bool {
+    /// Check if `RvState` needs a Tracer field.
+    #[must_use]
+    pub const fn has_tracer_struct(&self) -> bool {
         !self.is_none()
     }
 
     /// Check if there are passed variables.
-    pub fn has_passed_vars(&self) -> bool {
+    #[must_use]
+    pub const fn has_passed_vars(&self) -> bool {
         !self.passed_vars.is_empty()
     }
 
     /// Parse tracer type from string for built-ins.
+    #[must_use]
     pub fn from_string(s: &str) -> Option<Self> {
         match s {
             "none" => Some(Self::none()),
@@ -284,7 +303,8 @@ impl TracerConfig {
         }
     }
 
-    /// Generate passed-var params (", uint64_t* data, uint32_t data_idx, ...").
+    /// Generate passed-var params (", `uint64_t`* data, `uint32_t` `data_idx`, ...").
+    #[must_use]
     pub fn passed_var_params<X: Xlen>(&self) -> String {
         if self.passed_vars.is_empty() {
             return String::new();
@@ -294,16 +314,17 @@ impl TracerConfig {
         let mut result = String::new();
         for var in &self.passed_vars {
             let param_type = match var.kind {
-                PassedVarKind::Ptr => format!("{}*", rtype),
+                PassedVarKind::Ptr => format!("{rtype}*"),
                 PassedVarKind::Index => "uint32_t".to_string(),
                 PassedVarKind::Value => rtype.to_string(),
             };
-            result.push_str(&format!(", {} {}", param_type, var.name));
+            let _ = write!(result, ", {param_type} {}", var.name);
         }
         result
     }
 
-    /// Generate passed-var args (", data, data_idx, ...").
+    /// Generate passed-var args (", data, `data_idx`, ...").
+    #[must_use]
     pub fn passed_var_args(&self) -> String {
         if self.passed_vars.is_empty() {
             return String::new();
@@ -311,12 +332,13 @@ impl TracerConfig {
 
         let mut result = String::new();
         for var in &self.passed_vars {
-            result.push_str(&format!(", {}", var.name));
+            let _ = write!(result, ", {}", var.name);
         }
         result
     }
 
     /// Generate passed-var args from state->tracer (", state->tracer.data, ...").
+    #[must_use]
     pub fn passed_var_args_from_state(&self) -> String {
         if self.passed_vars.is_empty() {
             return String::new();
@@ -324,12 +346,13 @@ impl TracerConfig {
 
         let mut result = String::new();
         for var in &self.passed_vars {
-            result.push_str(&format!(", state->tracer.{}", var.name));
+            let _ = write!(result, ", state->tracer.{}", var.name);
         }
         result
     }
 
     /// Generate save-to-state code for passed vars.
+    #[must_use]
     pub fn passed_var_save_to_state(&self) -> String {
         if self.passed_vars.is_empty() {
             return String::new();
@@ -338,7 +361,7 @@ impl TracerConfig {
         let mut result = String::new();
         for var in &self.passed_vars {
             if var.kind == PassedVarKind::Index {
-                result.push_str(&format!(" state->tracer.{0} = {0};", var.name));
+                let _ = write!(result, " state->tracer.{0} = {0};", var.name);
             }
         }
         result
@@ -352,6 +375,9 @@ impl Default for TracerConfig {
 }
 
 /// Generate tracer header based on config.
+///
+/// # Errors
+/// Returns any error from reading a tracer header file from disk.
 pub fn gen_tracer_header<X: Xlen>(cfg: &TracerConfig) -> std::io::Result<String> {
     match &cfg.source {
         TracerSource::Builtin(kind) => Ok(tracers::gen_tracer_header::<X>(*kind)),

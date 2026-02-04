@@ -2,6 +2,8 @@
 
 use rvr_ir::Xlen;
 
+use crate::c::TracerKind;
+
 use super::Arm64Emitter;
 use super::registers::reserved;
 
@@ -39,7 +41,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_blank();
     }
 
-    /// Emit the .text section with asm_run entry point.
+    /// Emit the .text section with `asm_run` entry point.
     pub fn emit_text_section(&mut self) {
         self.emit_raw(".section .text");
         self.emit_raw(".global asm_run");
@@ -48,7 +50,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Emit the function prologue.
-    /// Arguments: x0 = RvState*, x1 = memory base (unless fixed addresses)
+    /// Arguments: x0 = `RvState`*, x1 = memory base (unless fixed addresses)
     pub fn emit_prologue(&mut self) {
         self.emit_label("asm_run");
         self.emit_comment("Save callee-saved registers");
@@ -69,11 +71,8 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit("stp x13, x14, [sp, #-16]!");
         self.emit("stp x15, x16, [sp, #-16]!");
         self.emit("stp x17, x18, [sp, #-16]!");
-        if Arm64Emitter::<X>::TEMP_STACK_BYTES > 0 {
-            self.emitf(format!(
-                "sub sp, sp, #{}",
-                Arm64Emitter::<X>::TEMP_STACK_BYTES
-            ));
+        if Self::TEMP_STACK_BYTES > 0 {
+            self.emitf(format!("sub sp, sp, #{}", Self::TEMP_STACK_BYTES));
         }
         self.emit_blank();
 
@@ -144,11 +143,8 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_blank();
 
         self.emit_comment("Restore callee-saved registers");
-        if Arm64Emitter::<X>::TEMP_STACK_BYTES > 0 {
-            self.emitf(format!(
-                "add sp, sp, #{}",
-                Arm64Emitter::<X>::TEMP_STACK_BYTES
-            ));
+        if Self::TEMP_STACK_BYTES > 0 {
+            self.emitf(format!("add sp, sp, #{}", Self::TEMP_STACK_BYTES));
         }
         // Restore in reverse order
         self.emit("ldp x17, x18, [sp], #16");
@@ -181,7 +177,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_blank();
     }
 
-    /// Emit rv_execute_from wrapper that the runner expects.
+    /// Emit `rv_execute_from` wrapper that the runner expects.
     pub(super) fn emit_runtime_wrapper(&mut self) {
         self.emit_raw(".global rv_execute_from");
         self.emit_raw(".type rv_execute_from, %function");
@@ -198,16 +194,16 @@ impl<X: Xlen> Arm64Emitter<X> {
         // Store start_pc to state->pc
         let pc_offset = self.layout.offset_pc;
         if X::VALUE == 32 {
-            self.emitf(format!("str w1, [x0, #{}]", pc_offset));
+            self.emitf(format!("str w1, [x0, #{pc_offset}]"));
         } else {
-            self.emitf(format!("str x1, [x0, #{}]", pc_offset));
+            self.emitf(format!("str x1, [x0, #{pc_offset}]"));
         }
 
         // Load memory pointer from state for the asm_run call (non-fixed mode)
         if self.config.fixed_addresses.is_none() {
             let memory_offset = self.layout.offset_memory;
             self.emit_comment("Load memory pointer from state");
-            self.emitf(format!("ldr x1, [x0, #{}]", memory_offset));
+            self.emitf(format!("ldr x1, [x0, #{memory_offset}]"));
         }
 
         // Call asm_run
@@ -216,7 +212,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         // Restore state pointer and return has_exited
         self.emit("ldr x0, [sp], #16"); // Restore state pointer
         let has_exited_offset = self.layout.offset_has_exited;
-        self.emitf(format!("ldrb w0, [x0, #{}]", has_exited_offset));
+        self.emitf(format!("ldrb w0, [x0, #{has_exited_offset}]"));
         self.emit("ldp x29, x30, [sp], #16");
         self.emit("ret");
         self.emit_blank();
@@ -228,7 +224,6 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emit_blank();
 
         // RV_TRACER_KIND
-        use crate::c::TracerKind;
         let tracer_kind = self
             .config
             .tracer_config
@@ -237,25 +232,21 @@ impl<X: Xlen> Arm64Emitter<X> {
             .as_c_kind();
         self.emit_raw(".global RV_TRACER_KIND");
         self.emit_label("RV_TRACER_KIND");
-        self.emitf(format!(".word {}", tracer_kind));
+        self.emitf(format!(".word {tracer_kind}"));
         self.emit_blank();
 
         // RV_EXPORT_FUNCTIONS
-        let export_functions = if self.config.export_functions {
-            1u32
-        } else {
-            0
-        };
+        let export_functions = u32::from(self.config.export_functions);
         self.emit_raw(".global RV_EXPORT_FUNCTIONS");
         self.emit_label("RV_EXPORT_FUNCTIONS");
-        self.emitf(format!(".word {}", export_functions));
+        self.emitf(format!(".word {export_functions}"));
         self.emit_blank();
 
         // RV_INSTRET_MODE
         let instret_mode = self.config.instret_mode.as_c_mode();
         self.emit_raw(".global RV_INSTRET_MODE");
         self.emit_label("RV_INSTRET_MODE");
-        self.emitf(format!(".word {}", instret_mode));
+        self.emitf(format!(".word {instret_mode}"));
         self.emit_blank();
 
         // Fixed addresses (if enabled)

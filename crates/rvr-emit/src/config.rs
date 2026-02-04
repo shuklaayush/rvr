@@ -20,7 +20,8 @@ pub const NUM_REGS_I: usize = 32;
 pub const NUM_REGS_E: usize = 16;
 
 /// Get platform-specific default total slots for a given backend.
-pub fn default_total_slots_for_backend(backend: Backend) -> usize {
+#[must_use]
+pub const fn default_total_slots_for_backend(backend: Backend) -> usize {
     match backend {
         Backend::C => c_config::default_total_slots(),
         Backend::X86Asm => x86::HOT_REG_SLOTS,
@@ -65,21 +66,25 @@ pub enum InstretMode {
 }
 
 impl InstretMode {
+    #[must_use]
     pub fn counts(&self) -> bool {
         *self != Self::Off
     }
 
-    pub fn suspends(&self) -> bool {
+    #[must_use]
+    pub const fn suspends(&self) -> bool {
         matches!(self, Self::Suspend | Self::PerInstruction)
     }
 
     /// True if suspension check is emitted after every instruction.
+    #[must_use]
     pub fn per_instruction(&self) -> bool {
         *self == Self::PerInstruction
     }
 
-    /// Convert to C constant value for RV_INSTRET_MODE export.
-    pub fn as_c_mode(&self) -> u32 {
+    /// Convert to C constant value for `RV_INSTRET_MODE` export.
+    #[must_use]
+    pub const fn as_c_mode(&self) -> u32 {
         match self {
             Self::Off => 0,
             Self::Count => 1,
@@ -127,7 +132,8 @@ impl AddressMode {
     /// Whether addresses should be masked to memory size.
     ///
     /// True for Wrap and Bounds modes. C emitters use `& MASK`, x86 uses `and`.
-    pub fn needs_mask(self) -> bool {
+    #[must_use]
+    pub const fn needs_mask(self) -> bool {
         matches!(self, Self::Wrap | Self::Bounds)
     }
 
@@ -135,6 +141,7 @@ impl AddressMode {
     ///
     /// True for Bounds mode only. C emitters use `if (out_of_bounds) trap()`,
     /// x86 uses `cmp; jbe ok; jmp trap; ok:`.
+    #[must_use]
     pub fn needs_bounds_check(self) -> bool {
         self == Self::Bounds
     }
@@ -142,6 +149,7 @@ impl AddressMode {
     /// Whether addresses are assumed valid (for optimizer hints).
     ///
     /// True for Unchecked mode. C emitters use `__builtin_assume()`.
+    #[must_use]
     pub fn assumes_valid(self) -> bool {
         self == Self::Unchecked
     }
@@ -186,7 +194,7 @@ pub enum AnalysisMode {
 /// - Below typical mmap regions (~0x7f... on Linux)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedAddressConfig {
-    /// Fixed address for RvState struct.
+    /// Fixed address for `RvState` struct.
     pub state_addr: u64,
     /// Fixed address for guest memory base.
     pub memory_addr: u64,
@@ -198,6 +206,70 @@ impl Default for FixedAddressConfig {
             state_addr: 0x10_0000_0000,  // 64 GB
             memory_addr: 0x20_0000_0000, // 128 GB
         }
+    }
+}
+
+/// Codegen feature flags for emitters.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmitFlags(u32);
+
+impl EmitFlags {
+    const EMIT_COMMENTS: u32 = 1 << 0;
+    const EMIT_LINE_INFO: u32 = 1 << 1;
+    const HTIF_ENABLED: u32 = 1 << 2;
+    const HTIF_VERBOSE: u32 = 1 << 3;
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    const fn contains(self, mask: u32) -> bool {
+        (self.0 & mask) != 0
+    }
+
+    const fn set(&mut self, mask: u32, enabled: bool) {
+        if enabled {
+            self.0 |= mask;
+        } else {
+            self.0 &= !mask;
+        }
+    }
+
+    #[must_use]
+    pub const fn emit_comments(self) -> bool {
+        self.contains(Self::EMIT_COMMENTS)
+    }
+
+    pub const fn set_emit_comments(&mut self, enabled: bool) {
+        self.set(Self::EMIT_COMMENTS, enabled);
+    }
+
+    #[must_use]
+    pub const fn emit_line_info(self) -> bool {
+        self.contains(Self::EMIT_LINE_INFO)
+    }
+
+    pub const fn set_emit_line_info(&mut self, enabled: bool) {
+        self.set(Self::EMIT_LINE_INFO, enabled);
+    }
+
+    #[must_use]
+    pub const fn htif_enabled(self) -> bool {
+        self.contains(Self::HTIF_ENABLED)
+    }
+
+    pub const fn set_htif_enabled(&mut self, enabled: bool) {
+        self.set(Self::HTIF_ENABLED, enabled);
+    }
+
+    #[must_use]
+    pub const fn htif_verbose(self) -> bool {
+        self.contains(Self::HTIF_VERBOSE)
+    }
+
+    pub const fn set_htif_verbose(&mut self, enabled: bool) {
+        self.set(Self::HTIF_VERBOSE, enabled);
     }
 }
 
@@ -216,14 +288,8 @@ pub struct EmitConfig<X: Xlen> {
     pub address_mode: AddressMode,
     /// Instruction retirement mode.
     pub instret_mode: InstretMode,
-    /// Emit comments in generated C code.
-    pub emit_comments: bool,
-    /// Emit #line directives for source-level debugging.
-    pub emit_line_info: bool,
-    /// Enable HTIF (Host-Target Interface) for riscv-tests.
-    pub htif_enabled: bool,
-    /// Print HTIF stdout (guest console output).
-    pub htif_verbose: bool,
+    /// Code generation feature flags.
+    pub flags: EmitFlags,
     /// Memory address bits (default 32).
     pub memory_bits: u8,
     /// Tracer configuration.
@@ -254,6 +320,12 @@ impl<X: Xlen> Default for EmitConfig<X> {
 impl<X: Xlen> EmitConfig<X> {
     /// Create base config without hot registers (internal use).
     fn base(num_regs: usize) -> Self {
+        let mut flags = EmitFlags::empty();
+        flags.set_emit_comments(true);
+        flags.set_emit_line_info(true);
+        flags.set_htif_enabled(false);
+        flags.set_htif_verbose(false);
+
         Self {
             num_regs,
             hot_regs: Vec::new(),
@@ -261,10 +333,7 @@ impl<X: Xlen> EmitConfig<X> {
             analysis_mode: AnalysisMode::default(),
             address_mode: AddressMode::default(),
             instret_mode: InstretMode::Count,
-            emit_comments: true,
-            emit_line_info: true,
-            htif_enabled: false,
-            htif_verbose: false,
+            flags,
             memory_bits: 32,
             tracer_config: TracerConfig::none(),
             compiler: Compiler::default(),
@@ -278,6 +347,11 @@ impl<X: Xlen> EmitConfig<X> {
     }
 
     /// Create config with specified register count and platform-optimized hot registers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_regs` is not a supported register count.
+    #[must_use]
     pub fn new(num_regs: usize) -> Self {
         assert!(num_regs == NUM_REGS_I || num_regs == NUM_REGS_E);
         let mut config = Self::base(num_regs);
@@ -289,6 +363,7 @@ impl<X: Xlen> EmitConfig<X> {
     ///
     /// This initializes hot registers based on platform-specific total slots
     /// and the given tracer configuration.
+    #[must_use]
     pub fn with_defaults(num_regs: usize, total_slots: usize, tracer_config: TracerConfig) -> Self {
         let mut config = Self::base(num_regs);
         config.tracer_config = tracer_config;
@@ -297,6 +372,7 @@ impl<X: Xlen> EmitConfig<X> {
     }
 
     /// Create config with standard platform defaults.
+    #[must_use]
     pub fn standard() -> Self {
         Self::with_defaults(
             NUM_REGS_I,
@@ -307,7 +383,7 @@ impl<X: Xlen> EmitConfig<X> {
 
     /// Initialize hot register list with the specified number of hot registers.
     ///
-    /// Only includes registers that exist (< num_regs) for E extension support.
+    /// Only includes registers that exist (< `num_regs`) for E extension support.
     fn init_hot_regs_count(&mut self, num_hot_regs: usize) {
         self.hot_regs.clear();
 
@@ -327,7 +403,7 @@ impl<X: Xlen> EmitConfig<X> {
     /// Initialize hot register list from total argument slots (C backend).
     ///
     /// For C backend: subtracts fixed slots (state, memory, instret) from total.
-    /// Only includes registers that exist (< num_regs) for E extension support.
+    /// Only includes registers that exist (< `num_regs`) for E extension support.
     pub fn init_hot_regs(&mut self, total_slots: usize) {
         let num_hot_regs = c_config::compute_num_hot_regs(
             total_slots,
@@ -362,69 +438,105 @@ impl<X: Xlen> EmitConfig<X> {
     }
 
     /// Check if register index is valid.
-    pub fn is_valid_reg(&self, reg: u8) -> bool {
+    #[must_use]
+    pub const fn is_valid_reg(&self, reg: u8) -> bool {
         (reg as usize) < self.num_regs
     }
 
     /// Check if register is in hot list.
+    #[must_use]
     pub fn is_hot_reg(&self, reg: u8) -> bool {
         reg != 0 && self.hot_regs.contains(&reg)
     }
 
     /// Number of hot registers.
-    pub fn num_hot_regs(&self) -> usize {
+    #[must_use]
+    pub const fn num_hot_regs(&self) -> usize {
         self.hot_regs.len()
     }
 
     /// Check if tracing is enabled.
-    pub fn has_tracing(&self) -> bool {
+    #[must_use]
+    pub const fn has_tracing(&self) -> bool {
         !self.tracer_config.is_none()
     }
 
+    /// Check if emit comments is enabled.
+    #[must_use]
+    pub const fn emit_comments(&self) -> bool {
+        self.flags.emit_comments()
+    }
+
+    /// Check if emit line info is enabled.
+    #[must_use]
+    pub const fn emit_line_info(&self) -> bool {
+        self.flags.emit_line_info()
+    }
+
+    /// Check if HTIF is enabled.
+    #[must_use]
+    pub const fn htif_enabled(&self) -> bool {
+        self.flags.htif_enabled()
+    }
+
+    /// Check if HTIF verbose is enabled.
+    #[must_use]
+    pub const fn htif_verbose(&self) -> bool {
+        self.flags.htif_verbose()
+    }
+
     /// Set address translation mode.
-    pub fn with_address_mode(mut self, mode: AddressMode) -> Self {
+    #[must_use]
+    pub const fn with_address_mode(mut self, mode: AddressMode) -> Self {
         self.address_mode = mode;
         self
     }
 
     /// Set tracer configuration.
+    #[must_use]
     pub fn with_tracer(mut self, config: TracerConfig) -> Self {
         self.tracer_config = config;
         self
     }
 
     /// Set instret mode.
-    pub fn with_instret_mode(mut self, mode: InstretMode) -> Self {
+    #[must_use]
+    pub const fn with_instret_mode(mut self, mode: InstretMode) -> Self {
         self.instret_mode = mode;
         self
     }
 
     /// Set tohost enabled.
-    pub fn with_tohost(mut self, enabled: bool) -> Self {
-        self.htif_enabled = enabled;
+    #[must_use]
+    pub const fn with_tohost(mut self, enabled: bool) -> Self {
+        self.flags.set_htif_enabled(enabled);
         self
     }
 
     /// Set HTIF verbose (print guest stdout).
-    pub fn with_htif_verbose(mut self, verbose: bool) -> Self {
-        self.htif_verbose = verbose;
+    #[must_use]
+    pub const fn with_htif_verbose(mut self, verbose: bool) -> Self {
+        self.flags.set_htif_verbose(verbose);
         self
     }
 
     /// Set C compiler.
+    #[must_use]
     pub fn with_compiler(mut self, compiler: Compiler) -> Self {
         self.compiler = compiler;
         self
     }
 
-    /// Set emit_line_info (for #line directives).
-    pub fn with_line_info(mut self, enabled: bool) -> Self {
-        self.emit_line_info = enabled;
+    /// Set `emit_line_info` (for #line directives).
+    #[must_use]
+    pub const fn with_line_info(mut self, enabled: bool) -> Self {
+        self.flags.set_emit_line_info(enabled);
         self
     }
 
     /// Set syscall mode.
-    pub fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
+    #[must_use]
+    pub const fn with_syscall_mode(mut self, mode: SyscallMode) -> Self {
         self.syscall_mode = mode;
         self
     }
@@ -433,6 +545,7 @@ impl<X: Xlen> EmitConfig<X> {
     ///
     /// When enabled, state/memory are accessed via compile-time constant addresses
     /// instead of function arguments. Requires runtime to map at these addresses.
+    #[must_use]
     pub fn with_fixed_addresses(mut self, config: FixedAddressConfig) -> Self {
         self.fixed_addresses = Some(config);
         // Re-compute hot registers since fixed_addresses affects the calculation
@@ -441,7 +554,8 @@ impl<X: Xlen> EmitConfig<X> {
     }
 
     /// Enable perf mode (disables instret and CSR reads).
-    pub fn with_perf_mode(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_perf_mode(mut self, enabled: bool) -> Self {
         self.perf_mode = enabled;
         if enabled {
             self.instret_mode = InstretMode::Off;
@@ -453,18 +567,21 @@ impl<X: Xlen> EmitConfig<X> {
     ///
     /// Superblocks merge fall-through blocks after branches for better performance,
     /// but prevent dispatch to mid-block addresses. Disable for differential testing.
-    pub fn with_superblock(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_superblock(mut self, enabled: bool) -> Self {
         self.enable_superblock = enabled;
         self
     }
 
     /// Check if fixed addresses are enabled.
-    pub fn has_fixed_addresses(&self) -> bool {
+    #[must_use]
+    pub const fn has_fixed_addresses(&self) -> bool {
         self.fixed_addresses.is_some()
     }
 
     /// Bytes per register based on XLEN.
-    pub fn reg_bytes(&self) -> usize {
+    #[must_use]
+    pub const fn reg_bytes(&self) -> usize {
         X::REG_BYTES
     }
 }

@@ -104,7 +104,6 @@ static inline void trace_csr_read(Tracer* t, {rtype} pc, uint16_t op, uint16_t c
 static inline void trace_csr_write(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
     (void)t; (void)pc; (void)op; (void)csr; (void)value;
 }}
-"#,
-        rtype = rtype
+"#
     )
 }

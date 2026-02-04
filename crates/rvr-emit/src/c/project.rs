@@ -1,4 +1,4 @@
-//! CProject - C code generation orchestration.
+//! `CProject` - C code generation orchestration.
 //!
 //! Coordinates emission of all C files:
 //! - Header files (main header + blocks header)
@@ -36,9 +36,9 @@ pub struct CProject<X: Xlen> {
     pub base_name: String,
     /// Emit configuration (includes compiler choice).
     pub config: EmitConfig<X>,
-    /// Derived inputs for emission (entry point, pc_end, valid addresses, initial_brk).
+    /// Derived inputs for emission (entry point, `pc_end`, valid addresses, `initial_brk`).
     pub inputs: EmitInputs,
-    /// Taken-inline mapping: branch_pc -> (inline_start, inline_end).
+    /// Taken-inline mapping: `branch_pc` -> (`inline_start`, `inline_end`).
     pub taken_inlines: HashMap<u64, (u64, u64)>,
     /// Memory segments.
     pub segments: Vec<MemorySegment>,
@@ -51,16 +51,15 @@ pub struct CProject<X: Xlen> {
 }
 
 impl<X: Xlen> CProject<X> {
-    /// Create a new CProject.
+    /// Create a new `CProject`.
     pub fn new(
         output_dir: impl AsRef<Path>,
         base_name: impl Into<String>,
         config: EmitConfig<X>,
     ) -> Self {
         // Default to nproc-2 to leave headroom for system
-        let jobs = std::thread::available_parallelism()
-            .map(|n| n.get().saturating_sub(2).max(1))
-            .unwrap_or(4);
+        let jobs =
+            std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(2).max(1));
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             base_name: base_name.into(),
@@ -75,37 +74,43 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Set derived emission inputs.
+    #[must_use]
     pub fn with_inputs(mut self, inputs: EmitInputs) -> Self {
         self.inputs = inputs;
         self
     }
 
     /// Set taken-inline mapping for branch inlining.
+    #[must_use]
     pub fn with_taken_inlines(mut self, mapping: HashMap<u64, (u64, u64)>) -> Self {
         self.taken_inlines = mapping;
         self
     }
 
     /// Set memory segments.
+    #[must_use]
     pub fn with_segments(mut self, segments: Vec<MemorySegment>) -> Self {
         self.segments = segments;
         self
     }
 
     /// Set partition size.
-    pub fn with_partition_size(mut self, size: usize) -> Self {
+    #[must_use]
+    pub const fn with_partition_size(mut self, size: usize) -> Self {
         self.partition_size = size;
         self
     }
 
     /// Set compiler.
+    #[must_use]
     pub fn with_compiler(mut self, compiler: crate::Compiler) -> Self {
         self.config.compiler = compiler;
         self
     }
 
     /// Set number of parallel compilation jobs.
-    pub fn with_jobs(mut self, jobs: usize) -> Self {
+    #[must_use]
+    pub const fn with_jobs(mut self, jobs: usize) -> Self {
         self.jobs = jobs;
         self
     }
@@ -113,59 +118,70 @@ impl<X: Xlen> CProject<X> {
     // ============= Path helpers =============
 
     /// Path to main header file.
+    #[must_use]
     pub fn header_path(&self) -> PathBuf {
         self.output_dir.join(format!("{}.h", self.base_name))
     }
 
     /// Path to blocks header file.
+    #[must_use]
     pub fn blocks_header_path(&self) -> PathBuf {
         self.output_dir.join(format!("{}_blocks.h", self.base_name))
     }
 
     /// Path to partition file.
+    #[must_use]
     pub fn partition_path(&self, idx: usize) -> PathBuf {
         self.output_dir
             .join(format!("{}_part{}.c", self.base_name, idx))
     }
 
     /// Path to dispatch file.
+    #[must_use]
     pub fn dispatch_path(&self) -> PathBuf {
         self.output_dir
             .join(format!("{}_dispatch.c", self.base_name))
     }
 
     /// Path to memory file.
+    #[must_use]
     pub fn memory_path(&self) -> PathBuf {
         self.output_dir.join(format!("{}_memory.c", self.base_name))
     }
 
     /// Path to HTIF header file.
+    #[must_use]
     pub fn htif_header_path(&self) -> PathBuf {
         self.output_dir.join(format!("{}_htif.h", self.base_name))
     }
 
     /// Path to HTIF source file.
+    #[must_use]
     pub fn htif_source_path(&self) -> PathBuf {
         self.output_dir.join(format!("{}_htif.c", self.base_name))
     }
 
     /// Path to syscalls source file.
+    #[must_use]
     pub fn syscalls_path(&self) -> PathBuf {
         self.output_dir
             .join(format!("{}_syscalls.c", self.base_name))
     }
 
     /// Path to tracer header file.
+    #[must_use]
     pub fn tracer_header_path(&self) -> PathBuf {
         self.output_dir.join("rv_tracer.h")
     }
 
     /// Path to Makefile.
+    #[must_use]
     pub fn makefile_path(&self) -> PathBuf {
         self.output_dir.join("Makefile")
     }
 
     /// Path to shared library.
+    #[must_use]
     pub fn shared_lib_path(&self) -> PathBuf {
         self.output_dir.join(format!("lib{}.so", self.base_name))
     }
@@ -173,6 +189,9 @@ impl<X: Xlen> CProject<X> {
     // ============= File generation =============
 
     /// Write main header file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing header files.
     pub fn write_header(&self, block_addresses: &[u64]) -> std::io::Result<()> {
         let header_cfg = HeaderConfig::new(
             &self.base_name,
@@ -196,7 +215,7 @@ impl<X: Xlen> CProject<X> {
 
     /// Partition blocks by instruction count.
     ///
-    /// Returns list of (partition_idx, blocks) tuples.
+    /// Returns list of (`partition_idx`, blocks) tuples.
     pub fn partition_blocks<'a>(
         &self,
         blocks: &'a [BlockIR<X>],
@@ -233,6 +252,10 @@ impl<X: Xlen> CProject<X> {
     ///
     /// The `block_map` is used for taken-inline support - when a branch has an
     /// inline entry, we look up the inlined block by its start address.
+    /// Write a single partition source file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the partition file.
     pub fn write_partition(
         &self,
         partition_idx: usize,
@@ -244,7 +267,7 @@ impl<X: Xlen> CProject<X> {
         let mut emitter = CEmitter::new(self.config.clone(), self.inputs.clone());
         let mut content = String::new();
 
-        content.push_str(&format!("#include \"{}_blocks.h\"\n\n", self.base_name));
+        let _ = write!(content, "#include \"{}_blocks.h\"\n\n", self.base_name);
 
         for block in blocks {
             emitter.reset();
@@ -263,7 +286,12 @@ impl<X: Xlen> CProject<X> {
             }
 
             // Get the last instruction to check for taken-inline
-            let last_instr = block.instructions.last().unwrap();
+            let Some(last_instr) = block.instructions.last() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "block has no instructions",
+                ));
+            };
             let last_pc = X::to_u64(last_instr.pc);
 
             // Check if this block's last instruction is a branch with taken-inline
@@ -359,6 +387,10 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write all partition files.
+    /// Write all partition source files.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing partition files.
     pub fn write_partitions(&self, blocks: &[BlockIR<X>]) -> std::io::Result<usize> {
         // Build block lookup map for taken-inline support
         let block_map: HashMap<u64, &BlockIR<X>> =
@@ -382,6 +414,10 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write dispatch file.
+    /// Write dispatch source file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the dispatch file.
     pub fn write_dispatch(&self) -> std::io::Result<()> {
         let dispatch_cfg = DispatchConfig::new(&self.config, &self.base_name, self.inputs.clone());
 
@@ -392,6 +428,10 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write memory file.
+    /// Write memory helpers source file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the memory file.
     pub fn write_memory(&self) -> std::io::Result<()> {
         let mem_cfg = MemoryConfig::new(
             &self.base_name,
@@ -414,9 +454,13 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write HTIF files.
+    /// Write HTIF support source file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the HTIF file.
     pub fn write_htif(&self) -> std::io::Result<()> {
-        let htif_cfg = HtifConfig::new(&self.base_name, self.config.htif_enabled)
-            .with_verbose(self.config.htif_verbose);
+        let htif_cfg = HtifConfig::new(&self.base_name, self.config.htif_enabled())
+            .with_verbose(self.config.htif_verbose());
 
         let htif_header = gen_htif_header::<X>(&htif_cfg);
         let header_path = self.htif_header_path();
@@ -432,6 +476,10 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write syscall runtime source.
+    /// Write syscall support source file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the syscalls file.
     pub fn write_syscalls(&self) -> std::io::Result<()> {
         let cfg = SyscallsConfig::new(&self.base_name, self.config.fixed_addresses.is_some());
         let src = gen_syscalls_source::<X>(&cfg);
@@ -441,6 +489,10 @@ impl<X: Xlen> CProject<X> {
     }
 
     /// Write tracer header if tracing is enabled.
+    /// Write tracer header file.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the tracer header.
     pub fn write_tracer_header(&self) -> std::io::Result<()> {
         if self.config.tracer_config.is_none() {
             return Ok(());
@@ -456,6 +508,10 @@ impl<X: Xlen> CProject<X> {
     /// Compiler flags are determined in Rust based on the compiler field:
     /// - clang: uses `-std=c23`, `-flto=thin`, `-fuse-ld=lld`, `-fzero-call-used-regs=skip`
     /// - gcc: uses `-std=c2x`, `-flto`, omits clang-specific flags
+    ///   Write Makefile for the generated project.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the Makefile.
     pub fn write_makefile(&self, num_partitions: usize) -> std::io::Result<()> {
         let mut content = String::new();
 
@@ -469,7 +525,7 @@ impl<X: Xlen> CProject<X> {
         writeln!(content, "MAKEFLAGS += -j{} -l{}", self.jobs, self.jobs).unwrap();
         writeln!(content).unwrap();
 
-        writeln!(content, "CC = {}", compiler).unwrap();
+        writeln!(content, "CC = {compiler}").unwrap();
         writeln!(content).unwrap();
 
         // Build CFLAGS based on compiler type (determined in Rust)
@@ -495,7 +551,7 @@ impl<X: Xlen> CProject<X> {
                 cflags.push("-fno-semantic-interposition");
                 ldflags.push("-flto=thin".to_string());
                 if let Some(linker) = compiler.linker() {
-                    ldflags.push(format!("-fuse-ld={}", linker));
+                    ldflags.push(format!("-fuse-ld={linker}"));
                 }
             }
         } else {
@@ -508,10 +564,10 @@ impl<X: Xlen> CProject<X> {
         }
 
         writeln!(content, "CFLAGS = {}", cflags.join(" ")).unwrap();
-        if !ldflags.is_empty() {
-            writeln!(content, "LDFLAGS = {}", ldflags.join(" ")).unwrap();
-        } else {
+        if ldflags.is_empty() {
             writeln!(content, "LDFLAGS =").unwrap();
+        } else {
+            writeln!(content, "LDFLAGS = {}", ldflags.join(" ")).unwrap();
         }
         writeln!(content, "SHARED_FLAGS = -fPIC").unwrap();
         writeln!(content).unwrap();
@@ -527,7 +583,7 @@ impl<X: Xlen> CProject<X> {
         if !self.segments.is_empty() {
             srcs.push(format!("{}_memory.c", self.base_name));
         }
-        if self.config.htif_enabled {
+        if self.config.htif_enabled() {
             srcs.push(format!("{}_htif.c", self.base_name));
         }
 
@@ -571,6 +627,10 @@ impl<X: Xlen> CProject<X> {
     /// Write all files.
     ///
     /// Returns the number of partitions created.
+    /// Write all generated sources and headers.
+    ///
+    /// # Errors
+    /// Returns any I/O error while writing the project files.
     pub fn write_all(&self, blocks: &[BlockIR<X>]) -> std::io::Result<usize> {
         // Ensure output directory exists
         fs::create_dir_all(&self.output_dir)?;
@@ -600,7 +660,7 @@ impl<X: Xlen> CProject<X> {
         }
 
         // Write HTIF if tohost enabled
-        if self.config.htif_enabled {
+        if self.config.htif_enabled() {
             self.write_htif()?;
         }
 

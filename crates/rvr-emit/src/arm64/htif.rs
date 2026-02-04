@@ -2,11 +2,11 @@
 //!
 //! Generates assembly to handle HTIF protocol used by riscv-tests for:
 //! - Exit signaling (exit code via tohost)
-//! - Syscall handling (via handle_tohost_write)
+//! - Syscall handling (via `handle_tohost_write`)
 //!
 //! The HTIF protocol writes to the tohost address:
 //! - If value & 1 == 1: exit with code = value >> 1
-//! - Otherwise: syscall (call handle_tohost_write)
+//! - Otherwise: syscall (call `handle_tohost_write`)
 
 use rvr_ir::Xlen;
 
@@ -18,10 +18,10 @@ impl<X: Xlen> Arm64Emitter<X> {
     /// Emit HTIF tohost check for memory stores.
     ///
     /// Called after the guest address is computed in x0 and value is in x1.
-    /// If the address matches TOHOST_ADDR and value indicates exit (LSB=1),
-    /// sets has_exited and exit_code, then branches to asm_exit.
+    /// If the address matches `TOHOST_ADDR` and value indicates exit (LSB=1),
+    /// sets `has_exited` and `exit_code`, then branches to `asm_exit`.
     ///
-    /// For syscall requests (LSB=0), calls handle_tohost_write and skips
+    /// For syscall requests (LSB=0), calls `handle_tohost_write` and skips
     /// the normal store (the handler does any needed memory writes).
     ///
     /// Returns a label that the caller must emit after the store instruction.
@@ -32,7 +32,10 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         // Compare address with TOHOST_ADDR (match C backend: (uint32_t)addr).
         // TOHOST_ADDR fits in 32 bits; load into w2 (zero-extended) to reduce instruction count.
-        self.load_imm("w2", TOHOST_ADDR as u32 as u64);
+        self.load_imm(
+            "w2",
+            u64::from(u32::try_from(TOHOST_ADDR).expect("tohost fits in u32")),
+        );
         self.emit("cmp w0, w2");
         self.emitf(format!("b.ne {not_tohost_label}"));
 

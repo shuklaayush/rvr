@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderConfig, MEMORY_FIXED_REF, Xlen, reg_type};
 
 pub(super) fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let addr_type = reg_type::<X>();
@@ -31,7 +31,7 @@ pub(super) fn gen_memory_functions<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     format!(
-        r#"/* Translate virtual address to physical. */
+        r"/* Translate virtual address to physical. */
 static inline {addr_type} phys_addr({addr_type} addr) {{
 {phys_addr_body}
 }}
@@ -121,11 +121,6 @@ static inline void wr_mem_u64({mem_param}{addr_type} base, int16_t off, uint64_t
     memcpy(ptr, &val, sizeof(val));
 }}
 
-"#,
-        addr_type = addr_type,
-        phys_addr_body = phys_addr_body,
-        mem_param = mem_param,
-        mem_ref = mem_ref,
-        nonnull = nonnull,
+",
     )
 }

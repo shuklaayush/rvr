@@ -5,16 +5,7 @@ use rvr_isa::REG_ABI_NAMES;
 
 use super::super::signature::reg_type;
 
-pub fn gen_tracer_stats<X: Xlen>() -> String {
-    let reg_names = REG_ABI_NAMES
-        .iter()
-        .map(|n| format!("\"{}\"", n))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let rtype = reg_type::<X>();
-
-    format!(
-        r#"/* Stats tracer - counts events and tracks per-opcode/register stats.
+const STATS_TEMPLATE: &str = r#"/* Stats tracer - counts events and tracks per-opcode/register stats.
  * Uses op_name() and OP_TABLE_SIZE from generated header.
  */
 #pragma once
@@ -25,7 +16,7 @@ pub fn gen_tracer_stats<X: Xlen>() -> String {
 
 /* ABI register names */
 static const char* const REG_NAMES[32] = {{
-    {reg_names}
+    @REG_NAMES@
 }};
 
 /* Page bitmap: 4GB / 4KB pages / 64 bits = 16384 words = 128KB */
@@ -189,97 +180,107 @@ static inline void trace_fini(Tracer* t) {{
 }}
 
 /* Block entry */
-static inline void trace_block(Tracer* t, {rtype} pc) {{
+static inline void trace_block(Tracer* t, @RTYPE@ pc) {{
     t->blocks++;
     t->last_pc = pc;
 }}
 
 /* Instruction dispatch */
-static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
+static inline void trace_pc(Tracer* t, @RTYPE@ pc, uint16_t op) {{
     t->pcs++;
     t->opcode_counts[op]++;
 }}
 
 /* Register access */
-static inline void trace_reg_read(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
+static inline void trace_reg_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
     t->reg_reads++;
     t->reg_read_counts[reg]++;
 }}
 
-static inline void trace_reg_write(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
+static inline void trace_reg_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
     t->reg_writes++;
     t->reg_write_counts[reg]++;
 }}
 
 /* Memory reads */
-static inline void trace_mem_read_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
+static inline void trace_mem_read_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
     t->mem_reads++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) set_addr_bit(t->addr_bitmap, addr);
 }}
 
-static inline void trace_mem_read_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
+static inline void trace_mem_read_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
     t->mem_reads++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) for (int i = 0; i < 2; i++) set_addr_bit(t->addr_bitmap, addr + i);
 }}
 
-static inline void trace_mem_read_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
+static inline void trace_mem_read_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
     t->mem_reads++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) for (int i = 0; i < 4; i++) set_addr_bit(t->addr_bitmap, addr + i);
 }}
 
-static inline void trace_mem_read_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
+static inline void trace_mem_read_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
     t->mem_reads++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) for (int i = 0; i < 8; i++) set_addr_bit(t->addr_bitmap, addr + i);
 }}
 
 /* Memory writes */
-static inline void trace_mem_write_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
+static inline void trace_mem_write_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
     t->mem_writes++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) set_addr_bit(t->addr_bitmap, addr);
 }}
 
-static inline void trace_mem_write_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
+static inline void trace_mem_write_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
     t->mem_writes++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) for (int i = 0; i < 2; i++) set_addr_bit(t->addr_bitmap, addr + i);
 }}
 
-static inline void trace_mem_write_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
+static inline void trace_mem_write_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
     t->mem_writes++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) for (int i = 0; i < 4; i++) set_addr_bit(t->addr_bitmap, addr + i);
 }}
 
-static inline void trace_mem_write_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
+static inline void trace_mem_write_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
     t->mem_writes++;
     set_page_bit(t->mem_pages, addr);
     if (t->addr_bitmap) for (int i = 0; i < 8; i++) set_addr_bit(t->addr_bitmap, addr + i);
 }}
 
 /* Control flow */
-static inline void trace_branch_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
     t->branches_taken++;
 }}
 
-static inline void trace_branch_not_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_not_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
     t->branches_not_taken++;
 }}
 
 /* CSR access */
-static inline void trace_csr_read(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
+static inline void trace_csr_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
     t->csr_reads++;
 }}
 
-static inline void trace_csr_write(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
+static inline void trace_csr_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
     t->csr_writes++;
 }}
-"#,
-        reg_names = reg_names,
-        rtype = rtype
+"#;
+
+pub fn gen_tracer_stats<X: Xlen>() -> String {
+    let reg_names = REG_ABI_NAMES
+        .iter()
+        .map(|n| format!("\"{n}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rtype = reg_type::<X>();
+
+    super::expand_template(
+        STATS_TEMPLATE,
+        &[("@RTYPE@", rtype), ("@REG_NAMES@", reg_names.as_str())],
     )
 }

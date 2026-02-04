@@ -12,7 +12,7 @@ use crate::InstretMode;
 ///
 /// Accepts any compiler command (e.g., "clang", "clang-20", "gcc-13").
 /// Clang vs GCC is auto-detected from the command name to determine flags:
-/// - Clang: C23, thin LTO, preserve_none, musttail
+/// - Clang: C23, thin LTO, `preserve_none`, musttail
 /// - GCC: C2x, standard LTO
 ///
 /// For clang, the linker (lld) version is auto-derived from the compiler
@@ -33,22 +33,26 @@ impl Compiler {
     }
 
     /// Default clang compiler.
+    #[must_use]
     pub fn clang() -> Self {
         Self::new("clang")
     }
 
     /// Default gcc compiler.
+    #[must_use]
     pub fn gcc() -> Self {
         Self::new("gcc")
     }
 
     /// Set explicit linker command (overrides auto-derivation).
+    #[must_use]
     pub fn with_linker(mut self, linker: impl Into<String>) -> Self {
         self.linker = Some(linker.into());
         self
     }
 
     /// Command to invoke.
+    #[must_use]
     pub fn command(&self) -> &str {
         &self.command
     }
@@ -56,6 +60,7 @@ impl Compiler {
     /// Check if this is a clang-based compiler (for flag selection).
     ///
     /// Returns true if the command contains "clang".
+    #[must_use]
     pub fn is_clang(&self) -> bool {
         self.command.contains("clang")
     }
@@ -69,6 +74,7 @@ impl Compiler {
     /// - "clang" → "lld"
     /// - "clang-20" → "lld-20"
     /// - "/opt/llvm/bin/clang-18" → "lld-18"
+    #[must_use]
     pub fn linker(&self) -> Option<String> {
         if !self.is_clang() {
             return None;
@@ -88,6 +94,7 @@ impl Compiler {
     /// - "clang-20" → "llvm-addr2line-20"
     /// - "/opt/llvm/bin/clang-18" → "llvm-addr2line-18"
     /// - "gcc" → "llvm-addr2line" (fallback)
+    #[must_use]
     pub fn addr2line(&self) -> String {
         format!("llvm-addr2line{}", self.version_suffix())
     }
@@ -134,19 +141,20 @@ impl std::fmt::Display for Compiler {
     }
 }
 
-/// x86_64 preserve_none: 12 argument registers available.
+/// `x86_64` `preserve_none`: 12 argument registers available.
+///
 /// R12, R13, R14, R15, RDI, RSI, RDX, RCX, R8, R9, R11, RAX.
 /// Only RSP and RBP are callee-saved.
-/// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
+/// See: <https://clang.llvm.org/docs/AttributeReference.html#preserve-none>
 ///
-/// Using all 12 args with preserve_none + musttail can exhaust LLVM's register allocator
+/// Using all 12 args with `preserve_none` + musttail can exhaust LLVM's register allocator
 /// under LTO (e.g., lld reports "ran out of registers during register allocation").
 /// We reserve one slot to keep register pressure manageable at tail-call sites.
 pub const X86_64_DEFAULT_TOTAL_SLOTS: usize = 11;
 
-/// AArch64 preserve_none: 24 argument registers.
+/// `AArch64` `preserve_none`: 24 argument registers.
 /// X20-X28 (9), X0-X7 (8), X9-X15 (7). Only LR and FP are callee-saved.
-/// See: https://clang.llvm.org/docs/AttributeReference.html#preserve-none
+/// See: <https://clang.llvm.org/docs/AttributeReference.html#preserve-none>
 pub const AARCH64_DEFAULT_TOTAL_SLOTS: usize = 24;
 
 /// Fixed slots when instret counting is enabled (state + memory + instret).
@@ -156,7 +164,8 @@ pub const FIXED_SLOTS_WITH_INSTRET: usize = 3;
 pub const FIXED_SLOTS_NO_INSTRET: usize = 2;
 
 /// Get platform-specific default total slots for C backend.
-pub fn default_total_slots() -> usize {
+#[must_use]
+pub const fn default_total_slots() -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         X86_64_DEFAULT_TOTAL_SLOTS
@@ -176,6 +185,7 @@ pub fn default_total_slots() -> usize {
 /// Fixed slots depend on configuration:
 /// - With fixed addresses: only instret (if enabled) takes a slot
 /// - Without fixed addresses: state + memory + instret (if enabled)
+#[must_use]
 pub fn compute_num_hot_regs(
     total_slots: usize,
     instret_mode: InstretMode,
@@ -184,7 +194,7 @@ pub fn compute_num_hot_regs(
 ) -> usize {
     let fixed = if fixed_addresses {
         // Only instret takes an argument slot (state/memory are constants)
-        if instret_mode.counts() { 1 } else { 0 }
+        usize::from(instret_mode.counts())
     } else if instret_mode.counts() {
         FIXED_SLOTS_WITH_INSTRET
     } else {

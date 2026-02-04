@@ -7,24 +7,7 @@ use rvr_ir::Xlen;
 
 use super::super::signature::reg_type;
 
-pub fn gen_tracer_spike<X: Xlen>() -> String {
-    let rtype = reg_type::<X>();
-    let is_rv64 = X::VALUE == 64;
-    let pc_fmt = if is_rv64 { "%016lx" } else { "%08x" };
-    let val_fmt = if is_rv64 { "%016lx" } else { "%08x" };
-    let pc_cast = if is_rv64 {
-        "(unsigned long)"
-    } else {
-        "(unsigned)"
-    };
-    let val_cast = if is_rv64 {
-        "(unsigned long)"
-    } else {
-        "(unsigned)"
-    };
-
-    format!(
-        r#"/* Spike-compatible tracer - outputs in Spike's --log-commits format.
+const SPIKE_TEMPLATE: &str = r#"/* Spike-compatible tracer - outputs in Spike's --log-commits format.
  *
  * Format: core   0: 3 0x<PC> (0x<OPCODE>) [x<RD> 0x<VALUE>] [mem 0x<ADDR>]
  *
@@ -39,11 +22,11 @@ pub fn gen_tracer_spike<X: Xlen>() -> String {
 
 typedef struct Tracer {{
     FILE* fp;
-    {rtype} pending_pc;
+    @RTYPE@ pending_pc;
     uint32_t pending_opcode;
     uint8_t pending_rd;
-    {rtype} pending_rd_value;
-    {rtype} pending_mem_addr;
+    @RTYPE@ pending_rd_value;
+    @RTYPE@ pending_mem_addr;
     uint8_t has_pending;
     uint8_t has_rd;
     uint8_t has_mem;
@@ -53,16 +36,16 @@ typedef struct Tracer {{
 static inline void trace_flush(Tracer* t) {{
     if (!t->has_pending || !t->fp) return;
 
-    fprintf(t->fp, "core   0: 3 0x{pc_fmt} (0x%08x)",
-            {pc_cast}t->pending_pc, (unsigned)t->pending_opcode);
+    fprintf(t->fp, "core   0: 3 0x@PC_FMT@ (0x%08x)",
+            @PC_CAST@t->pending_pc, (unsigned)t->pending_opcode);
 
     if (t->has_rd) {{
-        fprintf(t->fp, " x%u 0x{val_fmt}",
-                (unsigned)t->pending_rd, {val_cast}t->pending_rd_value);
+        fprintf(t->fp, " x%u 0x@VAL_FMT@",
+                (unsigned)t->pending_rd, @VAL_CAST@t->pending_rd_value);
     }}
 
     if (t->has_mem) {{
-        fprintf(t->fp, " mem 0x{val_fmt}", {val_cast}t->pending_mem_addr);
+        fprintf(t->fp, " mem 0x@VAL_FMT@", @VAL_CAST@t->pending_mem_addr);
     }}
 
     fprintf(t->fp, "\n");
@@ -93,12 +76,12 @@ static inline void trace_fini(Tracer* t) {{
 }}
 
 /* Block entry */
-static inline void trace_block(Tracer* t, {rtype} pc) {{
+static inline void trace_block(Tracer* t, @RTYPE@ pc) {{
     (void)t; (void)pc;
 }}
 
 /* Instruction dispatch - flush previous, start new */
-static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
+static inline void trace_pc(Tracer* t, @RTYPE@ pc, uint16_t op) {{
     (void)op;
     trace_flush(t);
     t->pending_pc = pc;
@@ -110,17 +93,17 @@ static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
 }}
 
 /* Opcode details */
-static inline void trace_opcode(Tracer* t, {rtype} pc, uint16_t op, uint32_t opcode) {{
+static inline void trace_opcode(Tracer* t, @RTYPE@ pc, uint16_t op, uint32_t opcode) {{
     (void)pc; (void)op;
     t->pending_opcode = opcode;
 }}
 
 /* Register access */
-static inline void trace_reg_read(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
+static inline void trace_reg_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
     (void)t; (void)pc; (void)op; (void)reg; (void)value;
 }}
 
-static inline void trace_reg_write(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
+static inline void trace_reg_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
     (void)pc; (void)op;
     if (reg != 0) {{
         t->pending_rd = reg;
@@ -130,77 +113,98 @@ static inline void trace_reg_write(Tracer* t, {rtype} pc, uint16_t op, uint8_t r
 }}
 
 /* Memory reads */
-static inline void trace_mem_read_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
+static inline void trace_mem_read_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
-static inline void trace_mem_read_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
+static inline void trace_mem_read_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
-static inline void trace_mem_read_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
+static inline void trace_mem_read_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
-static inline void trace_mem_read_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
+static inline void trace_mem_read_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
 /* Memory writes */
-static inline void trace_mem_write_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
+static inline void trace_mem_write_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
-static inline void trace_mem_write_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
+static inline void trace_mem_write_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
-static inline void trace_mem_write_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
+static inline void trace_mem_write_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
-static inline void trace_mem_write_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
+static inline void trace_mem_write_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
     (void)pc; (void)op; (void)value;
     t->pending_mem_addr = addr;
     t->has_mem = 1;
 }}
 
 /* Control flow */
-static inline void trace_branch_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
     (void)t; (void)pc; (void)op; (void)target;
 }}
 
-static inline void trace_branch_not_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_not_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
     (void)t; (void)pc; (void)op; (void)target;
 }}
 
 /* CSR access */
-static inline void trace_csr_read(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
+static inline void trace_csr_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
     (void)t; (void)pc; (void)op; (void)csr; (void)value;
 }}
 
-static inline void trace_csr_write(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
+static inline void trace_csr_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
     (void)t; (void)pc; (void)op; (void)csr; (void)value;
 }}
-"#,
-        rtype = rtype,
-        pc_fmt = pc_fmt,
-        val_fmt = val_fmt,
-        pc_cast = pc_cast,
-        val_cast = val_cast,
+"#;
+
+pub fn gen_tracer_spike<X: Xlen>() -> String {
+    let rtype = reg_type::<X>();
+    let is_rv64 = X::VALUE == 64;
+    let pc_fmt = if is_rv64 { "%016lx" } else { "%08x" };
+    let val_fmt = if is_rv64 { "%016lx" } else { "%08x" };
+    let pc_cast = if is_rv64 {
+        "(unsigned long)"
+    } else {
+        "(unsigned)"
+    };
+    let val_cast = if is_rv64 {
+        "(unsigned long)"
+    } else {
+        "(unsigned)"
+    };
+
+    super::expand_template(
+        SPIKE_TEMPLATE,
+        &[
+            ("@RTYPE@", rtype),
+            ("@PC_FMT@", pc_fmt),
+            ("@VAL_FMT@", val_fmt),
+            ("@PC_CAST@", pc_cast),
+            ("@VAL_CAST@", val_cast),
+        ],
     )
 }

@@ -20,13 +20,12 @@ impl<X: Xlen> CEmitter<X> {
         end_pc: u64,
         instr_count: usize,
     ) {
-        let pc_str = self.fmt_pc(start_pc);
-        if self.config.emit_comments && instr_count > 0 {
-            let start_comment = self.fmt_pc_comment(start_pc);
-            let end_comment = self.fmt_pc_comment(end_pc.saturating_sub(1));
+        let pc_str = Self::fmt_pc(start_pc);
+        if self.config.emit_comments() && instr_count > 0 {
+            let start_comment = Self::fmt_pc_comment(start_pc);
+            let end_comment = Self::fmt_pc_comment(end_pc.saturating_sub(1));
             self.write(&format!(
-                "// Block: {}-{} ({} instrs)\n",
-                start_comment, end_comment, instr_count
+                "// Block: {start_comment}-{end_comment} ({instr_count} instrs)\n"
             ));
         }
 
@@ -46,11 +45,11 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Format PC for block names (hex without 0x prefix).
-    pub(super) fn fmt_pc(&self, pc: u64) -> String {
+    pub(super) fn fmt_pc(pc: u64) -> String {
         if X::VALUE == 64 {
-            format!("{:016x}", pc)
+            format!("{pc:016x}")
         } else {
-            format!("{:08x}", pc)
+            format!("{pc:08x}")
         }
     }
 
@@ -61,7 +60,7 @@ impl<X: Xlen> CEmitter<X> {
 
     /// Render instruction.
     ///
-    /// `fall_pc` is the address to fall through to (typically end_pc of the block).
+    /// `fall_pc` is the address to fall through to (typically `end_pc` of the block).
     /// `next_instr_pc` is the PC of the next instruction in this block (for per-instruction checks).
     pub fn render_instruction(
         &mut self,
@@ -91,25 +90,26 @@ impl<X: Xlen> CEmitter<X> {
         self.current_raw = ir.raw;
 
         // Optional: emit comment with PC and instruction mnemonic
-        if self.config.emit_comments {
-            let pc_hex = self.fmt_pc_comment(self.current_pc);
+        if self.config.emit_comments() {
+            let pc_hex = Self::fmt_pc_comment(self.current_pc);
             let mnemonic = op_mnemonic(ir.op).to_uppercase();
 
             // Include function name if available
-            let comment = if let Some(ref loc) = ir.source_loc {
-                if !loc.function.is_empty() {
-                    format!("// PC: {} {}  @ {}", pc_hex, mnemonic, loc.function)
-                } else {
-                    format!("// PC: {} {}", pc_hex, mnemonic)
-                }
-            } else {
-                format!("// PC: {} {}", pc_hex, mnemonic)
-            };
+            let comment = ir.source_loc.as_ref().map_or_else(
+                || format!("// PC: {pc_hex} {mnemonic}"),
+                |loc| {
+                    if loc.function.is_empty() {
+                        format!("// PC: {pc_hex} {mnemonic}")
+                    } else {
+                        format!("// PC: {} {}  @ {}", pc_hex, mnemonic, loc.function)
+                    }
+                },
+            );
             self.writeln(indent, &comment);
         }
 
         // Emit #line directive for source-level debugging
-        if self.config.emit_line_info
+        if self.config.emit_line_info()
             && let Some(ref loc) = ir.source_loc
             && loc.is_valid()
         {
@@ -123,7 +123,7 @@ impl<X: Xlen> CEmitter<X> {
             self.render_stmt(stmt, indent);
         }
 
-        if self.statements_write_exit(&ir.statements) {
+        if Self::statements_write_exit(&ir.statements) {
             self.render_exit_check(indent);
         }
 
@@ -138,7 +138,8 @@ impl<X: Xlen> CEmitter<X> {
             if !is_last {
                 // Use the actual next instruction PC if provided (for superblocks),
                 // otherwise fall back to sequential PC
-                let next_pc = next_instr_pc.unwrap_or_else(|| X::to_u64(ir.pc) + ir.size as u64);
+                let next_pc =
+                    next_instr_pc.unwrap_or_else(|| X::to_u64(ir.pc) + u64::from(ir.size));
                 self.render_instret_check(next_pc);
             }
         }
@@ -167,5 +168,4 @@ impl<X: Xlen> CEmitter<X> {
             }
         }
     }
-
 }

@@ -1,4 +1,5 @@
 use super::*;
+use rvr_ir::Expr;
 use rvr_isa::Rv64;
 
 #[test]

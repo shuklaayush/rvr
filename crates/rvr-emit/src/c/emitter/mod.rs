@@ -3,13 +3,13 @@
 //! Generates C code from RISC-V IR blocks with:
 //! - Explicit musttail calls for all control flow (including fall-through)
 //! - Branch emits both taken and not-taken paths
-//! - save_to_state on all exit paths
-//! - Optional tracing hooks (trace_block, trace_pc, trace_branch_*)
+//! - `save_to_state` on all exit paths
+//! - Optional tracing hooks (`trace_block`, `trace_pc`, `trace_branch`_*)
 //! - Optional tohost handling for riscv-tests
 
 use rvr_ir::Xlen;
 
-use super::signature::{state_ref, FnSignature};
+use super::signature::{FnSignature, state_ref};
 use crate::config::EmitConfig;
 use crate::inputs::EmitInputs;
 
@@ -21,13 +21,13 @@ pub struct CEmitter<X: Xlen> {
     pub sig: FnSignature,
     /// Output buffer.
     pub out: String,
-    /// Register type name ("uint32_t" or "uint64_t").
+    /// Register type name ("`uint32_t`" or "`uint64_t`").
     reg_type: &'static str,
-    /// Signed register type ("int32_t" or "int64_t").
+    /// Signed register type ("`int32_t`" or "`int64_t`").
     signed_type: &'static str,
     /// Current instruction PC.
     current_pc: u64,
-    /// Current instruction op (packed OpId for tracing).
+    /// Current instruction op (packed `OpId` for tracing).
     current_op: u16,
     /// Current instruction raw bytes (for spike tracer).
     current_raw: u32,
@@ -37,6 +37,7 @@ pub struct CEmitter<X: Xlen> {
 
 impl<X: Xlen> CEmitter<X> {
     /// Create a new emitter.
+    #[must_use]
     pub fn new(config: EmitConfig<X>, inputs: EmitInputs) -> Self {
         let (reg_type, signed_type) = if X::VALUE == 64 {
             ("uint64_t", "int64_t")
@@ -69,11 +70,13 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Get output string.
+    #[must_use]
     pub fn output(&self) -> &str {
         &self.out
     }
 
     /// Take output string, consuming the emitter.
+    #[must_use]
     pub fn take_output(self) -> String {
         self.out
     }
@@ -84,17 +87,17 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Format address as hex.
-    pub(super) fn fmt_addr(&self, addr: u64) -> String {
+    pub(super) fn fmt_addr(addr: u64) -> String {
         if X::VALUE == 64 {
-            format!("0x{:016x}ULL", addr)
+            format!("0x{addr:016x}ULL")
         } else {
-            format!("0x{:08x}u", addr)
+            format!("0x{addr:08x}u")
         }
     }
 
     /// Format PC for comments (no suffix, lowercase hex).
-    pub(super) fn fmt_pc_comment(&self, pc: u64) -> String {
-        format!("0x{:x}", pc)
+    pub(super) fn fmt_pc_comment(pc: u64) -> String {
+        format!("0x{pc:x}")
     }
 
     /// Write indented line.
@@ -112,18 +115,18 @@ impl<X: Xlen> CEmitter<X> {
     }
 
     /// Get state reference expression.
-    pub(super) fn state_ref(&self) -> &'static str {
+    pub(super) const fn state_ref(&self) -> &'static str {
         state_ref(self.sig.fixed_addresses)
     }
 
     /// Check if using fixed addresses (no memory parameter).
-    pub(super) fn uses_fixed_addresses(&self) -> bool {
+    pub(super) const fn uses_fixed_addresses(&self) -> bool {
         self.sig.fixed_addresses
     }
 }
 
-mod expr;
 mod block;
+mod expr;
 mod terminator;
 
 #[cfg(test)]

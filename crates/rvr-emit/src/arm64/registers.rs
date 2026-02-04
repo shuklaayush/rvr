@@ -1,6 +1,6 @@
 //! ARM64 register mapping for RISC-V emulation.
 //!
-//! Maps RISC-V registers to ARM64 registers based on EmitConfig::hot_regs.
+//! Maps RISC-V registers to ARM64 registers based on `EmitConfig::hot_regs`.
 //! Hot registers are kept in ARM64 GPRs, cold registers are accessed via memory.
 
 /// ARM64 assembly backend: 22 GPRs available for hot registers.
@@ -18,7 +18,7 @@ pub const HOT_REG_SLOTS: usize = 22;
 
 /// Reserved ARM64 registers (not available for RISC-V register mapping).
 pub mod reserved {
-    /// RvState pointer (callee-saved)
+    /// `RvState` pointer (callee-saved)
     pub const STATE_PTR: &str = "x19";
     /// Memory base pointer (callee-saved)
     pub const MEMORY_PTR: &str = "x20";
@@ -57,7 +57,8 @@ pub struct RegMap {
 }
 
 impl RegMap {
-    /// Create register mapping from hot_regs list.
+    /// Create register mapping from `hot_regs` list.
+    #[must_use]
     pub fn new(hot_regs: &[u8], is_rv32: bool) -> Self {
         let mut mapping = [None; 32];
         let mut mapping_32 = [None; 32];
@@ -80,6 +81,7 @@ impl RegMap {
     }
 
     /// Get ARM64 register for RISC-V register (or None if in memory).
+    #[must_use]
     pub fn get(&self, rv_reg: u8) -> Option<&'static str> {
         if rv_reg == 0 {
             return None; // x0 is always zero
@@ -92,6 +94,7 @@ impl RegMap {
     }
 
     /// Get 64-bit version of ARM64 register for RISC-V register.
+    #[must_use]
     pub fn get_64(&self, rv_reg: u8) -> Option<&'static str> {
         if rv_reg == 0 {
             return None;
@@ -100,6 +103,7 @@ impl RegMap {
     }
 
     /// Check if RISC-V register is mapped to an ARM64 register.
+    #[must_use]
     pub fn is_hot(&self, rv_reg: u8) -> bool {
         rv_reg != 0
             && self
@@ -110,7 +114,7 @@ impl RegMap {
                 .is_some()
     }
 
-    /// Iterator over (rv_reg, arm64_reg) pairs for hot registers.
+    /// Iterator over (`rv_reg`, `arm64_reg`) pairs for hot registers.
     /// Returns 32-bit register names for RV32 mode, 64-bit for RV64.
     pub fn hot_regs(&self) -> impl Iterator<Item = (u8, &'static str)> + '_ {
         let mapping = if self.is_rv32 {
@@ -118,19 +122,19 @@ impl RegMap {
         } else {
             &self.mapping
         };
-        mapping
-            .iter()
-            .enumerate()
-            .filter_map(|(i, opt)| opt.map(|r| (i as u8, r)))
+        mapping.iter().enumerate().filter_map(|(i, opt)| {
+            let idx = u8::try_from(i).ok()?;
+            opt.map(|r| (idx, r))
+        })
     }
 
-    /// Iterator over (rv_reg, arm64_reg_64) pairs for hot registers.
+    /// Iterator over (`rv_reg`, `arm64_reg_64`) pairs for hot registers.
     /// Always returns 64-bit register names (for address calculations).
     pub fn hot_regs_64(&self) -> impl Iterator<Item = (u8, &'static str)> + '_ {
-        self.mapping
-            .iter()
-            .enumerate()
-            .filter_map(|(i, opt)| opt.map(|r| (i as u8, r)))
+        self.mapping.iter().enumerate().filter_map(|(i, opt)| {
+            let idx = u8::try_from(i).ok()?;
+            opt.map(|r| (idx, r))
+        })
     }
 }
 

@@ -14,8 +14,8 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let src1 = self.load_rv_to_temp(rs1, temp1);
 
         if rs2 == 0 {
@@ -23,12 +23,13 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let src2 = if let Some(r) = self.rv_reg(rs2) {
-            r.to_string()
-        } else {
-            let temp2 = self.temp2();
-            self.load_rv_to_temp(rs2, temp2)
-        };
+        let src2 = self.rv_reg(rs2).map_or_else(
+            || {
+                let temp2 = Self::temp2();
+                self.load_rv_to_temp(rs2, temp2)
+            },
+            std::string::ToString::to_string,
+        );
 
         if rd == rs1 && self.reg_map.is_hot(rd) {
             self.emitf(format!("add{suffix} %{src2}, %{src1}"));
@@ -47,8 +48,8 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let src1 = self.load_rv_to_temp(rs1, temp1);
 
         if rs2 == 0 {
@@ -56,12 +57,13 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let src2 = if let Some(r) = self.rv_reg(rs2) {
-            r.to_string()
-        } else {
-            let temp2 = self.temp2();
-            self.load_rv_to_temp(rs2, temp2)
-        };
+        let src2 = self.rv_reg(rs2).map_or_else(
+            || {
+                let temp2 = Self::temp2();
+                self.load_rv_to_temp(rs2, temp2)
+            },
+            std::string::ToString::to_string,
+        );
 
         // In-place optimization: if rd == rs1 and hot, modify in place
         if rd == rs1 && self.reg_map.is_hot(rd) {
@@ -81,8 +83,8 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
 
         // AND with zero is always zero
         if rs1 == 0 || rs2 == 0 {
@@ -92,12 +94,13 @@ impl<X: Xlen> X86Emitter<X> {
         }
 
         let src1 = self.load_rv_to_temp(rs1, temp1);
-        let src2 = if let Some(r) = self.rv_reg(rs2) {
-            r.to_string()
-        } else {
-            let temp2 = self.temp2();
-            self.load_rv_to_temp(rs2, temp2)
-        };
+        let src2 = self.rv_reg(rs2).map_or_else(
+            || {
+                let temp2 = Self::temp2();
+                self.load_rv_to_temp(rs2, temp2)
+            },
+            std::string::ToString::to_string,
+        );
 
         // In-place optimization: if rd == rs1 and hot, modify in place
         if rd == rs1 && self.reg_map.is_hot(rd) {
@@ -117,8 +120,8 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let src1 = self.load_rv_to_temp(rs1, temp1);
 
         if rs2 == 0 {
@@ -126,12 +129,13 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let src2 = if let Some(r) = self.rv_reg(rs2) {
-            r.to_string()
-        } else {
-            let temp2 = self.temp2();
-            self.load_rv_to_temp(rs2, temp2)
-        };
+        let src2 = self.rv_reg(rs2).map_or_else(
+            || {
+                let temp2 = Self::temp2();
+                self.load_rv_to_temp(rs2, temp2)
+            },
+            std::string::ToString::to_string,
+        );
 
         // In-place optimization: if rd == rs1 and hot, modify in place
         if rd == rs1 && self.reg_map.is_hot(rd) {
@@ -151,8 +155,8 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let src1 = self.load_rv_to_temp(rs1, temp1);
 
         if rs2 == 0 {
@@ -160,12 +164,13 @@ impl<X: Xlen> X86Emitter<X> {
             return;
         }
 
-        let src2 = if let Some(r) = self.rv_reg(rs2) {
-            r.to_string()
-        } else {
-            let temp2 = self.temp2();
-            self.load_rv_to_temp(rs2, temp2)
-        };
+        let src2 = self.rv_reg(rs2).map_or_else(
+            || {
+                let temp2 = Self::temp2();
+                self.load_rv_to_temp(rs2, temp2)
+            },
+            std::string::ToString::to_string,
+        );
 
         // In-place optimization: if rd == rs1 and hot, modify in place
         if rd == rs1 && self.reg_map.is_hot(rd) {
@@ -180,13 +185,17 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit an ANDI instruction: rd = rs1 & imm
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_andi(&mut self, rd: u8, rs1: u8, imm: i32) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
 
         if imm == 0 {
             self.emitf(format!("xor{suffix} %{temp1}, %{temp1}"));
@@ -226,13 +235,17 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit an ORI instruction: rd = rs1 | imm
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_ori(&mut self, rd: u8, rs1: u8, imm: i32) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
 
         if imm == 0 {
             if rs1 == 0 {
@@ -263,13 +276,17 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit an XORI instruction: rd = rs1 ^ imm
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_xori(&mut self, rd: u8, rs1: u8, imm: i32) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
 
         if imm == 0 {
             if rs1 == 0 {
@@ -300,13 +317,17 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit an ADDI instruction: rd = rs1 + imm
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_addi(&mut self, rd: u8, rs1: u8, imm: i32) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
 
         if imm == 0 {
             if rs1 == 0 {
@@ -338,7 +359,6 @@ impl<X: Xlen> X86Emitter<X> {
             } else {
                 self.emitf(format!("leaq {imm}(%{src64}), %{temp1}"));
             }
-            self.store_to_rv(rd, temp1);
         } else if rs1 == 0 {
             // Source is x0 (zero) - just load immediate
             if X::VALUE == 32 {
@@ -346,7 +366,6 @@ impl<X: Xlen> X86Emitter<X> {
             } else {
                 self.emitf(format!("movq ${imm}, %{temp1}"));
             }
-            self.store_to_rv(rd, temp1);
         } else {
             // Source is cold register - load then add
             let src = self.load_rv_to_temp(rs1, temp1);
@@ -354,18 +373,22 @@ impl<X: Xlen> X86Emitter<X> {
                 self.emitf(format!("mov{suffix} %{src}, %{temp1}"));
             }
             self.emitf(format!("add{suffix} ${imm}, %{temp1}"));
-            self.store_to_rv(rd, temp1);
         }
+        self.store_to_rv(rd, temp1);
     }
 
     /// Emit a SLLI instruction: rd = rs1 << imm
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_slli(&mut self, rd: u8, rs1: u8, imm: u8) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let shift = imm & if X::VALUE == 32 { 0x1f } else { 0x3f };
 
         if shift == 0 {
@@ -417,13 +440,17 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a SRLI instruction: rd = rs1 >> imm (logical)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_srli(&mut self, rd: u8, rs1: u8, imm: u8) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let shift = imm & if X::VALUE == 32 { 0x1f } else { 0x3f };
 
         if shift == 0 {
@@ -455,13 +482,17 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a SRAI instruction: rd = rs1 >> imm (arithmetic)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `rs1` is expected to be hot but is not mapped.
     pub fn emit_srai(&mut self, rd: u8, rs1: u8, imm: u8) {
         if rd == 0 {
             return;
         }
 
-        let temp1 = self.temp1();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let suffix = Self::suffix();
         let shift = imm & if X::VALUE == 32 { 0x1f } else { 0x3f };
 
         if shift == 0 {
@@ -497,16 +528,17 @@ impl<X: Xlen> X86Emitter<X> {
         if rd == 0 {
             return;
         }
-        let temp1 = self.temp1();
-        let value = (imm as i64) << 12;
+        let temp1 = Self::temp1();
+        let value = i64::from(imm) << 12;
         if X::VALUE == 32 {
-            self.emitf(format!("movl ${}, %{temp1}", value as i32));
+            let value32 = i32::try_from(value).unwrap_or(0);
+            self.emitf(format!("movl ${value32}, %{temp1}"));
         } else {
             // For 64-bit values that don't fit in 32-bit signed, use movabs
-            if value > i32::MAX as i64 || value < i32::MIN as i64 {
-                self.emitf(format!("movabsq ${}, %{temp1}", value));
+            if value > i64::from(i32::MAX) || value < i64::from(i32::MIN) {
+                self.emitf(format!("movabsq ${value}, %{temp1}"));
             } else {
-                self.emitf(format!("movq ${}, %{temp1}", value));
+                self.emitf(format!("movq ${value}, %{temp1}"));
             }
         }
         self.store_to_rv(rd, temp1);
@@ -517,25 +549,24 @@ impl<X: Xlen> X86Emitter<X> {
         if rd == 0 {
             return;
         }
-        let temp1 = self.temp1();
-        let value = pc.wrapping_add(((imm as i64) << 12) as u64);
+        let temp1 = Self::temp1();
+        let value = pc.wrapping_add((i64::from(imm) << 12).cast_unsigned());
         if X::VALUE == 32 {
-            self.emitf(format!("movl $0x{:x}, %{temp1}", value as u32));
+            let value32 = u32::try_from(value).unwrap_or(0);
+            self.emitf(format!("movl $0x{value32:x}, %{temp1}"));
+        } else if value > 0x7fff_ffff {
+            self.emitf(format!("movabsq $0x{value:x}, %{temp1}"));
         } else {
-            if value > 0x7fffffff {
-                self.emitf(format!("movabsq $0x{:x}, %{temp1}", value));
-            } else {
-                self.emitf(format!("movq $0x{:x}, %{temp1}", value));
-            }
+            self.emitf(format!("movq $0x{value:x}, %{temp1}"));
         }
         self.store_to_rv(rd, temp1);
     }
 
     /// Emit a branch instruction.
     pub fn emit_branch(&mut self, op: &str, rs1: u8, rs2: u8, target: u64) {
-        let temp1 = self.temp1();
-        let temp2 = self.temp2();
-        let suffix = self.suffix();
+        let temp1 = Self::temp1();
+        let temp2 = Self::temp2();
+        let suffix = Self::suffix();
         let src1 = self.load_rv_to_temp(rs1, temp1);
         let src2 = self.load_rv_to_temp(rs2, temp2);
 
@@ -551,41 +582,39 @@ impl<X: Xlen> X86Emitter<X> {
             _ => "jmp",
         };
 
-        self.emitf(format!("{jcc} asm_pc_{:x}", target));
+        self.emitf(format!("{jcc} asm_pc_{target:x}"));
     }
 
     /// Emit a JAL instruction: rd = pc + 4; jump to target
     pub fn emit_jal(&mut self, rd: u8, target: u64, next_pc: u64) {
         if rd != 0 {
-            let temp1 = self.temp1();
+            let temp1 = Self::temp1();
             if X::VALUE == 32 {
-                self.emitf(format!("movl $0x{:x}, %{temp1}", next_pc as u32));
+                let next_pc32 = u32::try_from(next_pc).unwrap_or(0);
+                self.emitf(format!("movl $0x{next_pc32:x}, %{temp1}"));
+            } else if next_pc > 0x7fff_ffff {
+                self.emitf(format!("movabsq $0x{next_pc:x}, %{temp1}"));
             } else {
-                if next_pc > 0x7fffffff {
-                    self.emitf(format!("movabsq $0x{:x}, %{temp1}", next_pc));
-                } else {
-                    self.emitf(format!("movq $0x{:x}, %{temp1}", next_pc));
-                }
+                self.emitf(format!("movq $0x{next_pc:x}, %{temp1}"));
             }
             self.store_to_rv(rd, temp1);
         }
-        self.emitf(format!("jmp asm_pc_{:x}", target));
+        self.emitf(format!("jmp asm_pc_{target:x}"));
     }
 
     /// Emit a JALR instruction: rd = pc + 4; jump to (rs1 + imm) & ~1
     pub fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, next_pc: u64) {
-        let temp1 = self.temp1();
+        let temp1 = Self::temp1();
 
         // Save return address first
         if rd != 0 {
             if X::VALUE == 32 {
-                self.emitf(format!("movl $0x{:x}, %{temp1}", next_pc as u32));
+                let next_pc32 = u32::try_from(next_pc).unwrap_or(0);
+                self.emitf(format!("movl $0x{next_pc32:x}, %{temp1}"));
+            } else if next_pc > 0x7fff_ffff {
+                self.emitf(format!("movabsq $0x{next_pc:x}, %{temp1}"));
             } else {
-                if next_pc > 0x7fffffff {
-                    self.emitf(format!("movabsq $0x{:x}, %{temp1}", next_pc));
-                } else {
-                    self.emitf(format!("movq $0x{:x}, %{temp1}", next_pc));
-                }
+                self.emitf(format!("movq $0x{next_pc:x}, %{temp1}"));
             }
             self.store_to_rv(rd, temp1);
         }
@@ -604,6 +633,10 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a load instruction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `width` is not one of 1, 2, 4, or 8.
     pub fn emit_load(&mut self, rd: u8, rs1: u8, offset: i32, width: u8, signed: bool) {
         if rd == 0 {
             return;
@@ -623,12 +656,12 @@ impl<X: Xlen> X86Emitter<X> {
         self.apply_address_mode("rax");
 
         // Perform load with correct instruction
-        let temp1 = self.temp1();
+        let temp1 = Self::temp1();
         let mem_op = format!("(%{}, %rax)", reserved::MEMORY_PTR);
 
         match (width, signed, X::VALUE) {
             (1, false, _) => {
-                self.emitf(format!("movzbl {mem_op}, %{}", self.reg_dword(temp1)));
+                self.emitf(format!("movzbl {mem_op}, %{}", Self::reg_dword(temp1)));
             }
             (1, true, 32) => {
                 self.emitf(format!("movsbl {mem_op}, %{temp1}"));
@@ -637,7 +670,7 @@ impl<X: Xlen> X86Emitter<X> {
                 self.emitf(format!("movsbq {mem_op}, %{temp1}"));
             }
             (2, false, _) => {
-                self.emitf(format!("movzwl {mem_op}, %{}", self.reg_dword(temp1)));
+                self.emitf(format!("movzwl {mem_op}, %{}", Self::reg_dword(temp1)));
             }
             (2, true, 32) => {
                 self.emitf(format!("movswl {mem_op}, %{temp1}"));
@@ -650,7 +683,7 @@ impl<X: Xlen> X86Emitter<X> {
             }
             (4, false, 64) => {
                 // mov to 32-bit reg zero-extends
-                self.emitf(format!("movl {mem_op}, %{}", self.reg_dword(temp1)));
+                self.emitf(format!("movl {mem_op}, %{}", Self::reg_dword(temp1)));
             }
             (4, true, 64) => {
                 self.emitf(format!("movslq {mem_op}, %{temp1}"));
@@ -665,24 +698,28 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit a store instruction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `width` is not one of 1, 2, 4, or 8.
     pub fn emit_store(&mut self, rs1: u8, rs2: u8, offset: i32, width: u8) {
         // Get value to store into temp2 FIRST
-        let temp2 = self.temp2();
+        let temp2 = Self::temp2();
         let value = self.load_rv_to_temp(rs2, temp2);
 
         // Move to temp2 if not already there
         let val_reg_base = if value != temp2 && value != "rcx" && value != "ecx" {
-            self.emitf(format!("mov{} %{value}, %{temp2}", self.suffix()));
+            self.emitf(format!("mov{} %{value}, %{temp2}", Self::suffix()));
             temp2
         } else {
             &value
         };
 
         let val_reg = match width {
-            1 => self.reg_byte(val_reg_base),
-            2 => self.reg_word(val_reg_base),
-            4 => self.reg_dword(val_reg_base),
-            8 => self.reg_qword(val_reg_base),
+            1 => Self::reg_byte(val_reg_base),
+            2 => Self::reg_word(val_reg_base),
+            4 => Self::reg_dword(val_reg_base),
+            8 => Self::reg_qword(val_reg_base),
             _ => panic!("invalid store width"),
         };
 
@@ -720,26 +757,24 @@ impl<X: Xlen> X86Emitter<X> {
         if X::VALUE == 32 {
             self.emitf(format!(
                 "movl $0x{:x}, {}(%{})",
-                pc as u32,
+                u32::try_from(pc).unwrap_or(0),
+                pc_offset,
+                reserved::STATE_PTR
+            ));
+        } else if pc > 0x7fff_ffff {
+            self.emitf(format!("movabsq $0x{pc:x}, %rax"));
+            self.emitf(format!(
+                "movq %rax, {}(%{})",
                 pc_offset,
                 reserved::STATE_PTR
             ));
         } else {
-            if pc > 0x7fffffff {
-                self.emitf(format!("movabsq $0x{:x}, %rax", pc));
-                self.emitf(format!(
-                    "movq %rax, {}(%{})",
-                    pc_offset,
-                    reserved::STATE_PTR
-                ));
-            } else {
-                self.emitf(format!(
-                    "movq $0x{:x}, {}(%{})",
-                    pc,
-                    pc_offset,
-                    reserved::STATE_PTR
-                ));
-            }
+            self.emitf(format!(
+                "movq $0x{:x}, {}(%{})",
+                pc,
+                pc_offset,
+                reserved::STATE_PTR
+            ));
         }
 
         // Exit to let runtime handle syscall (2 = syscall)
@@ -758,26 +793,24 @@ impl<X: Xlen> X86Emitter<X> {
         if X::VALUE == 32 {
             self.emitf(format!(
                 "movl $0x{:x}, {}(%{})",
-                pc as u32,
+                u32::try_from(pc).unwrap_or(0),
+                pc_offset,
+                reserved::STATE_PTR
+            ));
+        } else if pc > 0x7fff_ffff {
+            self.emitf(format!("movabsq $0x{pc:x}, %rax"));
+            self.emitf(format!(
+                "movq %rax, {}(%{})",
                 pc_offset,
                 reserved::STATE_PTR
             ));
         } else {
-            if pc > 0x7fffffff {
-                self.emitf(format!("movabsq $0x{:x}, %rax", pc));
-                self.emitf(format!(
-                    "movq %rax, {}(%{})",
-                    pc_offset,
-                    reserved::STATE_PTR
-                ));
-            } else {
-                self.emitf(format!(
-                    "movq $0x{:x}, {}(%{})",
-                    pc,
-                    pc_offset,
-                    reserved::STATE_PTR
-                ));
-            }
+            self.emitf(format!(
+                "movq $0x{:x}, {}(%{})",
+                pc,
+                pc_offset,
+                reserved::STATE_PTR
+            ));
         }
 
         // Exit with breakpoint indication (3 = breakpoint)

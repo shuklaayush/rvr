@@ -24,19 +24,16 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emit("sub w0, w0, w2"); // w0 = target - text_start
                 self.load_imm("w2", text_size);
                 self.emit("cmp w0, w2");
-                self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
-                self.emit("b asm_trap");
-                self.emit_label(&valid_label);
             } else {
                 // RV64: check 64-bit range
                 self.load_imm("x2", text_start);
                 self.emit("sub x0, x0, x2"); // x0 = target - text_start
                 self.load_imm("x2", text_size);
                 self.emit("cmp x0, x2");
-                self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
-                self.emit("b asm_trap");
-                self.emit_label(&valid_label);
             }
+            self.emitf(format!("b.lo {valid_label}")); // unsigned < text_size is valid
+            self.emit("b asm_trap");
+            self.emit_label(&valid_label);
         } else if X::VALUE == 32 {
             self.load_imm("w2", text_start);
             self.emit("sub w0, w0, w2");
@@ -93,9 +90,9 @@ impl<X: Xlen> Arm64Emitter<X> {
         let mut pc = text_start;
         while pc < pc_end {
             let target = if self.inputs.valid_addresses.contains(&pc) {
-                format!("asm_pc_{:x} - jump_table", pc)
+                format!("asm_pc_{pc:x} - jump_table")
             } else if let Some(&merged) = self.inputs.absorbed_to_merged.get(&pc) {
-                format!("asm_pc_{:x} - jump_table", merged)
+                format!("asm_pc_{merged:x} - jump_table")
             } else {
                 "asm_trap - jump_table".to_string()
             };

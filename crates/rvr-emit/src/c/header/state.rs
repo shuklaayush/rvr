@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderConfig, NUM_CSRS, RvStateLayout, Write, Xlen, reg_type};
 
 pub(super) fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let rtype = reg_type::<X>();
@@ -33,10 +33,7 @@ pub(super) fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 
     // Optional suspender field
     let suspender_field = if layout.instret_suspend {
-        format!(
-            "    uint64_t target_instret;            /* offset {} */\n",
-            offset_target_instret
-        )
+        format!("    uint64_t target_instret;            /* offset {offset_target_instret} */\n")
     } else {
         String::new()
     };
@@ -47,8 +44,7 @@ pub(super) fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     // Optional tracer field (before CSRs)
     let tracer_field = if has_tracer {
         format!(
-            "\n    /* Tracer - embedded struct */\n    Tracer tracer;                      /* offset {} */\n",
-            offset_tracer
+            "\n    /* Tracer - embedded struct */\n    Tracer tracer;                      /* offset {offset_tracer} */\n"
         )
     } else {
         String::new()
@@ -62,7 +58,7 @@ pub(super) fn gen_state_struct<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     let mut s = format!(
-        r#"/* VM State - hot fields first for cache locality */
+        r"/* VM State - hot fields first for cache locality */
 typedef struct RvState {{
     /* Hot path fields (small offsets for efficient addressing) */
     {rtype} regs[{num_regs}];           /* offset {offset_regs} */
@@ -89,7 +85,7 @@ typedef struct RvState {{
     {rtype} csrs[{num_csrs}];           /* offset {csr_offset_comment} */
 }} RvState;
 
-"#,
+",
         rtype = rtype,
         num_regs = cfg.num_registers,
         num_csrs = NUM_CSRS,
@@ -112,7 +108,7 @@ typedef struct RvState {{
     // Layout verification (C23 static_assert without message)
     // Only verify offsets that are statically known (not tracer-dependent)
     let mut asserts = format!(
-        r#"/* Layout verification (C23 static_assert) */
+        r"/* Layout verification (C23 static_assert) */
 static_assert(offsetof(RvState, regs) == {offset_regs});
 static_assert(offsetof(RvState, pc) == {offset_pc});
 static_assert(offsetof(RvState, instret) == {offset_instret});
@@ -121,22 +117,14 @@ static_assert(offsetof(RvState, has_exited) == {offset_has_exited});
 static_assert(offsetof(RvState, brk) == {offset_brk});
 static_assert(offsetof(RvState, memory) == {offset_memory});
 
-"#,
-        offset_regs = offset_regs,
-        offset_pc = offset_pc,
-        offset_instret = offset_instret,
-        offset_reservation_addr = offset_reservation_addr,
-        offset_has_exited = offset_has_exited,
-        offset_brk = offset_brk,
-        offset_memory = offset_memory,
+",
     );
 
     // Add CSR offset verification only if no tracer (otherwise it's dynamic)
     if !has_tracer {
         writeln!(
             asserts,
-            "static_assert(offsetof(RvState, csrs) == {});",
-            offset_csrs
+            "static_assert(offsetof(RvState, csrs) == {offset_csrs});"
         )
         .unwrap();
         asserts.push('\n');

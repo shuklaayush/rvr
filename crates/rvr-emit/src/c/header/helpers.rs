@@ -1,5 +1,5 @@
 pub(super) fn gen_helpers() -> String {
-    r#"/* Zbb/Zbkb helpers: loop-free, constant-time */
+    r"/* Zbb/Zbkb helpers: loop-free, constant-time */
 
 /* ORC.B: set each byte to 0xFF if non-zero, else 0x00 */
 static inline uint32_t rv_orc_b32(uint32_t x) {
@@ -51,6 +51,6 @@ static inline uint32_t rv_unzip32(uint32_t x) {
     return lo | (hi << 16);
 }
 
-"#
+"
     .to_string()
 }

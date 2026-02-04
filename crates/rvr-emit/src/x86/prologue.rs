@@ -4,6 +4,7 @@ use rvr_ir::Xlen;
 
 use super::X86Emitter;
 use super::registers::reserved;
+use crate::c::TracerKind;
 
 impl<X: Xlen> X86Emitter<X> {
     /// Emit the assembly file header.
@@ -40,7 +41,7 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_blank();
     }
 
-    /// Emit the .text section with asm_run entry point.
+    /// Emit the .text section with `asm_run` entry point.
     pub fn emit_text_section(&mut self) {
         self.emit_raw(".section .text");
         self.emit_raw(".global asm_run");
@@ -49,7 +50,7 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Emit the function prologue.
-    /// Arguments: rdi = RvState*, rsi = memory base (unless fixed addresses)
+    /// Arguments: rdi = `RvState`*, rsi = memory base (unless fixed addresses)
     pub fn emit_prologue(&mut self) {
         self.emit_label("asm_run");
         self.emit_comment("Save callee-saved registers");
@@ -59,9 +60,9 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit("pushq %r13");
         self.emit("pushq %r14");
         self.emit("pushq %r15");
-        let stack_bytes = 8 + X86Emitter::<X>::TEMP_STACK_BYTES;
+        let stack_bytes = 8 + Self::TEMP_STACK_BYTES;
         self.emit_comment("Align stack to 16 bytes and reserve temp slots");
-        self.emitf(format!("subq ${}, %rsp", stack_bytes));
+        self.emitf(format!("subq ${stack_bytes}, %rsp"));
         self.emit_blank();
 
         self.emit_comment("Setup pointers");
@@ -81,7 +82,7 @@ impl<X: Xlen> X86Emitter<X> {
 
         self.emit_comment("Load hot registers from state");
         let hot_regs: Vec<_> = self.reg_map.hot_regs().collect();
-        let suffix = self.suffix();
+        let suffix = Self::suffix();
         for (rv_reg, x86_reg) in hot_regs {
             let offset = self.layout.reg_offset(rv_reg);
             self.emitf(format!(
@@ -112,7 +113,7 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_label("asm_exit");
         self.emit_comment("Save hot registers back to state");
         let hot_regs: Vec<_> = self.reg_map.hot_regs().collect();
-        let suffix = self.suffix();
+        let suffix = Self::suffix();
         for (rv_reg, x86_reg) in hot_regs {
             let offset = self.layout.reg_offset(rv_reg);
             self.emitf(format!(
@@ -133,8 +134,8 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_blank();
 
         self.emit_comment("Restore stack and callee-saved registers");
-        let stack_bytes = 8 + X86Emitter::<X>::TEMP_STACK_BYTES;
-        self.emitf(format!("addq ${}, %rsp", stack_bytes));
+        let stack_bytes = 8 + Self::TEMP_STACK_BYTES;
+        self.emitf(format!("addq ${stack_bytes}, %rsp"));
         self.emit("popq %r15");
         self.emit("popq %r14");
         self.emit("popq %r13");
@@ -152,7 +153,7 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_blank();
     }
 
-    /// Emit rv_execute_from wrapper that the runner expects.
+    /// Emit `rv_execute_from` wrapper that the runner expects.
     pub(super) fn emit_runtime_wrapper(&mut self) {
         self.emit_raw(".global rv_execute_from");
         self.emit_raw(".type rv_execute_from, @function");
@@ -164,16 +165,16 @@ impl<X: Xlen> X86Emitter<X> {
         // Store start_pc to state->pc
         let pc_offset = self.layout.offset_pc;
         if X::VALUE == 32 {
-            self.emitf(format!("movl %esi, {}(%rdi)", pc_offset));
+            self.emitf(format!("movl %esi, {pc_offset}(%rdi)"));
         } else {
-            self.emitf(format!("movq %rsi, {}(%rdi)", pc_offset));
+            self.emitf(format!("movq %rsi, {pc_offset}(%rdi)"));
         }
 
         // Load memory pointer from state for the asm_run call (non-fixed mode)
         if self.config.fixed_addresses.is_none() {
             let memory_offset = self.layout.offset_memory;
             self.emit_comment("Load memory pointer from state");
-            self.emitf(format!("movq {}(%rdi), %rsi", memory_offset));
+            self.emitf(format!("movq {memory_offset}(%rdi), %rsi"));
         }
 
         // Call asm_run
@@ -181,7 +182,7 @@ impl<X: Xlen> X86Emitter<X> {
 
         // Return has_exited
         let has_exited_offset = self.layout.offset_has_exited;
-        self.emitf(format!("movzbl {}(%rdi), %eax", has_exited_offset));
+        self.emitf(format!("movzbl {has_exited_offset}(%rdi), %eax"));
         self.emit("ret");
         self.emit_blank();
     }
@@ -192,7 +193,6 @@ impl<X: Xlen> X86Emitter<X> {
         self.emit_blank();
 
         // RV_TRACER_KIND
-        use crate::c::TracerKind;
         let tracer_kind = self
             .config
             .tracer_config
@@ -201,25 +201,21 @@ impl<X: Xlen> X86Emitter<X> {
             .as_c_kind();
         self.emit_raw(".global RV_TRACER_KIND");
         self.emit_label("RV_TRACER_KIND");
-        self.emitf(format!(".long {}", tracer_kind));
+        self.emitf(format!(".long {tracer_kind}"));
         self.emit_blank();
 
         // RV_EXPORT_FUNCTIONS
-        let export_functions = if self.config.export_functions {
-            1u32
-        } else {
-            0
-        };
+        let export_functions = u32::from(self.config.export_functions);
         self.emit_raw(".global RV_EXPORT_FUNCTIONS");
         self.emit_label("RV_EXPORT_FUNCTIONS");
-        self.emitf(format!(".long {}", export_functions));
+        self.emitf(format!(".long {export_functions}"));
         self.emit_blank();
 
         // RV_INSTRET_MODE
         let instret_mode = self.config.instret_mode.as_c_mode();
         self.emit_raw(".global RV_INSTRET_MODE");
         self.emit_label("RV_INSTRET_MODE");
-        self.emitf(format!(".long {}", instret_mode));
+        self.emitf(format!(".long {instret_mode}"));
         self.emit_blank();
 
         // Fixed addresses (if enabled)

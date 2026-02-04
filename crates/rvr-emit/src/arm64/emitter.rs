@@ -2,12 +2,27 @@
 //!
 //! Low-level text emission, register helpers, and address translation.
 
+use std::fmt::Write;
+
 use rvr_ir::Xlen;
 
 use crate::c::TracerKind;
 
 use super::Arm64Emitter;
 use super::registers::reserved;
+
+struct DiffOffsets {
+    opcode: usize,
+    rd: usize,
+    rd_value: usize,
+    mem_addr: usize,
+    mem_value: usize,
+    mem_width: usize,
+    is_write: usize,
+    has_rd: usize,
+    has_mem: usize,
+    valid: usize,
+}
 
 impl<X: Xlen> Arm64Emitter<X> {
     /// Number of temp slots for IR Temp values.
@@ -52,7 +67,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     /// the cold cache register (x17) might contain stale data.
     pub(super) fn emit_pc_label(&mut self, pc: u64) {
         self.cold_cache = None;
-        self.asm.push_str(&format!("asm_pc_{:x}:\n", pc));
+        let _ = writeln!(self.asm, "asm_pc_{pc:x}:");
     }
 
     /// Emit a raw line (no indentation).
@@ -119,7 +134,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.cold_cache = None;
     }
 
-    pub(super) fn cold_cache_reg(&self) -> &'static str {
+    pub(super) const fn cold_cache_reg() -> &'static str {
         if X::VALUE == 32 {
             "w17"
         } else {
@@ -129,15 +144,15 @@ impl<X: Xlen> Arm64Emitter<X> {
 
     pub(super) fn cold_cache_hit(&self, rv_reg: u8) -> Option<&'static str> {
         if self.cold_cache == Some(rv_reg) {
-            Some(self.cold_cache_reg())
+            Some(Self::cold_cache_reg())
         } else {
             None
         }
     }
 
-    pub(super) fn cold_cache_set(&mut self, rv_reg: u8) -> &'static str {
+    pub(super) const fn cold_cache_set(&mut self, rv_reg: u8) -> &'static str {
         self.cold_cache = Some(rv_reg);
-        self.cold_cache_reg()
+        Self::cold_cache_reg()
     }
 
     pub(super) fn cold_cache_invalidate(&mut self, rv_reg: u8) {
@@ -150,76 +165,41 @@ impl<X: Xlen> Arm64Emitter<X> {
     // Diff tracer helpers (ASM backends)
     // ========================================================================
 
-    fn tracer_kind(&self) -> Option<TracerKind> {
+    const fn tracer_kind(&self) -> Option<TracerKind> {
         self.config.tracer_config.builtin_kind()
     }
 
-    fn diff_tracer_enabled(&self) -> bool {
+    const fn diff_tracer_enabled(&self) -> bool {
         matches!(self.tracer_kind(), Some(TracerKind::Diff))
     }
 
-    fn diff_offsets(
-        &self,
-    ) -> (
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-    ) {
+    const fn diff_offsets() -> DiffOffsets {
         let reg_bytes = X::REG_BYTES;
-        let off_opcode = reg_bytes;
-        let off_rd = reg_bytes + 4;
-        let off_rd_value = reg_bytes + 8;
-        let off_mem_addr = off_rd_value + reg_bytes;
-        let off_mem_value = off_mem_addr + reg_bytes;
-        let off_mem_width = off_mem_value + reg_bytes;
-        let off_is_write = off_mem_width + 1;
-        let off_has_rd = off_is_write + 1;
-        let off_has_mem = off_has_rd + 1;
-        let off_valid = off_has_mem + 1;
-        (
-            off_opcode,
-            off_rd,
-            off_rd_value,
-            off_mem_addr,
-            off_mem_value,
-            off_mem_width,
-            off_is_write,
-            off_has_rd,
-            off_has_mem,
-            off_valid,
-        )
+        let opcode = reg_bytes;
+        let rd = reg_bytes + 4;
+        let rd_value = reg_bytes + 8;
+        let mem_addr = rd_value + reg_bytes;
+        let mem_value = mem_addr + reg_bytes;
+        let mem_width = mem_value + reg_bytes;
+        let is_write = mem_width + 1;
+        let has_rd = is_write + 1;
+        let has_mem = has_rd + 1;
+        let valid = has_mem + 1;
+        DiffOffsets {
+            opcode,
+            rd,
+            rd_value,
+            mem_addr,
+            mem_value,
+            mem_width,
+            is_write,
+            has_rd,
+            has_mem,
+            valid,
+        }
     }
 
-    pub(super) fn emit_trace_pc(&mut self, pc: u64, opcode: u32) {
-        if !self.diff_tracer_enabled() {
-            return;
-        }
-
-        let tracer_base = self.layout.offset_tracer;
-        let (
-            off_opcode,
-            off_rd,
-            off_rd_value,
-            off_mem_addr,
-            off_mem_value,
-            off_mem_width,
-            off_is_write,
-            off_has_rd,
-            off_has_mem,
-            off_valid,
-        ) = self.diff_offsets();
-
-        let tmp = self.temp1();
-        let tmp32 = self.reg_32(tmp);
-
-        // pc
+    fn emit_trace_pc_store(&mut self, tracer_base: usize, tmp: &str, tmp32: &str, pc: u64) {
         self.load_imm(tmp, pc);
         if X::VALUE == 32 {
             self.emitf(format!(
@@ -234,81 +214,108 @@ impl<X: Xlen> Arm64Emitter<X> {
                 tracer_base
             ));
         }
+    }
 
-        // opcode
-        self.load_imm(tmp, opcode as u64);
+    fn emit_trace_opcode_store(
+        &mut self,
+        tracer_base: usize,
+        tmp32: &str,
+        opcode: u32,
+        offsets: &DiffOffsets,
+    ) {
+        self.load_imm(tmp32, u64::from(opcode));
         self.emitf(format!(
             "str {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_opcode
+            tracer_base + offsets.opcode
         ));
+    }
 
-        // Clear fields
+    fn emit_trace_clear_values(&mut self, tracer_base: usize, tmp32: &str, offsets: &DiffOffsets) {
         self.emitf(format!("mov {tmp32}, #0"));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_rd
+            tracer_base + offsets.rd
         ));
         if X::VALUE == 32 {
             self.emitf(format!(
                 "str {tmp32}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_rd_value
+                tracer_base + offsets.rd_value
             ));
             self.emitf(format!(
                 "str {tmp32}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_addr
+                tracer_base + offsets.mem_addr
             ));
             self.emitf(format!(
                 "str {tmp32}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_value
+                tracer_base + offsets.mem_value
             ));
         } else {
             self.emitf(format!(
                 "str xzr, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_rd_value
+                tracer_base + offsets.rd_value
             ));
             self.emitf(format!(
                 "str xzr, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_addr
+                tracer_base + offsets.mem_addr
             ));
             self.emitf(format!(
                 "str xzr, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_value
+                tracer_base + offsets.mem_value
             ));
         }
+    }
+
+    fn emit_trace_clear_flags(&mut self, tracer_base: usize, tmp32: &str, offsets: &DiffOffsets) {
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_mem_width
+            tracer_base + offsets.mem_width
         ));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_is_write
+            tracer_base + offsets.is_write
         ));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_has_rd
+            tracer_base + offsets.has_rd
         ));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_has_mem
+            tracer_base + offsets.has_mem
         ));
         self.emitf(format!("mov {tmp32}, #1"));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_valid
+            tracer_base + offsets.valid
         ));
+    }
+
+    pub(super) fn emit_trace_pc(&mut self, pc: u64, opcode: u32) {
+        if !self.diff_tracer_enabled() {
+            return;
+        }
+
+        let tracer_base = self.layout.offset_tracer;
+        let offsets = Self::diff_offsets();
+
+        let tmp = Self::temp1();
+        let tmp32 = Self::reg_32(tmp);
+        self.emit_trace_pc_store(tracer_base, tmp, &tmp32, pc);
+        self.emit_trace_opcode_store(tracer_base, &tmp32, opcode, &offsets);
+        self.emit_trace_clear_values(tracer_base, &tmp32, &offsets);
+        self.emit_trace_clear_flags(tracer_base, &tmp32, &offsets);
     }
 
     pub(super) fn emit_trace_reg_write(&mut self, reg: u8, val_reg: &str) {
@@ -317,41 +324,30 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
 
         let tracer_base = self.layout.offset_tracer;
-        let (
-            _off_opcode,
-            off_rd,
-            off_rd_value,
-            _off_mem_addr,
-            _off_mem_value,
-            _off_mem_width,
-            _off_is_write,
-            off_has_rd,
-            _off_has_mem,
-            _off_valid,
-        ) = self.diff_offsets();
+        let offsets = Self::diff_offsets();
 
-        let tmp = self.temp3();
-        let tmp32 = self.reg_32(tmp);
+        let tmp = Self::temp3();
+        let tmp32 = Self::reg_32(tmp);
         self.emitf(format!("mov {tmp32}, #{reg}"));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_rd
+            tracer_base + offsets.rd
         ));
 
         if X::VALUE == 32 {
-            let val32 = self.reg_32(val_reg);
+            let val32 = Self::reg_32(val_reg);
             self.emitf(format!(
                 "str {val32}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_rd_value
+                tracer_base + offsets.rd_value
             ));
         } else {
-            let val64 = self.reg_64(val_reg);
+            let val64 = Self::reg_64(val_reg);
             self.emitf(format!(
                 "str {val64}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_rd_value
+                tracer_base + offsets.rd_value
             ));
         }
 
@@ -359,7 +355,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_has_rd
+            tracer_base + offsets.has_rd
         ));
     }
 
@@ -375,57 +371,55 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
 
         let tracer_base = self.layout.offset_tracer;
-        let (_, _, _, off_mem_addr, off_mem_value, off_mem_width, off_is_write, _, off_has_mem, _) =
-            self.diff_offsets();
+        let offsets = Self::diff_offsets();
 
         if X::VALUE == 32 {
-            let addr32 = self.reg_32(addr_reg);
+            let addr32 = Self::reg_32(addr_reg);
             self.emitf(format!(
                 "str {addr32}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_addr
+                tracer_base + offsets.mem_addr
             ));
         } else {
-            let addr64 = self.reg_64(addr_reg);
+            let addr64 = Self::reg_64(addr_reg);
             self.emitf(format!(
                 "str {addr64}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_addr
+                tracer_base + offsets.mem_addr
             ));
         }
 
-        let tmp = self.temp3();
-        let tmp32 = self.reg_32(tmp);
+        let tmp = Self::temp3();
+        let tmp32 = Self::reg_32(tmp);
         match width {
-            1 => self.emitf(format!("uxtb {tmp32}, {}", self.reg_32(val_reg))),
-            2 => self.emitf(format!("uxth {tmp32}, {}", self.reg_32(val_reg))),
-            4 => self.emitf(format!("mov {tmp32}, {}", self.reg_32(val_reg))),
+            1 => self.emitf(format!("uxtb {tmp32}, {}", Self::reg_32(val_reg))),
+            2 => self.emitf(format!("uxth {tmp32}, {}", Self::reg_32(val_reg))),
             8 => {
                 if X::VALUE == 32 {
-                    self.emitf(format!("mov {tmp32}, {}", self.reg_32(val_reg)));
+                    self.emitf(format!("mov {tmp32}, {}", Self::reg_32(val_reg)));
                 } else {
-                    self.emitf(format!("mov {tmp}, {}", self.reg_64(val_reg)));
+                    self.emitf(format!("mov {tmp}, {}", Self::reg_64(val_reg)));
                 }
             }
-            _ => self.emitf(format!("mov {tmp32}, {}", self.reg_32(val_reg))),
+            _ => self.emitf(format!("mov {tmp32}, {}", Self::reg_32(val_reg))),
         }
 
         if X::VALUE == 32 {
             self.emitf(format!(
                 "str {tmp32}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_value
+                tracer_base + offsets.mem_value
             ));
         } else {
             let tmp64 = if width == 8 {
                 tmp.to_string()
             } else {
-                self.reg_64(tmp)
+                Self::reg_64(tmp)
             };
             self.emitf(format!(
                 "str {tmp64}, [{}, #{}]",
                 reserved::STATE_PTR,
-                tracer_base + off_mem_value
+                tracer_base + offsets.mem_value
             ));
         }
 
@@ -433,20 +427,20 @@ impl<X: Xlen> Arm64Emitter<X> {
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_mem_width
+            tracer_base + offsets.mem_width
         ));
-        let write_flag = if is_write { 1 } else { 0 };
+        let write_flag = i32::from(is_write);
         self.emitf(format!("mov {tmp32}, #{write_flag}"));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_is_write
+            tracer_base + offsets.is_write
         ));
         self.emitf(format!("mov {tmp32}, #1"));
         self.emitf(format!(
             "strb {tmp32}, [{}, #{}]",
             reserved::STATE_PTR,
-            tracer_base + off_has_mem
+            tracer_base + offsets.has_mem
         ));
     }
 
@@ -456,21 +450,20 @@ impl<X: Xlen> Arm64Emitter<X> {
 
     /// Get the appropriate temp register name for current XLEN.
     /// For RV32: w0, w1, w2. For RV64: x0, x1, x2.
-    pub(super) fn temp1(&self) -> &'static str {
+    pub(super) const fn temp1() -> &'static str {
         if X::VALUE == 32 { "w0" } else { "x0" }
     }
 
-    pub(super) fn temp2(&self) -> &'static str {
+    pub(super) const fn temp2() -> &'static str {
         if X::VALUE == 32 { "w1" } else { "x1" }
     }
 
-    #[allow(dead_code)]
-    pub(super) fn temp3(&self) -> &'static str {
+    pub(super) const fn temp3() -> &'static str {
         if X::VALUE == 32 { "w2" } else { "x2" }
     }
 
     /// Get stack offset for a temp slot (relative to current SP).
-    pub(super) fn temp_slot_offset(&self, idx: u8) -> Option<usize> {
+    pub(super) const fn temp_slot_offset(idx: u8) -> Option<usize> {
         let idx = idx as usize;
         if idx < Self::TEMP_SLOTS {
             Some(idx * Self::TEMP_SLOT_BYTES)
@@ -480,7 +473,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Allocate a spill slot (starting at slot 4) for nested binary ops.
-    pub(super) fn alloc_spill_slot(&mut self) -> Option<usize> {
+    pub(super) const fn alloc_spill_slot(&mut self) -> Option<usize> {
         let idx = 4 + self.spill_depth;
         if idx < Self::TEMP_SLOTS {
             self.spill_depth += 1;
@@ -491,28 +484,22 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Release the most recently allocated spill slot.
-    pub(super) fn release_spill_slot(&mut self) {
+    pub(super) const fn release_spill_slot(&mut self) {
         if self.spill_depth > 0 {
             self.spill_depth -= 1;
         }
     }
 
     /// Get the 32-bit version of any ARM64 register.
-    pub(super) fn reg_32(&self, reg: &str) -> String {
-        if let Some(suffix) = reg.strip_prefix('x') {
-            format!("w{suffix}")
-        } else {
-            reg.to_string()
-        }
+    pub(super) fn reg_32(reg: &str) -> String {
+        reg.strip_prefix('x')
+            .map_or_else(|| reg.to_string(), |suffix| format!("w{suffix}"))
     }
 
     /// Get the 64-bit version of any ARM64 register.
-    pub(super) fn reg_64(&self, reg: &str) -> String {
-        if let Some(suffix) = reg.strip_prefix('w') {
-            format!("x{suffix}")
-        } else {
-            reg.to_string()
-        }
+    pub(super) fn reg_64(reg: &str) -> String {
+        reg.strip_prefix('w')
+            .map_or_else(|| reg.to_string(), |suffix| format!("x{suffix}"))
     }
 
     // ========================================================================
@@ -567,7 +554,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         if let Some(arm_reg) = self.reg_map.get(rv_reg) {
             if X::VALUE == 32 {
                 // RV32: hot regs are 32-bit, zero-extend to 64-bit
-                let reg64 = self.reg_64(arm_reg);
+                let reg64 = Self::reg_64(arm_reg);
                 // Use uxtw to zero-extend
                 self.emitf(format!("mov {temp64}, {reg64}"));
                 temp64.to_string()
@@ -578,7 +565,7 @@ impl<X: Xlen> Arm64Emitter<X> {
             let offset = self.layout.reg_offset(rv_reg);
             if X::VALUE == 32 {
                 // Load 32-bit, zero-extends to 64-bit via ldr w -> x
-                let temp32 = self.reg_32(temp64);
+                let temp32 = Self::reg_32(temp64);
                 self.emitf(format!(
                     "ldr {temp32}, [{}, #{}]",
                     reserved::STATE_PTR,
@@ -627,7 +614,11 @@ impl<X: Xlen> Arm64Emitter<X> {
         }
 
         let is_32bit = dest.starts_with('w');
-        let val = if is_32bit { value as u32 as u64 } else { value };
+        let val = if is_32bit {
+            u64::from(u32::try_from(value).expect("32-bit immediate fits in u32"))
+        } else {
+            value
+        };
 
         // Check if it fits in a single mov with shifted immediate
         // ARM64 can move 16-bit immediate with optional shift
@@ -641,7 +632,7 @@ impl<X: Xlen> Arm64Emitter<X> {
 
         // For 32-bit destination
         if is_32bit {
-            let v = val as u32;
+            let v = u32::try_from(val).expect("32-bit immediate fits in u32");
             self.emitf(format!("movz {dest}, #{}", v & 0xFFFF));
             if (v >> 16) != 0 {
                 self.emitf(format!("movk {dest}, #{}, lsl #16", (v >> 16) & 0xFFFF));
@@ -654,11 +645,11 @@ impl<X: Xlen> Arm64Emitter<X> {
         for shift in [0, 16, 32, 48] {
             let chunk = ((val >> shift) & 0xFFFF) as u16;
             if chunk != 0 {
-                if !emitted {
+                if emitted {
+                    self.emitf(format!("movk {dest}, #{chunk}, lsl #{shift}"));
+                } else {
                     self.emitf(format!("movz {dest}, #{chunk}, lsl #{shift}"));
                     emitted = true;
-                } else {
-                    self.emitf(format!("movk {dest}, #{chunk}, lsl #{shift}"));
                 }
             }
         }
@@ -673,13 +664,14 @@ impl<X: Xlen> Arm64Emitter<X> {
     #[allow(dead_code)]
     pub(super) fn load_signed_imm(&mut self, dest: &str, value: i64) {
         if value >= 0 {
-            self.load_imm(dest, value as u64);
+            let value_u64 = u64::try_from(value).expect("non-negative immediate fits in u64");
+            self.load_imm(dest, value_u64);
         } else {
             // For negative values, load positive and negate, or use mvn for -1 patterns
             if value == -1 {
                 self.emitf(format!("mov {dest}, #-1"));
             } else {
-                self.load_imm(dest, value as u64);
+                self.load_imm(dest, u64::from_ne_bytes(value.to_ne_bytes()));
             }
         }
     }
@@ -699,7 +691,7 @@ impl<X: Xlen> Arm64Emitter<X> {
             self.emitf(format!("sub {dest}, {base}, #{}", -offset));
         } else {
             // Large offset - load into temp and add
-            self.load_imm("x2", offset as u64);
+            self.load_imm("x2", u64::from_ne_bytes(offset.to_ne_bytes()));
             self.emitf(format!("add {dest}, {base}, x2"));
         }
     }
@@ -710,7 +702,7 @@ impl<X: Xlen> Arm64Emitter<X> {
 
     /// Apply address translation to an address in a register.
     ///
-    /// Uses AddressMode semantics:
+    /// Uses `AddressMode` semantics:
     /// - Unchecked: no-op (guard pages catch OOB)
     /// - Wrap: mask address to memory size
     /// - Bounds: check bounds, trap if OOB, then mask
@@ -720,7 +712,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         // Bounds check (Bounds mode only)
         if mode.needs_bounds_check() {
             let ok_label = self.next_label("bounds_ok");
-            let addr64 = self.reg_64(addr_reg);
+            let addr64 = Self::reg_64(addr_reg);
 
             // Check if address is within bounds
             // Valid addresses have high bits either all 0 or all 1 (for sign-extended negatives)
@@ -737,10 +729,10 @@ impl<X: Xlen> Arm64Emitter<X> {
         // Address masking (Wrap and Bounds modes)
         if mode.needs_mask() {
             let mask = self.memory_mask;
-            let addr64 = self.reg_64(addr_reg);
+            let addr64 = Self::reg_64(addr_reg);
 
             if mask == 0xffff_ffff {
-                let addr32 = self.reg_32(&addr64);
+                let addr32 = Self::reg_32(&addr64);
                 self.emitf(format!("uxtw {addr64}, {addr32}"));
             } else if mask <= 0xFFF {
                 // 12-bit immediate fits in and instruction
@@ -753,9 +745,13 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     /// Check if an immediate can be encoded as an ARM64 logical immediate.
-    pub(super) fn is_logical_imm(&self, value: u64, is_32: bool) -> bool {
+    pub(super) fn is_logical_imm(value: u64, is_32: bool) -> bool {
         let bits = if is_32 { 32 } else { 64 };
-        let v = if is_32 { value as u32 as u64 } else { value };
+        let v = if is_32 {
+            u64::from(u32::try_from(value).expect("32-bit logical immediate fits in u32"))
+        } else {
+            value
+        };
         if v == 0 {
             return false;
         }
@@ -782,7 +778,8 @@ impl<X: Xlen> Arm64Emitter<X> {
                 replicated |= pattern << shift;
                 shift += size;
             }
-            if replicated == v && Self::is_rotated_mask(pattern, size as u32) {
+            let size_u32 = u32::try_from(size).expect("mask size fits in u32");
+            if replicated == v && Self::is_rotated_mask(pattern, size_u32) {
                 return true;
             }
             size <<= 1;

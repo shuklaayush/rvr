@@ -6,17 +6,13 @@
 //! Captured state per entry:
 //! - PC and opcode
 //! - Register write (rd, value)
-//! - Memory access (addr, value, width, is_write)
+//! - Memory access (addr, value, width, `is_write`)
 
 use rvr_ir::Xlen;
 
 use super::super::signature::reg_type;
 
-pub fn gen_tracer_buffered_diff<X: Xlen>() -> String {
-    let rtype = reg_type::<X>();
-
-    format!(
-        r#"/* Buffered diff tracer - captures N instruction states for block-level comparison.
+const BUFFERED_DIFF_TEMPLATE: &str = r"/* Buffered diff tracer - captures N instruction states for block-level comparison.
  *
  * Uses a ring buffer of DiffEntry structs. On overflow, oldest entries are overwritten
  * and `dropped` is incremented. After block execution, Rust reads the buffer.
@@ -29,15 +25,15 @@ pub fn gen_tracer_buffered_diff<X: Xlen>() -> String {
 
 /* Single instruction's captured state - must match Rust DiffEntry layout */
 typedef struct DiffEntry {{
-    {rtype} pc;              // Program counter
+    @RTYPE@ pc;              // Program counter
     uint32_t opcode;         // Raw instruction bits
     uint8_t rd;              // Destination register (0 = none/x0)
     uint8_t has_rd;          // Non-zero if register was written
     uint8_t has_mem;         // Non-zero if memory was accessed
     uint8_t is_write;        // 1 = store, 0 = load
-    {rtype} rd_value;        // Value written to rd
-    {rtype} mem_addr;        // Address accessed
-    {rtype} mem_value;       // Value read or written
+    @RTYPE@ rd_value;        // Value written to rd
+    @RTYPE@ mem_addr;        // Address accessed
+    @RTYPE@ mem_value;       // Value read or written
     uint8_t mem_width;       // Access width: 1/2/4/8 bytes
     uint8_t _pad[7];         // Padding to align struct
 }} DiffEntry;
@@ -80,12 +76,12 @@ static inline void trace_fini(Tracer* t) {{
 }}
 
 /* Block entry (no-op) */
-static inline void trace_block(Tracer* t, {rtype} pc) {{
+static inline void trace_block(Tracer* t, @RTYPE@ pc) {{
     (void)t; (void)pc;
 }}
 
 /* Instruction dispatch - finalize previous entry, start new one */
-static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
+static inline void trace_pc(Tracer* t, @RTYPE@ pc, uint16_t op) {{
     (void)op;
     if (!t || !t->buffer) return;
 
@@ -116,19 +112,19 @@ static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
 }}
 
 /* Record opcode */
-static inline void trace_opcode(Tracer* t, {rtype} pc, uint16_t op, uint32_t opcode) {{
+static inline void trace_opcode(Tracer* t, @RTYPE@ pc, uint16_t op, uint32_t opcode) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.opcode = opcode;
 }}
 
 /* Register reads (not tracked) */
-static inline void trace_reg_read(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
+static inline void trace_reg_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
     (void)t; (void)pc; (void)op; (void)reg; (void)value;
 }}
 
 /* Register write - record destination and value (ignore x0) */
-static inline void trace_reg_write(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
+static inline void trace_reg_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
     (void)pc; (void)op;
     if (!t) return;
     if (reg != 0) {{
@@ -139,7 +135,7 @@ static inline void trace_reg_write(Tracer* t, {rtype} pc, uint16_t op, uint8_t r
 }}
 
 /* Memory reads */
-static inline void trace_mem_read_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
+static inline void trace_mem_read_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -149,7 +145,7 @@ static inline void trace_mem_read_byte(Tracer* t, {rtype} pc, uint16_t op, {rtyp
     t->current.has_mem = 1;
 }}
 
-static inline void trace_mem_read_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
+static inline void trace_mem_read_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -159,7 +155,7 @@ static inline void trace_mem_read_halfword(Tracer* t, {rtype} pc, uint16_t op, {
     t->current.has_mem = 1;
 }}
 
-static inline void trace_mem_read_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
+static inline void trace_mem_read_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -169,7 +165,7 @@ static inline void trace_mem_read_word(Tracer* t, {rtype} pc, uint16_t op, {rtyp
     t->current.has_mem = 1;
 }}
 
-static inline void trace_mem_read_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
+static inline void trace_mem_read_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -180,7 +176,7 @@ static inline void trace_mem_read_dword(Tracer* t, {rtype} pc, uint16_t op, {rty
 }}
 
 /* Memory writes */
-static inline void trace_mem_write_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
+static inline void trace_mem_write_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -190,7 +186,7 @@ static inline void trace_mem_write_byte(Tracer* t, {rtype} pc, uint16_t op, {rty
     t->current.has_mem = 1;
 }}
 
-static inline void trace_mem_write_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
+static inline void trace_mem_write_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -200,7 +196,7 @@ static inline void trace_mem_write_halfword(Tracer* t, {rtype} pc, uint16_t op, 
     t->current.has_mem = 1;
 }}
 
-static inline void trace_mem_write_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
+static inline void trace_mem_write_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -210,7 +206,7 @@ static inline void trace_mem_write_word(Tracer* t, {rtype} pc, uint16_t op, {rty
     t->current.has_mem = 1;
 }}
 
-static inline void trace_mem_write_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
+static inline void trace_mem_write_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
     (void)pc; (void)op;
     if (!t) return;
     t->current.mem_addr = addr;
@@ -221,23 +217,26 @@ static inline void trace_mem_write_dword(Tracer* t, {rtype} pc, uint16_t op, {rt
 }}
 
 /* Control flow (not tracked) */
-static inline void trace_branch_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
     (void)t; (void)pc; (void)op; (void)target;
 }}
 
-static inline void trace_branch_not_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_not_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
     (void)t; (void)pc; (void)op; (void)target;
 }}
 
 /* CSR access (not tracked for diff) */
-static inline void trace_csr_read(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
+static inline void trace_csr_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
     (void)t; (void)pc; (void)op; (void)csr; (void)value;
 }}
 
-static inline void trace_csr_write(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
+static inline void trace_csr_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
     (void)t; (void)pc; (void)op; (void)csr; (void)value;
 }}
-"#,
-        rtype = rtype,
-    )
+";
+
+pub fn gen_tracer_buffered_diff<X: Xlen>() -> String {
+    let rtype = reg_type::<X>();
+
+    super::expand_template(BUFFERED_DIFF_TEMPLATE, &[("@RTYPE@", rtype)])
 }

@@ -4,18 +4,14 @@ use rvr_ir::Xlen;
 
 use super::super::signature::reg_type;
 
-pub fn gen_tracer_preflight<X: Xlen>() -> String {
-    let rtype = reg_type::<X>();
-    let rbytes = X::REG_BYTES;
-    format!(
-        r#"/* Preflight tracer - records execution for replay and proof generation.
+const PREFLIGHT_TEMPLATE: &str = r#"/* Preflight tracer - records execution for replay and proof generation.
  *
  * Storage layout:
- * - pc buffer: {rtype}* - stores each executed PC
+ * - pc buffer: @RTYPE@* - stores each executed PC
  * - data buffer: uint8_t* - stores register/memory/csr accesses as raw bytes
- *   - reg read/write: {rbytes} bytes (register value)
- *   - mem read/write: {rbytes} bytes (addr) + N bytes (value, where N = access size)
- *   - csr read/write: {rbytes} bytes (csr value)
+ *   - reg read/write: @RBYTES@ bytes (register value)
+ *   - mem read/write: @RBYTES@ bytes (addr) + N bytes (value, where N = access size)
+ *   - csr read/write: @RBYTES@ bytes (csr value)
  */
 #pragma once
 
@@ -29,7 +25,7 @@ typedef struct Tracer {{
     uint8_t* data;
     uint32_t data_idx;
     uint64_t data_count;
-    {rtype}* pc;
+    @RTYPE@* pc;
     uint32_t pc_idx;
     uint64_t pc_count;
     uint64_t start_ns;
@@ -66,7 +62,7 @@ static inline void format_rate(char* buf, size_t buflen, double rate) {{
 }}
 
 static inline void print_trace_stats(uint64_t data_bytes, uint64_t pc_count, uint64_t elapsed_ns) {{
-    uint64_t pc_bytes = pc_count * {rbytes};
+    uint64_t pc_bytes = pc_count * @RBYTES@;
     uint64_t total_bytes = data_bytes + pc_bytes;
 
     char pc_str[32], data_str[32], total_str[32];
@@ -98,100 +94,107 @@ static inline void trace_fini(Tracer* t) {{
 }}
 
 /* Block entry */
-static inline void trace_block(Tracer* t, {rtype} pc) {{
+static inline void trace_block(Tracer* t, @RTYPE@ pc) {{
 }}
 
 /* Instruction dispatch */
-static inline void trace_pc(Tracer* t, {rtype} pc, uint16_t op) {{
+static inline void trace_pc(Tracer* t, @RTYPE@ pc, uint16_t op) {{
     t->pc[t->pc_idx++] = pc;
 }}
 
 /* Register access */
-static inline void trace_reg_read(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
-    memcpy(&t->data[t->data_idx], &value, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_reg_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
+    memcpy(&t->data[t->data_idx], &value, @RBYTES@);
+    t->data_idx += @RBYTES@;
 }}
 
-static inline void trace_reg_write(Tracer* t, {rtype} pc, uint16_t op, uint8_t reg, {rtype} value) {{
-    memcpy(&t->data[t->data_idx], &value, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_reg_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint8_t reg, @RTYPE@ value) {{
+    memcpy(&t->data[t->data_idx], &value, @RBYTES@);
+    t->data_idx += @RBYTES@;
 }}
 
 /* Memory reads - record addr + value bytes */
-static inline void trace_mem_read_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_read_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     t->data[t->data_idx++] = value;
 }}
 
-static inline void trace_mem_read_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_read_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     memcpy(&t->data[t->data_idx], &value, 2);
     t->data_idx += 2;
 }}
 
-static inline void trace_mem_read_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_read_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     memcpy(&t->data[t->data_idx], &value, 4);
     t->data_idx += 4;
 }}
 
-static inline void trace_mem_read_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_read_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     memcpy(&t->data[t->data_idx], &value, 8);
     t->data_idx += 8;
 }}
 
 /* Memory writes - record addr + value bytes */
-static inline void trace_mem_write_byte(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint8_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_write_byte(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint8_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     t->data[t->data_idx++] = value;
 }}
 
-static inline void trace_mem_write_halfword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint16_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_write_halfword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint16_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     memcpy(&t->data[t->data_idx], &value, 2);
     t->data_idx += 2;
 }}
 
-static inline void trace_mem_write_word(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint32_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_write_word(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint32_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     memcpy(&t->data[t->data_idx], &value, 4);
     t->data_idx += 4;
 }}
 
-static inline void trace_mem_write_dword(Tracer* t, {rtype} pc, uint16_t op, {rtype} addr, uint64_t value) {{
-    memcpy(&t->data[t->data_idx], &addr, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_mem_write_dword(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ addr, uint64_t value) {{
+    memcpy(&t->data[t->data_idx], &addr, @RBYTES@);
+    t->data_idx += @RBYTES@;
     memcpy(&t->data[t->data_idx], &value, 8);
     t->data_idx += 8;
 }}
 
 /* Control flow */
-static inline void trace_branch_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
 }}
 
-static inline void trace_branch_not_taken(Tracer* t, {rtype} pc, uint16_t op, {rtype} target) {{
+static inline void trace_branch_not_taken(Tracer* t, @RTYPE@ pc, uint16_t op, @RTYPE@ target) {{
 }}
 
 /* CSR access */
-static inline void trace_csr_read(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
-    memcpy(&t->data[t->data_idx], &value, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_csr_read(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
+    memcpy(&t->data[t->data_idx], &value, @RBYTES@);
+    t->data_idx += @RBYTES@;
 }}
 
-static inline void trace_csr_write(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{
-    memcpy(&t->data[t->data_idx], &value, {rbytes});
-    t->data_idx += {rbytes};
+static inline void trace_csr_write(Tracer* t, @RTYPE@ pc, uint16_t op, uint16_t csr, @RTYPE@ value) {{
+    memcpy(&t->data[t->data_idx], &value, @RBYTES@);
+    t->data_idx += @RBYTES@;
 }}
-"#,
-        rtype = rtype,
-        rbytes = rbytes
+"#;
+
+pub fn gen_tracer_preflight<X: Xlen>() -> String {
+    let rtype = reg_type::<X>();
+    let rbytes = X::REG_BYTES;
+    let rbytes_str = rbytes.to_string();
+
+    super::expand_template(
+        PREFLIGHT_TEMPLATE,
+        &[("@RTYPE@", rtype), ("@RBYTES@", rbytes_str.as_str())],
     )
 }

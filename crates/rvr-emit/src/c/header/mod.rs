@@ -2,7 +2,7 @@
 //!
 //! Generates the main header file containing:
 //! - Constants (memory config, entry point, CSRs)
-//! - RvState struct with layout assertions
+//! - `RvState` struct with layout assertions
 //! - Memory and CSR access functions
 //! - Helper functions for bitmanip operations
 
@@ -37,6 +37,14 @@ pub const CSR_MCYCLE: u32 = 0xB00;
 pub const CSR_MCYCLEH: u32 = 0xB80;
 pub const CSR_MINSTRET: u32 = 0xB02;
 pub const CSR_MINSTRETH: u32 = 0xB82;
+
+pub(super) fn expand_template(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut result = template.replace("{{", "{").replace("}}", "}");
+    for (from, to) in replacements {
+        result = result.replace(from, to);
+    }
+    result
+}
 
 /// Header generation configuration.
 pub struct HeaderConfig<X: Xlen> {
@@ -82,7 +90,7 @@ impl<X: Xlen> HeaderConfig<X> {
             memory_bits: config.memory_bits,
             num_registers: config.num_regs,
             instret_mode: config.instret_mode,
-            htif_enabled: config.htif_enabled,
+            htif_enabled: config.htif_enabled(),
             address_mode: config.address_mode,
             entry_point: inputs.entry_point,
             text_start: inputs.text_start,
@@ -96,12 +104,14 @@ impl<X: Xlen> HeaderConfig<X> {
     }
 
     /// Bytes per register.
-    pub fn reg_bytes() -> usize {
+    #[must_use]
+    pub const fn reg_bytes() -> usize {
         X::REG_BYTES
     }
 }
 
 /// Generate the main header file.
+#[must_use]
 pub fn gen_header<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let mut s = String::new();
 
@@ -128,6 +138,7 @@ pub fn gen_header<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 }
 
 /// Generate blocks header with forward declarations.
+#[must_use]
 pub fn gen_blocks_header<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     let decls = gen_block_declarations(cfg);
     format!(
@@ -143,10 +154,10 @@ __attribute__((preserve_none)) void rv_trap({});
     )
 }
 
+mod csr;
+mod dispatch;
+mod helpers;
+mod memory;
 mod prelude;
 mod state;
-mod memory;
-mod csr;
-mod helpers;
 mod trace;
-mod dispatch;

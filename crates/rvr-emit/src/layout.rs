@@ -1,13 +1,13 @@
-//! RvState layout computation.
+//! `RvState` layout computation.
 //!
-//! Computes field offsets for the RvState struct to match the C header.
+//! Computes field offsets for the `RvState` struct to match the C header.
 //! This is the single source of truth for layout, used by both C and x86 emitters.
 
 use rvr_ir::Xlen;
 
 use crate::config::EmitConfig;
 
-/// RvState field offsets.
+/// `RvState` field offsets.
 ///
 /// All offsets are in bytes from the start of the struct.
 #[derive(Clone, Debug)]
@@ -22,21 +22,21 @@ pub struct RvStateLayout {
     pub offset_pc: usize,
     /// Offset of instret.
     pub offset_instret: usize,
-    /// Offset of target_instret (only valid if instret_suspend is true).
+    /// Offset of `target_instret` (only valid if `instret_suspend` is true).
     pub offset_target_instret: usize,
     /// Whether instret suspend mode is enabled.
     pub instret_suspend: bool,
-    /// Offset of reservation_addr.
+    /// Offset of `reservation_addr`.
     pub offset_reservation_addr: usize,
-    /// Offset of reservation_valid.
+    /// Offset of `reservation_valid`.
     pub offset_reservation_valid: usize,
-    /// Offset of has_exited.
+    /// Offset of `has_exited`.
     pub offset_has_exited: usize,
-    /// Offset of exit_code.
+    /// Offset of `exit_code`.
     pub offset_exit_code: usize,
     /// Offset of brk.
     pub offset_brk: usize,
-    /// Offset of start_brk.
+    /// Offset of `start_brk`.
     pub offset_start_brk: usize,
     /// Offset of memory pointer.
     pub offset_memory: usize,
@@ -46,7 +46,8 @@ pub struct RvStateLayout {
 
 impl RvStateLayout {
     /// Compute layout from emit config.
-    pub fn new<X: Xlen>(config: &EmitConfig<X>) -> Self {
+    #[must_use]
+    pub const fn new<X: Xlen>(config: &EmitConfig<X>) -> Self {
         Self::from_params(
             X::REG_BYTES,
             config.num_regs,
@@ -57,8 +58,9 @@ impl RvStateLayout {
     /// Compute layout from raw parameters.
     ///
     /// This is the core implementation used by both `new` and direct callers
-    /// (like the C header generator) that don't have a full EmitConfig.
-    pub fn from_params(reg_bytes: usize, num_regs: usize, has_suspend: bool) -> Self {
+    /// (like the C header generator) that don't have a full `EmitConfig`.
+    #[must_use]
+    pub const fn from_params(reg_bytes: usize, num_regs: usize, has_suspend: bool) -> Self {
         // Hot fields first for cache locality
         let offset_regs = 0;
         let size_regs = num_regs * reg_bytes;
@@ -111,7 +113,8 @@ impl RvStateLayout {
     }
 
     /// Get offset of a specific register.
-    pub fn reg_offset(&self, reg: u8) -> usize {
+    #[must_use]
+    pub const fn reg_offset(&self, reg: u8) -> usize {
         self.offset_regs + (reg as usize) * self.reg_bytes
     }
 }

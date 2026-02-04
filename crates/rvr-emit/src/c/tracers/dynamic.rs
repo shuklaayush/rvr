@@ -7,7 +7,7 @@ use super::super::signature::reg_type;
 pub fn gen_tracer_dynamic<X: Xlen>() -> String {
     let rtype = reg_type::<X>();
     format!(
-        r#"/* Dynamic tracer - runtime function pointers.
+        r"/* Dynamic tracer - runtime function pointers.
  *
  * Tracer struct contains function pointers that can be set at runtime.
  */
@@ -82,7 +82,6 @@ static inline void trace_branch_not_taken(Tracer* t, {rtype} pc, uint16_t op, {r
 /* CSR access */
 static inline void trace_csr_read(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{ if (t->fn_csr_read) t->fn_csr_read(t->inner, pc, op, csr, value); }}
 static inline void trace_csr_write(Tracer* t, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value) {{ if (t->fn_csr_write) t->fn_csr_write(t->inner, pc, op, csr, value); }}
-"#,
-        rtype = rtype
+"
     )
 }

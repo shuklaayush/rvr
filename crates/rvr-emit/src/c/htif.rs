@@ -16,6 +16,7 @@ pub struct HtifConfig {
 }
 
 impl HtifConfig {
+    #[must_use]
     pub fn new(base_name: &str, enabled: bool) -> Self {
         Self {
             base_name: base_name.to_string(),
@@ -24,13 +25,14 @@ impl HtifConfig {
         }
     }
 
-    pub fn with_verbose(mut self, verbose: bool) -> Self {
+    #[must_use]
+    pub const fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
         self
     }
 }
 
-fn addr_type<X: Xlen>() -> &'static str {
+const fn addr_type<X: Xlen>() -> &'static str {
     if X::VALUE == 64 {
         "uint64_t"
     } else {
@@ -39,17 +41,18 @@ fn addr_type<X: Xlen>() -> &'static str {
 }
 
 /// Generate HTIF header file content.
+#[must_use]
 pub fn gen_htif_header<X: Xlen>(cfg: &HtifConfig) -> String {
     if !cfg.enabled {
-        return r#"#pragma once
+        return r"#pragma once
 /* HTIF disabled */
-"#
+"
         .to_string();
     }
 
     let addr_type = addr_type::<X>();
     format!(
-        r#"#pragma once
+        r"#pragma once
 
 #include <stdint.h>
 
@@ -57,24 +60,20 @@ pub fn gen_htif_header<X: Xlen>(cfg: &HtifConfig) -> String {
 typedef struct RvState RvState;
 
 /* HTIF constants (C23 constexpr) */
-constexpr uint64_t HTIF_TOHOST_ADDR   = {tohost:#x};
-constexpr uint64_t HTIF_FROMHOST_ADDR = {fromhost:#x};
+constexpr uint64_t HTIF_TOHOST_ADDR   = {TOHOST_ADDR:#x};
+constexpr uint64_t HTIF_FROMHOST_ADDR = {FROMHOST_ADDR:#x};
 constexpr uint32_t HTIF_FIELD_SIZE    = 8;  /* 64-bit fields */
-constexpr uint64_t HTIF_SYS_WRITE     = {sys_write};
-constexpr uint64_t HTIF_STDOUT_FD     = {stdout_fd};
+constexpr uint64_t HTIF_SYS_WRITE     = {SYS_WRITE};
+constexpr uint64_t HTIF_STDOUT_FD     = {STDOUT_FD};
 
 /* HTIF handler - called when writing to TOHOST address */
 __attribute__((preserve_most)) void handle_tohost_write(RvState* restrict state, {addr_type} value);
-"#,
-        tohost = TOHOST_ADDR,
-        fromhost = FROMHOST_ADDR,
-        sys_write = SYS_WRITE,
-        stdout_fd = STDOUT_FD,
-        addr_type = addr_type,
+",
     )
 }
 
 /// Generate HTIF source file content.
+#[must_use]
 pub fn gen_htif_source<X: Xlen>(cfg: &HtifConfig) -> String {
     if !cfg.enabled {
         return format!(
@@ -89,11 +88,10 @@ pub fn gen_htif_source<X: Xlen>(cfg: &HtifConfig) -> String {
 
     let print_code = if cfg.verbose {
         format!(
-            r#"for ({addr_type} i = 0; i < length; ++i) {{
+            r"for ({addr_type} i = 0; i < length; ++i) {{
             fputc((int)(state->memory[buffer_addr + i] & 0xFFu), stdout);
         }}
-        fflush(stdout);"#,
-            addr_type = addr_type
+        fflush(stdout);"
         )
     } else {
         String::new()

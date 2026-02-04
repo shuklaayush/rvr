@@ -7,7 +7,7 @@ use super::super::signature::reg_type;
 pub fn gen_tracer_ffi<X: Xlen>() -> String {
     let rtype = reg_type::<X>();
     format!(
-        r#"/* FFI tracer - pointer to external tracer, calls extern functions.
+        r"/* FFI tracer - pointer to external tracer, calls extern functions.
  *
  * The actual tracer lives externally. This struct holds a pointer to it.
  * Extern functions take Tracer* and access ->inner to get the actual tracer.
@@ -55,7 +55,6 @@ extern void trace_branch_not_taken(Tracer* tracer, {rtype} pc, uint16_t op, {rty
 /* CSR access */
 extern void trace_csr_read(Tracer* tracer, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value);
 extern void trace_csr_write(Tracer* tracer, {rtype} pc, uint16_t op, uint16_t csr, {rtype} value);
-"#,
-        rtype = rtype
+"
     )
 }

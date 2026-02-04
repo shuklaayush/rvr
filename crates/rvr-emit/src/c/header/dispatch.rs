@@ -1,11 +1,11 @@
-use super::*;
+use super::{HeaderConfig, Write, Xlen, reg_type};
 
 pub(super) fn gen_fn_type<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     format!(
-        r#"/* Block function type */
+        r"/* Block function type */
 typedef __attribute__((preserve_none)) void (*rv_fn)({});
 
-"#,
+",
         cfg.sig.params
     )
 }
@@ -30,7 +30,7 @@ pub(super) fn gen_block_declarations<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
 pub(super) fn gen_syscall_declarations<X: Xlen>() -> String {
     let rtype = reg_type::<X>();
     format!(
-        r#"/* Syscall runtime helpers (provided by runtime) */
+        r"/* Syscall runtime helpers (provided by runtime) */
 {rtype} rv_sys_write(RvState* restrict state, {rtype} fd, {rtype} buf, {rtype} count);
 {rtype} rv_sys_read(RvState* restrict state, {rtype} fd, {rtype} buf, {rtype} count);
 {rtype} rv_sys_brk(RvState* restrict state, {rtype} addr);
@@ -39,8 +39,7 @@ pub(super) fn gen_syscall_declarations<X: Xlen>() -> String {
 {rtype} rv_sys_getrandom(RvState* restrict state, {rtype} buf, {rtype} len, {rtype} flags);
 {rtype} rv_sys_clock_gettime(RvState* restrict state, {rtype} clk_id, {rtype} tp);
 
-"#,
-        rtype = rtype,
+",
     )
 }
 
@@ -68,7 +67,7 @@ pub(super) fn gen_dispatch<X: Xlen>(cfg: &HeaderConfig<X>) -> String {
     };
 
     format!(
-        r#"{comment}
+        r"{comment}
 static inline uint64_t dispatch_index({rtype} pc) {{
     {dispatch_body}
 }}
@@ -81,20 +80,22 @@ int rv_execute_from(RvState* restrict state, {rtype} start_pc);
 /* Metadata constant (read via dlsym) */
 extern const uint32_t RV_TRACER_KIND;
 
-"#,
+",
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::c::{gen_blocks_header, gen_header};
+    use crate::{EmitConfig, EmitInputs};
     use rvr_ir::Rv64;
 
     #[test]
     fn test_gen_header() {
         let config = EmitConfig::<Rv64>::standard();
-        let inputs = EmitInputs::new(0x80000000, 0x80000008);
-        let header_cfg = HeaderConfig::new("test", &config, &inputs, vec![0x80000000]);
+        let inputs = EmitInputs::new(0x8000_0000, 0x8000_0008);
+        let header_cfg = HeaderConfig::new("test", &config, &inputs, vec![0x8000_0000]);
         let header = gen_header::<Rv64>(&header_cfg);
 
         assert!(header.contains("#pragma once"));
@@ -106,8 +107,9 @@ mod tests {
     #[test]
     fn test_gen_blocks_header() {
         let config = EmitConfig::<Rv64>::standard();
-        let inputs = EmitInputs::new(0x80000000, 0x80000008);
-        let header_cfg = HeaderConfig::new("test", &config, &inputs, vec![0x80000000, 0x80000004]);
+        let inputs = EmitInputs::new(0x8000_0000, 0x8000_0008);
+        let header_cfg =
+            HeaderConfig::new("test", &config, &inputs, vec![0x8000_0000, 0x8000_0004]);
         let blocks = gen_blocks_header::<Rv64>(&header_cfg);
 
         assert!(blocks.contains("B_0000000080000000"));

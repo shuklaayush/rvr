@@ -1,26 +1,25 @@
 use rvr_ir::{BinaryOp, Expr, InstrIR, Terminator, Xlen};
 
+use super::stmt_writes_to_exited;
 use crate::arm64::Arm64Emitter;
 use crate::arm64::registers::reserved;
-use super::stmt_writes_to_exited;
 
 impl<X: Xlen> Arm64Emitter<X> {
     /// Emit a terminator, using the actual fall-through PC from the output stream.
     pub(super) fn emit_terminator(&mut self, term: &Terminator<X>, fall_pc: u64, current_pc: u64) {
-        let temp1 = self.temp1();
+        let temp1 = Self::temp1();
 
         match term {
             Terminator::Fall { target } => {
-                let target_pc = target
-                    .map(|t| self.inputs.resolve_address(X::to_u64(t)))
-                    .unwrap_or(fall_pc);
+                let target_pc =
+                    target.map_or(fall_pc, |t| self.inputs.resolve_address(X::to_u64(t)));
                 if target.is_some() && !self.inputs.is_valid_address(target_pc) {
                     self.emit("b asm_trap");
                     return;
                 }
                 // Don't emit branch if target is the next emitted instruction or current instruction
                 if target_pc != fall_pc && target_pc != current_pc {
-                    self.emitf(format!("b asm_pc_{:x}", target_pc));
+                    self.emitf(format!("b asm_pc_{target_pc:x}"));
                 }
             }
             Terminator::Jump { target } => {
@@ -31,7 +30,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 }
                 // Don't emit a self-loop (would be a bug in IR)
                 if target_pc != current_pc {
-                    self.emitf(format!("b asm_pc_{:x}", target_pc));
+                    self.emitf(format!("b asm_pc_{target_pc:x}"));
                 }
             }
             Terminator::JumpDyn { addr, .. } => {
@@ -47,7 +46,7 @@ impl<X: Xlen> Arm64Emitter<X> {
             } => {
                 let target_pc = self.inputs.resolve_address(X::to_u64(*target));
                 let target_label = if self.inputs.is_valid_address(target_pc) {
-                    format!("asm_pc_{:x}", target_pc)
+                    format!("asm_pc_{target_pc:x}")
                 } else {
                     "asm_trap".to_string()
                 };
@@ -55,15 +54,14 @@ impl<X: Xlen> Arm64Emitter<X> {
                     let cond_reg = self.emit_expr(cond, temp1);
                     self.emitf(format!("cbnz {cond_reg}, {target_label}"));
                 }
-                let fall_target_pc = fall
-                    .map(|f| self.inputs.resolve_address(X::to_u64(f)))
-                    .unwrap_or(fall_pc);
+                let fall_target_pc =
+                    fall.map_or(fall_pc, |f| self.inputs.resolve_address(X::to_u64(f)));
                 if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
                     self.emit("b asm_trap");
                     return;
                 }
                 if fall_target_pc != fall_pc {
-                    self.emitf(format!("b asm_pc_{:x}", fall_target_pc));
+                    self.emitf(format!("b asm_pc_{fall_target_pc:x}"));
                 }
             }
             Terminator::Exit { code } => {
@@ -78,7 +76,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 ));
                 self.emitf(format!(
                     "strb {}, [{}, #{}]",
-                    self.reg_32(&code_reg),
+                    Self::reg_32(&code_reg),
                     reserved::STATE_PTR,
                     exit_code
                 ));
@@ -111,7 +109,7 @@ impl<X: Xlen> Arm64Emitter<X> {
         let mut cmp_for_branch: Option<(Expr<X>, Expr<X>, BinaryOp)> = None;
         if is_last_in_block && !self.config.instret_mode.per_instruction() {
             if let Terminator::Branch { cond, .. } = &instr.terminator {
-                if let Some((left, right, op)) = self.cmp_from_temp_branch(&instr.statements, cond)
+                if let Some((left, right, op)) = Self::cmp_from_temp_branch(&instr.statements, cond)
                 {
                     skip_last_temp_cmp = true;
                     cmp_for_branch = Some((left.clone(), right.clone(), op));
@@ -143,7 +141,8 @@ impl<X: Xlen> Arm64Emitter<X> {
             self.emit_instret_post_check(instr, fall_pc, pc);
         }
 
-        if is_last_in_block && self.config.instret_mode.suspends()
+        if is_last_in_block
+            && self.config.instret_mode.suspends()
             && !self.config.instret_mode.per_instruction()
         {
             self.emit_instret_suspend_check(instr, fall_pc, pc);
@@ -160,23 +159,22 @@ impl<X: Xlen> Arm64Emitter<X> {
                     };
                     let target_pc = self.inputs.resolve_address(X::to_u64(*target));
                     let target_label = if self.inputs.is_valid_address(target_pc) {
-                        format!("asm_pc_{:x}", target_pc)
+                        format!("asm_pc_{target_pc:x}")
                     } else {
                         "asm_trap".to_string()
                     };
                     if !self.try_emit_compare_branch(&cond_expr, &target_label, false) {
-                        let cond_reg = self.emit_expr(&cond_expr, self.temp1());
+                        let cond_reg = self.emit_expr(&cond_expr, Self::temp1());
                         self.emitf(format!("cbnz {cond_reg}, {target_label}"));
                     }
-                    let fall_target_pc = fall
-                        .map(|f| self.inputs.resolve_address(X::to_u64(f)))
-                        .unwrap_or(fall_pc);
+                    let fall_target_pc =
+                        fall.map_or(fall_pc, |f| self.inputs.resolve_address(X::to_u64(f)));
                     if fall.is_some() && !self.inputs.is_valid_address(fall_target_pc) {
                         self.emit("b asm_trap");
                         return;
                     }
                     if fall_target_pc != fall_pc {
-                        self.emitf(format!("b asm_pc_{:x}", fall_target_pc));
+                        self.emitf(format!("b asm_pc_{fall_target_pc:x}"));
                     }
                 } else {
                     self.emit_terminator(&instr.terminator, fall_pc, pc);
@@ -190,7 +188,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                     self.emit_terminator(&instr.terminator, fall_pc, pc);
                 }
                 Terminator::Fall { target } => {
-                    let target_pc = target.map(|t| X::to_u64(t)).unwrap_or(fall_pc);
+                    let target_pc = target.map_or(fall_pc, |t| X::to_u64(t));
                     if target_pc != fall_pc {
                         self.emit_terminator(&instr.terminator, fall_pc, pc);
                     }
@@ -212,7 +210,7 @@ impl<X: Xlen> Arm64Emitter<X> {
             let fall_pc = if i + 1 < instrs.len() {
                 X::to_u64(instrs[i + 1].pc)
             } else {
-                pc + instr.size as u64
+                pc + u64::from(instr.size)
             };
             self.emit_instruction(instr, true, fall_pc);
         }

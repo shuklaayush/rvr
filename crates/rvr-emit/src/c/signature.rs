@@ -7,6 +7,7 @@
 //! - hot registers as direct parameters
 
 use std::collections::HashSet;
+use std::fmt::Write;
 
 use rvr_ir::Xlen;
 use rvr_isa::reg_name;
@@ -16,14 +17,16 @@ use crate::config::EmitConfig;
 // Re-export for backwards compatibility
 pub use rvr_isa::REG_ABI_NAMES;
 
-/// Get ABI name for register (alias for rvr_isa::reg_name).
+/// Get ABI name for register (alias for `rvr_isa::reg_name`).
 #[inline]
+#[must_use]
 pub fn abi_name(reg: u8) -> &'static str {
     reg_name(reg)
 }
 
 /// Get C type for register width.
-pub fn reg_type<X: Xlen>() -> &'static str {
+#[must_use]
+pub const fn reg_type<X: Xlen>() -> &'static str {
     if X::VALUE == 64 {
         "uint64_t"
     } else {
@@ -40,7 +43,8 @@ pub const MEMORY_FIXED_REF: &str = "((uint8_t*)RV_MEMORY_ADDR)";
 /// Get state reference expression based on fixed address mode.
 /// In fixed address mode: `((RvState*)RV_STATE_ADDR)`
 /// In normal mode: `state`
-pub fn state_ref(fixed_addresses: bool) -> &'static str {
+#[must_use]
+pub const fn state_ref(fixed_addresses: bool) -> &'static str {
     if fixed_addresses {
         STATE_FIXED_REF
     } else {
@@ -55,7 +59,7 @@ pub fn state_ref(fixed_addresses: bool) -> &'static str {
 #[derive(Clone, Debug)]
 pub struct FnSignature {
     /// C function parameter declaration.
-    /// Example: "RvState* state, uint8_t* memory, uint64_t instret, uint64_t ra, uint64_t sp"
+    /// Example: "`RvState`* state, `uint8_t`* memory, `uint64_t` instret, `uint64_t` ra, `uint64_t` sp"
     pub params: String,
     /// Argument list for calling block functions.
     /// Example: "state, memory, instret, ra, sp"
@@ -82,6 +86,7 @@ pub struct FnSignature {
 
 impl FnSignature {
     /// Create function signature from emit config.
+    #[must_use]
     pub fn new<X: Xlen>(config: &EmitConfig<X>) -> Self {
         let rtype = reg_type::<X>();
         let counts_instret = config.instret_mode.counts();
@@ -116,8 +121,8 @@ impl FnSignature {
             }
             params.push_str("uint64_t instret");
             args.push_str("instret");
-            args_from_state.push_str(&format!("{}->instret", state));
-            save_to_state.push_str(&format!("{}->instret = instret;", state));
+            let _ = write!(args_from_state, "{state}->instret");
+            let _ = write!(save_to_state, "{state}->instret = instret;");
             // save_to_state_no_instret does NOT include instret
         }
 
@@ -148,15 +153,15 @@ impl FnSignature {
             hot_reg_set.insert(reg);
             let name = abi_name(reg);
             if params.is_empty() {
-                params.push_str(&format!("{} {}", rtype, name));
+                let _ = write!(params, "{rtype} {name}");
                 args.push_str(name);
-                args_from_state.push_str(&format!("{}->regs[{}]", state, reg));
+                let _ = write!(args_from_state, "{state}->regs[{reg}]");
             } else {
-                params.push_str(&format!(", {} {}", rtype, name));
-                args.push_str(&format!(", {}", name));
-                args_from_state.push_str(&format!(", {}->regs[{}]", state, reg));
+                let _ = write!(params, ", {rtype} {name}");
+                let _ = write!(args, ", {name}");
+                let _ = write!(args_from_state, ", {state}->regs[{reg}]");
             }
-            let reg_save = format!(" {}->regs[{}] = {};", state, reg, name);
+            let reg_save = format!(" {state}->regs[{reg}] = {name};");
             save_to_state.push_str(&reg_save);
             save_to_state_no_instret.push_str(&reg_save);
         }
@@ -175,11 +180,13 @@ impl FnSignature {
     }
 
     /// Check if register is hot.
+    #[must_use]
     pub fn is_hot_reg(&self, reg: u8) -> bool {
         self.hot_reg_set.contains(&reg)
     }
 
     /// Generate code to read a register value.
+    #[must_use]
     pub fn reg_read(&self, reg: u8) -> String {
         if reg == 0 {
             "0".to_string()
@@ -191,6 +198,7 @@ impl FnSignature {
     }
 
     /// Generate code to write to a register.
+    #[must_use]
     pub fn reg_write(&self, reg: u8, value: &str) -> String {
         if reg == 0 {
             String::new()
@@ -207,9 +215,10 @@ impl FnSignature {
     }
 
     /// Generate instret increment if counting is enabled.
+    #[must_use]
     pub fn instret_increment(&self, count: u32) -> String {
         if self.counts_instret {
-            format!("instret += {};", count)
+            format!("instret += {count};")
         } else {
             String::new()
         }

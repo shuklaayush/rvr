@@ -21,7 +21,7 @@ pub const INSTRUCTION_SIZE: u64 = 2;
 pub struct DispatchConfig<X: Xlen> {
     /// Base name for output files.
     pub base_name: String,
-    /// Derived inputs (entry_point, pc_end, valid_addresses, initial_brk).
+    /// Derived inputs (`entry_point`, `pc_end`, `valid_addresses`, `initial_brk`).
     pub inputs: EmitInputs,
     /// Instret counting mode.
     pub instret_mode: InstretMode,
@@ -59,6 +59,7 @@ impl<X: Xlen> DispatchConfig<X> {
 }
 
 /// Generate the dispatch.c file.
+#[must_use]
 pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     let mut s = String::new();
 
@@ -82,10 +83,10 @@ pub fn gen_dispatch_file<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     while addr < cfg.inputs.pc_end {
         if cfg.inputs.valid_addresses.contains(&addr) {
             // Block start - point to its own function
-            writeln!(s, "    B_{addr:0width$x},", addr = addr, width = width).unwrap();
+            writeln!(s, "    B_{addr:0width$x},").unwrap();
         } else if let Some(&merged) = cfg.inputs.absorbed_to_merged.get(&addr) {
             // Absorbed block - point to merged block's function
-            writeln!(s, "    B_{addr:0width$x},", addr = merged, width = width).unwrap();
+            writeln!(s, "    B_{merged:0width$x},").unwrap();
         } else {
             s.push_str("    rv_trap,\n");
         }
@@ -104,14 +105,14 @@ fn gen_trap_handler<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     let state = state_ref(cfg.fixed_addresses.is_some());
 
     format!(
-        r#"/* Trap handler for invalid addresses - replaces NULL checks */
+        r"/* Trap handler for invalid addresses - replaces NULL checks */
 __attribute__((preserve_none, cold))
 void rv_trap({params}) {{
     {state}->has_exited = true;
     {state}->exit_code = 1;
     {save_to_state}
 }}
-"#,
+",
         params = cfg.sig.params,
         state = state,
         save_to_state = cfg.sig.save_to_state,
@@ -119,41 +120,28 @@ void rv_trap({params}) {{
 }
 
 fn gen_api_helpers<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
-    let tracer_kind_val = match cfg.tracer_kind {
-        Some(kind) => kind.as_c_kind(),
-        None => {
-            if cfg.has_tracing {
-                255
-            } else {
-                0
-            }
-        }
-    };
+    let tracer_kind_val = cfg
+        .tracer_kind
+        .map_or(if cfg.has_tracing { 255 } else { 0 }, TracerKind::as_c_kind);
 
-    let export_functions_val: u32 = if cfg.export_functions { 1 } else { 0 };
+    let export_functions_val: u32 = u32::from(cfg.export_functions);
     let instret_mode_val: u32 = cfg.instret_mode.as_c_mode();
 
-    let fixed_addr_exports = if let Some(fixed) = cfg.fixed_addresses {
+    let fixed_addr_exports = cfg.fixed_addresses.map_or_else(String::new, |fixed| {
         format!(
             "const uint64_t RV_FIXED_STATE_ADDR = {:#x}ull;\nconst uint64_t RV_FIXED_MEMORY_ADDR = {:#x}ull;\n",
             fixed.state_addr, fixed.memory_addr
         )
-    } else {
-        String::new()
-    };
+    });
 
     format!(
-        r#"/* Minimal C API - state management happens in Rust */
+        r"/* Minimal C API - state management happens in Rust */
 
 /* Exported metadata constants (read via dlsym) */
-const uint32_t RV_TRACER_KIND = {tracer_kind};
-const uint32_t RV_EXPORT_FUNCTIONS = {export_functions};
-const uint32_t RV_INSTRET_MODE = {instret_mode};
-{fixed_addr_exports}"#,
-        tracer_kind = tracer_kind_val,
-        export_functions = export_functions_val,
-        instret_mode = instret_mode_val,
-        fixed_addr_exports = fixed_addr_exports,
+const uint32_t RV_TRACER_KIND = {tracer_kind_val};
+const uint32_t RV_EXPORT_FUNCTIONS = {export_functions_val};
+const uint32_t RV_INSTRET_MODE = {instret_mode_val};
+{fixed_addr_exports}",
     )
 }
 
@@ -179,7 +167,7 @@ fn gen_runtime_functions<X: Xlen>(cfg: &DispatchConfig<X>) -> String {
     let reg_type = super::signature::reg_type::<X>();
 
     format!(
-        r#"/* Execute from given PC. Returns: 0=continue, 1=exited, 2=suspended */
+        r"/* Execute from given PC. Returns: 0=continue, 1=exited, 2=suspended */
 __attribute__((hot, nonnull))
 int rv_execute_from(RvState* restrict state, {reg_type} start_pc) {{
     {trace_init}
@@ -189,7 +177,7 @@ int rv_execute_from(RvState* restrict state, {reg_type} start_pc) {{
     if (state->has_exited) return 1;{suspend_check}
     return 0;
 }}
-"#,
+",
         reg_type = reg_type,
         args_from_state = cfg.sig.args_from_state,
         suspend_check = suspend_check,
@@ -206,9 +194,9 @@ mod tests {
     #[test]
     fn test_gen_dispatch() {
         let config = EmitConfig::<Rv64>::standard();
-        let mut inputs = EmitInputs::new(0x80000000, 0x80000010).with_initial_brk(0x80010000);
-        inputs.valid_addresses.insert(0x80000000u64);
-        inputs.valid_addresses.insert(0x80000004u64);
+        let mut inputs = EmitInputs::new(0x8000_0000, 0x8000_0010).with_initial_brk(0x8001_0000);
+        inputs.valid_addresses.insert(0x8000_0000_u64);
+        inputs.valid_addresses.insert(0x8000_0004_u64);
 
         let dispatch_cfg = DispatchConfig::new(&config, "test", inputs);
 
@@ -224,11 +212,11 @@ mod tests {
     #[test]
     fn test_absorbed_mapping() {
         let config = EmitConfig::<Rv64>::standard();
-        let mut inputs = EmitInputs::new(0x80000000, 0x80000008).with_initial_brk(0x80010000);
-        inputs.valid_addresses.insert(0x80000000u64);
+        let mut inputs = EmitInputs::new(0x8000_0000, 0x8000_0008).with_initial_brk(0x8001_0000);
+        inputs.valid_addresses.insert(0x8000_0000_u64);
         inputs
             .absorbed_to_merged
-            .insert(0x80000002u64, 0x80000000u64);
+            .insert(0x8000_0002_u64, 0x8000_0000_u64);
 
         let dispatch_cfg = DispatchConfig::new(&config, "test", inputs);
 

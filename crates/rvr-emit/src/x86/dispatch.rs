@@ -14,17 +14,19 @@ impl<X: Xlen> X86Emitter<X> {
 
         // Range check: trap if target < text_start or target >= pc_end
         // This prevents out-of-bounds jump table access (e.g., ra=0 on return)
+        let text_start32 = u32::try_from(text_start).expect("text start fits in u32");
+        let text_size32 = u32::try_from(text_size).expect("text size fits in u32");
         if X::VALUE == 32 {
             // RV32: check 32-bit range
-            self.emitf(format!("subl $0x{:x}, %eax", text_start as u32));
-            self.emitf(format!("cmpl $0x{:x}, %eax", text_size as u32));
+            self.emitf(format!("subl $0x{text_start32:x}, %eax"));
+            self.emitf(format!("cmpl $0x{text_size32:x}, %eax"));
             self.emit("jae asm_trap"); // unsigned >= text_size means out of range
             self.emit("shrl $1, %eax");
         } else {
             // RV64: check 64-bit range
-            self.emitf(format!("movl $0x{:x}, %edx", text_start as u32));
+            self.emitf(format!("movl $0x{text_start32:x}, %edx"));
             self.emit("subq %rdx, %rax");
-            self.emitf(format!("movl $0x{:x}, %edx", text_size as u32));
+            self.emitf(format!("movl $0x{text_size32:x}, %edx"));
             self.emit("cmpq %rdx, %rax");
             self.emit("jae asm_trap"); // unsigned >= text_size means out of range
             self.emit("shrq $1, %rax");
@@ -72,9 +74,9 @@ impl<X: Xlen> X86Emitter<X> {
         let mut pc = text_start;
         while pc < pc_end {
             let target = if self.inputs.valid_addresses.contains(&pc) {
-                format!("asm_pc_{:x} - jump_table", pc)
+                format!("asm_pc_{pc:x} - jump_table")
             } else if let Some(&merged) = self.inputs.absorbed_to_merged.get(&pc) {
-                format!("asm_pc_{:x} - jump_table", merged)
+                format!("asm_pc_{merged:x} - jump_table")
             } else {
                 "asm_trap - jump_table".to_string()
             };

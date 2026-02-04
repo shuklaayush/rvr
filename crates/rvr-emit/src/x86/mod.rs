@@ -41,7 +41,7 @@ pub struct X86Emitter<X: Xlen> {
     pub(self) asm: String,
     /// PCs that need labels (jump targets from branches/jalr).
     pub(self) label_pcs: HashSet<u64>,
-    /// RvState layout (field offsets).
+    /// `RvState` layout (field offsets).
     pub(self) layout: RvStateLayout,
     /// Register mapping.
     pub(self) reg_map: RegMap,
@@ -49,12 +49,13 @@ pub struct X86Emitter<X: Xlen> {
     pub(self) memory_mask: u64,
     /// Counter for generating unique labels.
     pub(self) label_counter: usize,
-    /// Cached cold register (RV reg number) stored in COLD_CACHE.
+    /// Cached cold register (RV reg number) stored in `COLD_CACHE`.
     pub(self) cold_cache: Option<u8>,
 }
 
 impl<X: Xlen> X86Emitter<X> {
     /// Create a new x86 emitter.
+    #[must_use]
     pub fn new(config: EmitConfig<X>, inputs: EmitInputs) -> Self {
         let layout = RvStateLayout::new::<X>(&config);
         let is_rv32 = X::VALUE == 32;
@@ -98,32 +99,41 @@ impl<X: Xlen> X86Emitter<X> {
     }
 
     /// Get the accumulated assembly.
+    #[must_use]
     pub fn assembly(&self) -> &str {
         &self.asm
     }
 
     /// Write assembly to a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns any I/O error returned by `std::fs::write`.
     pub fn write_asm(&self, path: &Path) -> std::io::Result<()> {
         std::fs::write(path, &self.asm)
     }
 
     /// Get the layout.
-    pub fn layout(&self) -> &RvStateLayout {
+    #[must_use]
+    pub const fn layout(&self) -> &RvStateLayout {
         &self.layout
     }
 
     /// Get the config.
-    pub fn config(&self) -> &EmitConfig<X> {
+    #[must_use]
+    pub const fn config(&self) -> &EmitConfig<X> {
         &self.config
     }
 
     /// Get the inputs.
-    pub fn inputs(&self) -> &EmitInputs {
+    #[must_use]
+    pub const fn inputs(&self) -> &EmitInputs {
         &self.inputs
     }
 
     /// Get the register map.
-    pub fn reg_map(&self) -> &RegMap {
+    #[must_use]
+    pub const fn reg_map(&self) -> &RegMap {
         &self.reg_map
     }
 }
@@ -229,6 +239,6 @@ mod tests {
         assert!(asm.contains("asm_trap:"));
         assert!(asm.contains("jump_table:"));
 
-        eprintln!("\n=== Generated Assembly ===\n{}", asm);
+        eprintln!("\n=== Generated Assembly ===\n{asm}");
     }
 }

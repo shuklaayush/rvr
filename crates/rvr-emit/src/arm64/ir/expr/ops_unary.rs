@@ -1,10 +1,10 @@
-use super::*;
+use super::{Arm64Emitter, Expr, UnaryOp, Xlen};
 
 impl<X: Xlen> Arm64Emitter<X> {
     pub(super) fn emit_unary_op(&mut self, op: UnaryOp, inner: &Expr<X>, dest: &str) -> String {
         let mut inner_reg = self.emit_expr(inner, dest);
-        if X::VALUE == 32 && dest.starts_with("w") && inner_reg.starts_with("x") {
-            inner_reg = self.reg_32(&inner_reg);
+        if X::VALUE == 32 && dest.starts_with('w') && inner_reg.starts_with('x') {
+            inner_reg = Self::reg_32(&inner_reg);
         }
         if inner_reg != dest {
             self.emitf(format!("mov {dest}, {inner_reg}"));
@@ -18,25 +18,33 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emitf(format!("mvn {dest}, {dest}"));
             }
             UnaryOp::Sext8 => {
-                self.emitf(format!("sxtb {dest}, {}", self.reg_32(dest)));
+                self.emitf(format!("sxtb {dest}, {}", Self::reg_32(dest)));
             }
             UnaryOp::Sext16 => {
-                self.emitf(format!("sxth {dest}, {}", self.reg_32(dest)));
+                self.emitf(format!("sxth {dest}, {}", Self::reg_32(dest)));
             }
             UnaryOp::Sext32 => {
-                let dest64 = self.reg_64(dest);
-                self.emitf(format!("sxtw {dest64}, {}", self.reg_32(dest)));
+                let dest64 = Self::reg_64(dest);
+                self.emitf(format!("sxtw {dest64}, {}", Self::reg_32(dest)));
             }
             UnaryOp::Zext8 => {
-                self.emitf(format!("uxtb {}, {}", self.reg_32(dest), self.reg_32(dest)));
+                self.emitf(format!(
+                    "uxtb {}, {}",
+                    Self::reg_32(dest),
+                    Self::reg_32(dest)
+                ));
             }
             UnaryOp::Zext16 => {
-                self.emitf(format!("uxth {}, {}", self.reg_32(dest), self.reg_32(dest)));
+                self.emitf(format!(
+                    "uxth {}, {}",
+                    Self::reg_32(dest),
+                    Self::reg_32(dest)
+                ));
             }
             UnaryOp::Zext32 => {
                 // Moving w to x zero-extends automatically
-                let src32 = self.reg_32(dest);
-                let dest32 = self.reg_32(dest);
+                let src32 = Self::reg_32(dest);
+                let dest32 = Self::reg_32(dest);
                 self.emitf(format!("mov {dest32}, {src32}"));
             }
             UnaryOp::Clz => {
@@ -49,28 +57,28 @@ impl<X: Xlen> Arm64Emitter<X> {
             }
             UnaryOp::Cpop => {
                 if X::VALUE == 32 {
-                    let dest32 = self.reg_32(dest);
+                    let dest32 = Self::reg_32(dest);
                     self.emit_cpop32(&dest32);
                 } else {
                     self.emit_cpop64(dest);
                 }
             }
             UnaryOp::Clz32 => {
-                let dest32 = self.reg_32(dest);
+                let dest32 = Self::reg_32(dest);
                 self.emitf(format!("clz {dest32}, {dest32}"));
             }
             UnaryOp::Ctz32 => {
-                let dest32 = self.reg_32(dest);
+                let dest32 = Self::reg_32(dest);
                 self.emitf(format!("rbit {dest32}, {dest32}"));
                 self.emitf(format!("clz {dest32}, {dest32}"));
             }
             UnaryOp::Cpop32 => {
-                let dest32 = self.reg_32(dest);
+                let dest32 = Self::reg_32(dest);
                 self.emit_cpop32(&dest32);
             }
             UnaryOp::Orc8 => {
                 if X::VALUE == 32 {
-                    let dest32 = self.reg_32(dest);
+                    let dest32 = Self::reg_32(dest);
                     self.emit_orc8_32(&dest32);
                 } else {
                     self.emit_orc8_64(dest);
@@ -81,7 +89,7 @@ impl<X: Xlen> Arm64Emitter<X> {
                 self.emitf(format!("rev {dest}, {dest}"));
             }
             _ => {
-                self.emit_comment(&format!("unary op {:?} not implemented", op));
+                self.emit_comment(&format!("unary op {op:?} not implemented"));
                 self.emitf(format!("mov {dest}, {dest}"));
             }
         }
@@ -90,7 +98,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     fn emit_cpop64(&mut self, dest: &str) {
-        let tmp = self.temp3();
+        let tmp = Self::temp3();
         self.emitf(format!("lsr {tmp}, {dest}, #1"));
         self.emitf(format!("and {tmp}, {tmp}, #0x5555555555555555"));
         self.emitf(format!("sub {dest}, {dest}, {tmp}"));
@@ -111,8 +119,8 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     fn emit_cpop32(&mut self, dest32: &str) {
-        let tmp = self.temp3();
-        let tmp32 = self.reg_32(tmp);
+        let tmp = Self::temp3();
+        let tmp32 = Self::reg_32(tmp);
         self.emitf(format!("lsr {tmp32}, {dest32}, #1"));
         self.emitf(format!("and {tmp32}, {tmp32}, #0x55555555"));
         self.emitf(format!("sub {dest32}, {dest32}, {tmp32}"));
@@ -131,7 +139,7 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     fn emit_orc8_64(&mut self, dest: &str) {
-        let tmp = self.temp3();
+        let tmp = Self::temp3();
         self.emitf(format!("lsr {tmp}, {dest}, #1"));
         self.emitf(format!("orr {dest}, {dest}, {tmp}"));
         self.emitf(format!("lsr {tmp}, {dest}, #2"));
@@ -144,8 +152,8 @@ impl<X: Xlen> Arm64Emitter<X> {
     }
 
     fn emit_orc8_32(&mut self, dest32: &str) {
-        let tmp = self.temp3();
-        let tmp32 = self.reg_32(tmp);
+        let tmp = Self::temp3();
+        let tmp32 = Self::reg_32(tmp);
         self.emitf(format!("lsr {tmp32}, {dest32}, #1"));
         self.emitf(format!("orr {dest32}, {dest32}, {tmp32}"));
         self.emitf(format!("lsr {tmp32}, {dest32}, #2"));

@@ -22,7 +22,8 @@ pub struct MemorySegment {
 
 impl MemorySegment {
     /// Create a new memory segment.
-    pub fn new(vaddr: u64, filesz: usize, memsz: usize, data: Vec<u8>) -> Self {
+    #[must_use]
+    pub const fn new(vaddr: u64, filesz: usize, memsz: usize, data: Vec<u8>) -> Self {
         Self {
             vaddr,
             filesz,
@@ -32,7 +33,8 @@ impl MemorySegment {
     }
 
     /// Check if segment has data to embed.
-    pub fn has_data(&self) -> bool {
+    #[must_use]
+    pub const fn has_data(&self) -> bool {
         !self.data.is_empty()
     }
 }
@@ -67,6 +69,7 @@ impl MemoryConfig {
 }
 
 /// Generate the memory.c file.
+#[must_use]
 pub fn gen_memory_file(cfg: &MemoryConfig) -> String {
     let mut s = String::new();
 
@@ -93,7 +96,7 @@ pub fn gen_memory_file(cfg: &MemoryConfig) -> String {
 
     // Generate segment metadata table
     s.push_str(
-        r#"/* Segment metadata */
+        r"/* Segment metadata */
 typedef struct {
     uint64_t vaddr;
     uint64_t filesz;
@@ -102,12 +105,12 @@ typedef struct {
 } Segment;
 
 static const Segment segments[] = {
-"#,
+",
     );
 
     for (i, seg) in cfg.segments.iter().enumerate() {
         let data_ptr = if seg.has_data() {
-            format!("segment_{}_data", i)
+            format!("segment_{i}_data")
         } else {
             "nullptr".to_string()
         };
@@ -133,7 +136,7 @@ fn gen_segment_data(index: usize, seg: &MemorySegment) -> String {
         index, seg.vaddr, seg.filesz, seg.memsz
     )
     .unwrap();
-    writeln!(s, "static const uint8_t segment_{}_data[] = {{", index).unwrap();
+    writeln!(s, "static const uint8_t segment_{index}_data[] = {{").unwrap();
 
     // Write data as hex bytes
     for (i, chunk) in seg.data.chunks(16).enumerate() {
@@ -142,7 +145,7 @@ fn gen_segment_data(index: usize, seg: &MemorySegment) -> String {
             if j > 0 {
                 s.push_str(", ");
             }
-            write!(s, "{:#04x}", byte).unwrap();
+            write!(s, "{byte:#04x}").unwrap();
         }
         if i * 16 + chunk.len() < seg.data.len() {
             s.push(',');
@@ -156,16 +159,18 @@ fn gen_segment_data(index: usize, seg: &MemorySegment) -> String {
 
 /// Write binary segment files for C23 #embed directive.
 /// Returns list of (filename, data) pairs.
+#[must_use]
 pub fn gen_segment_bins(cfg: &MemoryConfig) -> Vec<(String, Vec<u8>)> {
     cfg.segments
         .iter()
         .enumerate()
         .filter(|(_, seg)| seg.has_data())
-        .map(|(i, seg)| (format!("segment_{}.bin", i), seg.data.clone()))
+        .map(|(i, seg)| (format!("segment_{i}.bin"), seg.data.clone()))
         .collect()
 }
 
 /// Generate memory.c using C23 #embed for large segments.
+#[must_use]
 pub fn gen_memory_file_with_embed(cfg: &MemoryConfig) -> String {
     let mut s = String::new();
 
@@ -202,7 +207,7 @@ static const uint8_t segment_{}_data[] = {{
 
     // Generate segment metadata table
     s.push_str(
-        r#"/* Segment metadata */
+        r"/* Segment metadata */
 typedef struct {
     uint64_t vaddr;
     uint64_t filesz;
@@ -211,12 +216,12 @@ typedef struct {
 } Segment;
 
 static const Segment segments[] = {
-"#,
+",
     );
 
     for (i, seg) in cfg.segments.iter().enumerate() {
         let data_ptr = if seg.has_data() {
-            format!("segment_{}_data", i)
+            format!("segment_{i}_data")
         } else {
             "nullptr".to_string()
         };
@@ -240,12 +245,12 @@ mod tests {
     #[test]
     fn test_gen_memory() {
         let segments = vec![MemorySegment::new(
-            0x80000000,
+            0x8000_0000,
             16,
             32,
             vec![0x01, 0x02, 0x03, 0x04],
         )];
-        let cfg = MemoryConfig::new("test", segments, 32, 0x80010000);
+        let cfg = MemoryConfig::new("test", segments, 32, 0x8001_0000);
         let memory = gen_memory_file(&cfg);
 
         assert!(memory.contains("segment_0_data"));
@@ -255,10 +260,10 @@ mod tests {
     #[test]
     fn test_gen_segment_bins() {
         let segments = vec![
-            MemorySegment::new(0x80000000, 4, 8, vec![0x01, 0x02, 0x03, 0x04]),
-            MemorySegment::new(0x90000000, 0, 4096, vec![]), // BSS, no data
+            MemorySegment::new(0x8000_0000, 4, 8, vec![0x01, 0x02, 0x03, 0x04]),
+            MemorySegment::new(0x9000_0000, 0, 4096, vec![]), // BSS, no data
         ];
-        let cfg = MemoryConfig::new("test", segments, 32, 0x80010000);
+        let cfg = MemoryConfig::new("test", segments, 32, 0x8001_0000);
         let bins = gen_segment_bins(&cfg);
 
         assert_eq!(bins.len(), 1);
