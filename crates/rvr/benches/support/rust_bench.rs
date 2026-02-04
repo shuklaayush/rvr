@@ -5,12 +5,12 @@ use std::process::{Command, Stdio};
 
 use rvr::bench::Arch;
 
-fn target_spec_for(arch: Arch) -> Result<&'static str, String> {
+const fn target_spec_for(arch: Arch) -> &'static str {
     match arch {
-        Arch::Rv32i => Ok("rv32i"),
-        Arch::Rv32e => Ok("rv32e"),
-        Arch::Rv64i => Ok("rv64i"),
-        Arch::Rv64e => Ok("rv64e"),
+        Arch::Rv32i => "rv32i",
+        Arch::Rv32e => "rv32e",
+        Arch::Rv64i => "rv64i",
+        Arch::Rv64e => "rv64e",
     }
 }
 
@@ -23,7 +23,7 @@ fn read_project_name(cargo_toml: &Path) -> Result<String, String> {
         .and_then(|line| line.split('=').nth(1))
         .map(|s| s.trim().trim_matches('"'))
         .filter(|s| !s.is_empty());
-    name.map(|s| s.to_string())
+    name.map(std::string::ToString::to_string)
         .ok_or_else(|| "failed to find package name".to_string())
 }
 
@@ -45,24 +45,22 @@ pub fn build_benchmark(
         None => read_project_name(&cargo_toml)?,
     };
 
-    let target = target_spec_for(arch)?;
+    let target = target_spec_for(arch);
     let target_dir = project_dir.join("target/.rvr_bench");
     std::fs::create_dir_all(&target_dir)
         .map_err(|e| format!("failed to create {}: {}", target_dir.display(), e))?;
 
-    let spec_src = project_dir.join("toolchain").join(format!("{}.json", target));
+    let spec_src = project_dir.join("toolchain").join(format!("{target}.json"));
     if !spec_src.exists() {
         return Err(format!("missing target spec: {}", spec_src.display()));
     }
 
-    let spec_path = target_dir.join(format!("{}.json", target));
-    std::fs::copy(&spec_src, &spec_path)
-        .map_err(|e| format!("failed to copy target spec: {}", e))?;
+    let spec_path = target_dir.join(format!("{target}.json"));
+    std::fs::copy(&spec_src, &spec_path).map_err(|e| format!("failed to copy target spec: {e}"))?;
 
     let link_x = project_dir.join("toolchain/link.x");
     let link_out = target_dir.join("link.x");
-    std::fs::copy(&link_x, &link_out)
-        .map_err(|e| format!("failed to copy link.x: {}", e))?;
+    std::fs::copy(&link_x, &link_out).map_err(|e| format!("failed to copy link.x: {e}"))?;
 
     let cpu = if matches!(arch, Arch::Rv64i | Arch::Rv64e) {
         "generic-rv64"
@@ -92,11 +90,11 @@ pub fn build_benchmark(
 
     let output = cmd
         .output()
-        .map_err(|e| format!("failed to run cargo: {}", e))?;
+        .map_err(|e| format!("failed to run cargo: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cargo build failed: {}", stderr));
+        return Err(format!("cargo build failed: {stderr}"));
     }
 
     let elf_path = project_root

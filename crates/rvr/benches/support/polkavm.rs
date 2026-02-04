@@ -25,7 +25,7 @@ pub fn build_benchmark(
         ));
     }
 
-    let target_spec = toolchain_dir.join(format!("{}.json", arch));
+    let target_spec = toolchain_dir.join(format!("{arch}.json"));
     if !target_spec.exists() {
         return Err(format!("target spec not found: {}", target_spec.display()));
     }
@@ -35,7 +35,7 @@ pub fn build_benchmark(
 
     // Build with cargo
     let link_script = toolchain_dir.join("link.x");
-    let bench_name = format!("bench-{}", benchmark);
+    let bench_name = format!("bench-{benchmark}");
 
     let rustflags = format!(
         "-C target-feature=+zba,+zbb,+zbs \
@@ -79,7 +79,7 @@ pub fn build_benchmark(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|e| format!("failed to run cargo: {}", e))?;
+        .map_err(|e| format!("failed to run cargo: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Find actual compiler error (error[E...]) rather than generic "could not compile"
@@ -91,8 +91,7 @@ pub fn build_benchmark(
             .unwrap_or("unknown error");
         tracing::warn!("cargo build failed:\n{}", stderr);
         return Err(format!(
-            "cargo build failed for {}/{}: {}",
-            benchmark, arch, error_detail
+            "cargo build failed for {benchmark}/{arch}: {error_detail}"
         ));
     }
 
@@ -122,7 +121,7 @@ pub fn build_benchmark(
 /// Compile entry.S for the specified architecture.
 fn compile_entry(toolchain_dir: &Path, arch: &str) -> Result<PathBuf, String> {
     let entry_s = toolchain_dir.join("entry.S");
-    let entry_obj = toolchain_dir.join(format!("entry_{}.o", arch));
+    let entry_obj = toolchain_dir.join(format!("entry_{arch}.o"));
 
     // Check if recompilation needed
     if entry_obj.exists() {
@@ -143,21 +142,21 @@ fn compile_entry(toolchain_dir: &Path, arch: &str) -> Result<PathBuf, String> {
         "rv32e" => ("riscv32", "rv32emac"),
         "rv64i" => ("riscv64", "rv64imac"),
         "rv64e" => ("riscv64", "rv64emac"),
-        _ => return Err(format!("unknown architecture: {}", arch)),
+        _ => return Err(format!("unknown architecture: {arch}")),
     };
 
     let status = Command::new("clang")
-        .arg(format!("--target={}", target))
-        .arg(format!("-march={}", march))
+        .arg(format!("--target={target}"))
+        .arg(format!("-march={march}"))
         .arg("-c")
         .arg(&entry_s)
         .arg("-o")
         .arg(&entry_obj)
         .status()
-        .map_err(|e| format!("failed to run clang: {}", e))?;
+        .map_err(|e| format!("failed to run clang: {e}"))?;
 
     if !status.success() {
-        return Err(format!("clang failed to compile entry.S for {}", arch));
+        return Err(format!("clang failed to compile entry.S for {arch}"));
     }
 
     Ok(entry_obj)

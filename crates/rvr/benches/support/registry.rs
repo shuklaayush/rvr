@@ -4,14 +4,17 @@
 #[derive(Clone, Copy)]
 pub enum BenchmarkSource {
     /// Rust project compiled to RISC-V ELF.
-    Rust { path: &'static str, bin: &'static str },
+    Rust {
+        path: &'static str,
+        bin: &'static str,
+    },
     /// Polkavm benchmark - build with benchmarks/build.sh
     Polkavm,
     /// C benchmark from riscv-tests - build with riscv-gcc
     RiscvTests,
     /// C benchmark from libriscv - build with riscv-gcc using riscv-tests runtime
     Libriscv,
-    /// CoreMark benchmark from EEMBC
+    /// `CoreMark` benchmark from EEMBC
     Coremark,
 }
 
@@ -19,7 +22,7 @@ pub enum BenchmarkSource {
 pub struct BenchmarkInfo {
     /// Benchmark name (used in CLI and paths).
     pub name: &'static str,
-    /// Whether benchmark uses export_functions mode (initialize/run pattern).
+    /// Whether benchmark uses `export_functions` mode (initialize/run pattern).
     pub uses_exports: bool,
     /// Default architectures for this benchmark.
     pub default_archs: &'static str,

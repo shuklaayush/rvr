@@ -5,18 +5,17 @@ use std::process::{Command, Stdio};
 
 use rvr::bench::Arch;
 
-
 /// Build a riscv-tests benchmark using riscv-gcc.
 /// Returns the path to the built ELF on success.
 pub fn build_benchmark(
     project_dir: &std::path::Path,
     name: &str,
-    arch: &Arch,
+    arch: Arch,
 ) -> Result<PathBuf, String> {
     let toolchain = rvr::build_utils::find_toolchain()
         .ok_or_else(|| "RISC-V toolchain not found (need riscv64-unknown-elf-gcc)".to_string())?;
 
-    let gcc = format!("{}gcc", toolchain);
+    let gcc = format!("{toolchain}gcc");
     let bench_dir = project_dir.join("programs/riscv-tests/benchmarks");
     let common_dir = bench_dir.join("common");
     let out_dir = project_dir.join("bin").join(arch.as_str());
@@ -26,11 +25,11 @@ pub fn build_benchmark(
         return Err(format!("benchmark source not found: {}", src_dir.display()));
     }
 
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {e}"))?;
 
     let mut c_files: Vec<PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {}", e))? {
-        let entry = entry.map_err(|e| format!("failed to read entry: {}", e))?;
+    for entry in std::fs::read_dir(&src_dir).map_err(|e| format!("failed to read dir: {e}"))? {
+        let entry = entry.map_err(|e| format!("failed to read entry: {e}"))?;
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) == Some("c") {
             c_files.push(path);
@@ -53,8 +52,8 @@ pub fn build_benchmark(
     };
 
     let mut cmd = Command::new(&gcc);
-    cmd.arg(format!("-march={}", march))
-        .arg(format!("-mabi={}", mabi))
+    cmd.arg(format!("-march={march}"))
+        .arg(format!("-mabi={mabi}"))
         .args(["-static", "-mcmodel=medany", "-fvisibility=hidden"])
         .args(["-nostdlib", "-nostartfiles"])
         .args([
@@ -82,7 +81,7 @@ pub fn build_benchmark(
     let status = cmd
         .stderr(Stdio::piped())
         .status()
-        .map_err(|e| format!("failed to run gcc: {}", e))?;
+        .map_err(|e| format!("failed to run gcc: {e}"))?;
 
     if !status.success() {
         return Err(format!("gcc failed with exit code {:?}", status.code()));

@@ -1,6 +1,6 @@
 extern crate test;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use test::Bencher;
 
@@ -12,13 +12,13 @@ use rvr_emit::Backend;
 mod bench_support;
 
 use bench_support::{
-    coremark, find_project_root, libriscv, polkavm, riscv_tests, rust_bench, BenchmarkInfo,
-    BenchmarkSource,
+    BenchmarkInfo, BenchmarkSource, coremark, find_project_root, libriscv, polkavm, riscv_tests,
+    rust_bench,
 };
 
 pub fn bench_case(name: &str, b: &mut Bencher) {
     let info = bench_support::registry::find_benchmark(name)
-        .unwrap_or_else(|| panic!("unknown benchmark: {}", name));
+        .unwrap_or_else(|| panic!("unknown benchmark: {name}"));
     let _ = run_once(info);
     b.iter(|| {
         let _ = run_once(info);
@@ -27,15 +27,14 @@ pub fn bench_case(name: &str, b: &mut Bencher) {
 
 fn parse_backend() -> Backend {
     match std::env::var("RVR_BENCH_BACKEND").as_deref() {
-        Ok("x86") | Ok("x86_64") => Backend::X86Asm,
-        Ok("arm64") | Ok("aarch64") => Backend::ARM64Asm,
+        Ok("x86" | "x86_64") => Backend::X86Asm,
+        Ok("arm64" | "aarch64") => Backend::ARM64Asm,
         _ => Backend::C,
     }
 }
 
 fn parse_arch(info: &BenchmarkInfo) -> Arch {
-    let archs = Arch::parse_list(info.default_archs)
-        .unwrap_or_else(|_| vec![Arch::Rv64i]);
+    let archs = Arch::parse_list(info.default_archs).unwrap_or_else(|_| vec![Arch::Rv64i]);
     archs[0]
 }
 
@@ -47,7 +46,12 @@ fn should_recompile() -> bool {
     std::env::var("RVR_RECOMPILE_BENCH").is_ok()
 }
 
-fn bench_output_dir(project_dir: &PathBuf, info: &BenchmarkInfo, arch: Arch, backend: Backend) -> PathBuf {
+fn bench_output_dir(
+    project_dir: &Path,
+    info: &BenchmarkInfo,
+    arch: Arch,
+    backend: Backend,
+) -> PathBuf {
     let suffix = match backend {
         Backend::C => "base",
         Backend::X86Asm => "x86",
@@ -78,14 +82,16 @@ fn compile_options(info: &BenchmarkInfo, backend: Backend) -> CompileOptions {
         _ => {}
     }
 
-    if matches!(std::env::var("RVR_BENCH_PERF"), Ok(_)) {
-        options = options.with_perf_mode(true).with_instret_mode(InstretMode::Off);
+    if std::env::var("RVR_BENCH_PERF").is_ok() {
+        options = options
+            .with_perf_mode(true)
+            .with_instret_mode(InstretMode::Off);
     }
 
     options
 }
 
-fn ensure_elf(project_dir: &PathBuf, info: &BenchmarkInfo, arch: Arch) -> Result<PathBuf, String> {
+fn ensure_elf(project_dir: &Path, info: &BenchmarkInfo, arch: Arch) -> Result<PathBuf, String> {
     let out_dir = project_dir.join("bin").join(arch.as_str());
     let elf_path = out_dir.join(info.name);
     if elf_path.exists() && !should_rebuild() {
@@ -93,9 +99,9 @@ fn ensure_elf(project_dir: &PathBuf, info: &BenchmarkInfo, arch: Arch) -> Result
     }
 
     match info.source {
-        BenchmarkSource::RiscvTests => riscv_tests::build_benchmark(project_dir, info.name, &arch),
-        BenchmarkSource::Libriscv => libriscv::build_benchmark(project_dir, info.name, &arch),
-        BenchmarkSource::Coremark => coremark::build_benchmark(project_dir, &arch),
+        BenchmarkSource::RiscvTests => riscv_tests::build_benchmark(project_dir, info.name, arch),
+        BenchmarkSource::Libriscv => libriscv::build_benchmark(project_dir, info.name, arch),
+        BenchmarkSource::Coremark => coremark::build_benchmark(project_dir, arch),
         BenchmarkSource::Polkavm => polkavm::build_benchmark(project_dir, info.name, arch.as_str()),
         BenchmarkSource::Rust { path, bin } => {
             rust_bench::build_benchmark(project_dir, path, arch, Some(bin))
@@ -104,7 +110,7 @@ fn ensure_elf(project_dir: &PathBuf, info: &BenchmarkInfo, arch: Arch) -> Result
 }
 
 fn ensure_compiled(
-    project_dir: &PathBuf,
+    project_dir: &Path,
     info: &BenchmarkInfo,
     arch: Arch,
     backend: Backend,
@@ -113,18 +119,21 @@ fn ensure_compiled(
     let so_path = out_dir.join(format!(
         "lib{}.{}",
         info.name,
-        if cfg!(target_os = "macos") { "dylib" } else { "so" }
+        if cfg!(target_os = "macos") {
+            "dylib"
+        } else {
+            "so"
+        }
     ));
     if so_path.exists() && !should_recompile() {
         return Ok(out_dir);
     }
 
     let elf_path = ensure_elf(project_dir, info, arch)?;
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("failed to create output dir: {e}"))?;
     let options = compile_options(info, backend);
-    rvr::compile_with_options(&elf_path, &out_dir, options)
-        .map_err(|e| format!("compile failed: {}", e))?;
+    rvr::compile_with_options(&elf_path, &out_dir, &options)
+        .map_err(|e| format!("compile failed: {e}"))?;
     Ok(out_dir)
 }
 
