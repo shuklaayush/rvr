@@ -190,11 +190,11 @@ mod tests {
         let hot: Vec<u8> = (1..=31).collect();
         let map = RegMap::new(&hot, false);
 
-        // First 24 should be mapped
+        // First 22 should be mapped (22 ARM64 regs available)
         assert!(map.is_hot(1));
-        assert!(map.is_hot(24));
-        // Registers 25-31 should be in memory (only 24 ARM64 regs available)
-        assert!(!map.is_hot(25));
+        assert!(map.is_hot(22));
+        // Registers 23-31 should be in memory
+        assert!(!map.is_hot(23));
         assert!(!map.is_hot(31));
     }
 }
