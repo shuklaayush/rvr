@@ -62,6 +62,34 @@ cargo run -- compile program.elf --backend x86    # x86-64 assembly
 cargo run -- compile program.elf --backend arm64  # ARM64 assembly
 ```
 
+## GDB
+
+`rvr run` can host a GDB remote stub for interactive debugging:
+
+```bash
+# Compile first
+rvr compile bin/rv64i/minimal -o /tmp/minimal
+
+# Terminal 1: start GDB server
+rvr run --gdb :1234 /tmp/minimal bin/rv64i/minimal
+
+# Terminal 2: connect
+riscv64-unknown-elf-gdb bin/rv64i/minimal
+(gdb) target remote :1234
+```
+
+## Differential/Trace Debugging
+
+Quick diff/trace tools for backend regression debugging:
+
+```bash
+# In-memory diff (fast)
+rvr dev diff spike-c bin/riscv-tests/rv64ui-p-add --max-instrs 1000
+
+# On-disk trace compare (slower, deeper)
+rvr dev trace bin/riscv-tests/rv64ui-p-add
+```
+
 ## Environment Variables
 
 Test/bench helpers:

@@ -146,6 +146,9 @@ This pattern keeps harness files with the code that uses them, making it clear w
 3. Disassemble test binaries to understand what instruction is being tested
 4. Look at working implementations as templates
 
+**GDB Debugging**: Use `rvr run --gdb :1234 <lib_dir> <elf>` and connect with `riscv64-unknown-elf-gdb` (`target remote :1234`) for interactive stepping.
+**Diff/Trace Debugging**: Prefer `rvr dev diff` for fast in-memory divergence checks; use `rvr dev trace` for deeper on-disk trace comparisons.
+
 **Optimization Discipline**: For performance work, keep changes small, commit each logical improvement, and run a fast validation step (single riscv-test or one benchmark) after every change before moving on.
 
 **Conventional Commits**: Use conventional commit messages (e.g. `feat: ...`, `fix: ...`, `refactor: ...`) and keep commits small and logical.
