@@ -54,6 +54,7 @@ impl<X: Xlen> MemorySegment<X> {
         let segment_start = X::to_u64(self.virtual_start);
         let segment_end = X::to_u64(self.virtual_end);
 
+        // TODO: check if more idiomatic way to do this
         for section in sections {
             // Check if section overlaps with this segment
             let section_start = X::to_u64(section.addr);
@@ -165,6 +166,7 @@ impl<X: Xlen> ElfImage<X> {
         self.memory_segments.iter().map(MemorySegment::memsz).sum()
     }
 
+    // TODO: explain what's happening here and why i need it
     fn validate_segments(elf: &ElfFile<X>, file_data: &[u8]) -> Result<Vec<ProgramHeader<X>>> {
         let mut loadable = Vec::new();
 
@@ -230,6 +232,7 @@ impl<X: Xlen> ElfImage<X> {
             let memsz = phdr.memsz;
 
             // Load file data only (BSS is handled at runtime)
+            // TODO: why is bss handled at runtime
             let data = file_data[offset..offset + filesz].to_vec();
 
             let end = X::from_u64(X::to_u64(vaddr) + X::to_u64(memsz));

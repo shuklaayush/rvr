@@ -13,6 +13,7 @@ use tempfile::NamedTempFile;
 /// Debug info for an ELF file, mapping addresses to source locations.
 #[derive(Debug, Default)]
 pub struct DebugInfo {
+    // TODO: fxhashmap?
     locations: HashMap<u64, SourceLoc>,
 }
 
@@ -20,6 +21,7 @@ impl DebugInfo {
     /// Create empty debug info.
     #[must_use]
     pub fn new() -> Self {
+        // TODO: only keep default
         Self::default()
     }
 
@@ -32,6 +34,7 @@ impl DebugInfo {
     /// * `elf_path` - Path to the ELF file.
     /// * `addresses` - Addresses to resolve.
     /// * `addr2line_cmd` - The llvm-addr2line command (e.g., "llvm-addr2line-20").
+    // TODO: should this be constructor
     ///
     /// # Errors
     ///
@@ -74,6 +77,7 @@ impl DebugInfo {
         let mut info = Self::new();
 
         // Parse output: alternating function name / file:line pairs
+        // TODO: do in rust idiomatic way if possible
         let lines: Vec<&str> = stdout.lines().collect();
         let mut line_idx = 0;
         let mut addr_idx = 0;
@@ -94,6 +98,7 @@ impl DebugInfo {
         Ok(info)
     }
 
+    // TODO: should be some trait impl?
     /// Get source location for an address.
     #[must_use]
     pub fn get(&self, address: u64) -> Option<&SourceLoc> {

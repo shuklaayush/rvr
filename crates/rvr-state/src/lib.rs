@@ -35,6 +35,7 @@ pub use state::{
     Rv64StateWith, RvState,
 };
 pub use suspender::{InstretSuspender, SuspenderState};
+// TODO: avoid reexports - add to agents.md
 pub use tracer::{
     BufferedDiffIterator,
     BufferedDiffTracer,

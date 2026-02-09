@@ -10,12 +10,16 @@ use crate::header::{ElfHeader, LoadedSection, ProgramHeader, SectionHeader, Symb
 use crate::{ElfError, Result};
 
 /// Read little-endian u16 from bytes.
+// TODO: this should be in some shared utils and used eveywhere
+//       also see if zerocopy way of doing this
 #[inline]
 fn read_le16(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
 }
 
 /// Read little-endian u32 from bytes.
+// TODO: this should be in some shared utils and used eveywhere
+//       also see if zerocopy way of doing this
 #[inline]
 fn read_le32(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([
@@ -27,6 +31,8 @@ fn read_le32(data: &[u8], offset: usize) -> u32 {
 }
 
 /// Read little-endian u64 from bytes.
+// TODO: this should be in some shared utils and used eveywhere
+//       also see if zerocopy way of doing this
 #[inline]
 fn read_le64(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes([
@@ -488,6 +494,7 @@ impl<X: Xlen> ElfFile<X> {
     }
 }
 
+// TODO: move somewhere else
 /// Git LFS pointer file prefix.
 const GIT_LFS_PREFIX: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
@@ -506,12 +513,14 @@ pub fn get_elf_xlen(data: &[u8]) -> Result<u8> {
         return Err(ElfError::TooSmall);
     }
 
+    // TODO: should happen somehwere else
     // Check for Git LFS pointer (happens when `git lfs pull` wasn't run)
     if is_git_lfs_pointer(data) {
         return Err(ElfError::GitLfsPointer);
     }
 
     // Validate magic
+    // TODO: try to avoid hardcode
     if data[0] != 0x7F || data[1] != 0x45 || data[2] != 0x4C || data[3] != 0x46 {
         return Err(ElfError::InvalidMagic);
     }

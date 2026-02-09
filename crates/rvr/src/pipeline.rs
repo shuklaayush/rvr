@@ -167,6 +167,7 @@ impl<X: Xlen> Pipeline<X> {
             .collect();
 
         if exec_segments.is_empty() {
+            // TODO: Fix upstream riscv-tests/benchmarks/common/test.ld to use FLAGS(5) instead of FLAGS(SHF_ALLOC | SHF_EXECINSTR)
             exec_segments = self
                 .image
                 .memory_segments

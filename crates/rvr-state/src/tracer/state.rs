@@ -6,6 +6,7 @@
 //! When no tracing is needed, use `()` which is a ZST and adds nothing
 //! to the struct layout.
 
+// TODO: split into separate files
 use rvr_ir::Xlen;
 
 /// Marker trait for FFI-safe tracer state.
@@ -15,6 +16,7 @@ use rvr_ir::Xlen;
 /// - Match the corresponding C `Tracer` struct exactly
 pub trait TracerState: Default + Copy {
     /// Tracer kind ID for C API (matches `RV_TRACER_KIND`).
+    // TODO: make neum
     const KIND: u32;
 }
 

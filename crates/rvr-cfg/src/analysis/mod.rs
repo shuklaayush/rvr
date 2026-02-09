@@ -1,4 +1,6 @@
 //! Control flow analysis used to identify basic block leaders and targets.
+// TODO: add comments for details on what's happening here
+// TODO: split file if into separate files
 
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -8,15 +10,19 @@ use rvr_isa::{InstrArgs, Xlen};
 
 use crate::InstructionTable;
 
+// TODO: derive for I or E
 const NUM_REGS: usize = 32;
 const MAX_VALUES: usize = 16;
+// TODO: depth or something
 const MAX_ITERATIONS_MULTIPLIER: usize = 20;
+// TODO: do i need this to be this low?
 const MAX_JUMP_TABLE_SCAN: usize = 256;
 
 mod data;
 
 use data::{DecodedInstruction, InstrKind, RegisterState, RegisterValue};
 
+// TODO: explain each member
 pub struct ControlFlowResult {
     pub successors: FxHashMap<u64, FxHashSet<u64>>,
     pub predecessors: FxHashMap<u64, FxHashSet<u64>>,
@@ -26,10 +32,12 @@ pub struct ControlFlowResult {
     pub block_to_function: FxHashMap<u64, u64>,
 }
 
+// TODO: does this need to be a struct
 pub struct ControlFlowAnalyzer;
 
 impl ControlFlowAnalyzer {
     pub fn analyze<X: Xlen>(instruction_table: &InstructionTable<X>) -> ControlFlowResult {
+        // TODO: avoid multiple linear scans - use some iterator abstraction?
         let (function_entries, internal_targets, return_sites) = {
             let _span = trace_span!("collect_targets").entered();
             collect_potential_targets(instruction_table)
@@ -43,6 +51,7 @@ impl ControlFlowAnalyzer {
         let mut sorted_function_entries: Vec<u64> = function_entries.iter().copied().collect();
         sorted_function_entries.sort_unstable();
 
+        // TODO: explain what's happening here
         let mut func_internal_targets: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
         for target in &internal_targets {
             if let Some(func_start) = binary_search_le(&sorted_function_entries, *target) {
@@ -68,6 +77,7 @@ impl ControlFlowAnalyzer {
 
         let leaders = {
             let _span = trace_span!("compute_leaders").entered();
+            // TODO: why pass this other stuff
             compute_leaders(
                 instruction_table,
                 &successors,
@@ -84,6 +94,7 @@ impl ControlFlowAnalyzer {
             "CFG analysis complete"
         );
 
+        // TODO: what's happening here
         let mut block_to_function = FxHashMap::default();
         for leader in &leaders {
             if let Some(func) = binary_search_le(&sorted_function_entries, *leader) {
@@ -91,6 +102,7 @@ impl ControlFlowAnalyzer {
             }
         }
 
+        // TODO: why do i need this?
         let predecessors = {
             let _span = trace_span!("build_predecessors").entered();
             build_predecessors(&successors)
@@ -119,6 +131,7 @@ fn collect_potential_targets<X: Xlen>(
 
     scan_ro_segments_for_code_pointers(instruction_table, &mut internal_targets);
 
+    // TODO: explain why this linear pass is necessary and what it's doing
     let mut regs: [Option<u64>; NUM_REGS] = [None; NUM_REGS];
     regs[0] = Some(0);
 
@@ -150,6 +163,7 @@ fn scan_instruction_targets<X: Xlen>(
     let end = instruction_table.end_address();
     let slot_size = u64::try_from(InstructionTable::<X>::SLOT_SIZE).unwrap_or(0);
 
+    // TODO: rust idiomatic way of doing this instead of while - use map etc.
     while pc < end {
         if !instruction_table.is_valid_pc(pc) {
             pc += slot_size;
@@ -358,6 +372,7 @@ fn build_call_return_map<X: Xlen>(
     let end = instruction_table.end_address();
     let slot_size = u64::try_from(InstructionTable::<X>::SLOT_SIZE).unwrap_or(0);
 
+    // TODO: rust idiomatic way of doing this instead of while - use map etc.
     while pc < end {
         if !instruction_table.is_valid_pc(pc) {
             pc += slot_size;
@@ -409,6 +424,7 @@ fn worklist<X: Xlen>(
         FxHashMap::with_capacity_and_hasher(estimated_size, FxBuildHasher);
     let mut unresolved_dynamic_jumps: FxHashSet<u64> = FxHashSet::default();
 
+    // TODO: shouldn't this only be entry points and not all functions
     // Add all entry points to worklist
     for addr in function_entries {
         if in_worklist.insert(*addr) {
@@ -417,6 +433,7 @@ fn worklist<X: Xlen>(
         }
     }
 
+    // TODO: why do worklist from here too?
     for addr in internal_targets {
         if in_worklist.insert(*addr) {
             states.insert(*addr, RegisterState::new());
@@ -424,11 +441,13 @@ fn worklist<X: Xlen>(
         }
     }
 
+    // TODO: maybe this should be a function
     let span = instruction_table.end_address() - instruction_table.base_address();
     let max_iterations = usize::try_from(span)
         .unwrap_or(usize::MAX / MAX_ITERATIONS_MULTIPLIER)
         .saturating_mul(MAX_ITERATIONS_MULTIPLIER);
 
+    // TODO: more idiomatic rust
     let mut idx = 0;
     while idx < worklist.len() {
         if idx > max_iterations {
@@ -468,6 +487,7 @@ fn worklist<X: Xlen>(
             &mut unresolved_dynamic_jumps,
         );
 
+        // TODO: should probably consume state
         let state_out = transfer(instruction_table, pc, size, &decoded, state);
 
         for target in &succs {
@@ -492,6 +512,7 @@ fn worklist<X: Xlen>(
 }
 
 // Many parameters needed for inter-procedural analysis context
+// TODO: remvove unnecessary clippy allows
 #[allow(clippy::too_many_arguments)]
 /// Scan forward from an indirect jump to find jump table targets.
 ///
@@ -512,6 +533,7 @@ fn scan_jump_table_targets<X: Xlen>(
 
     let mut count = 0;
 
+    // TODO: more idiomatic - explain if something here is specific to duff pattern
     while pc < end && count < MAX_JUMP_TABLE_SCAN {
         if !instruction_table.is_valid_pc(pc) {
             break;
@@ -555,6 +577,7 @@ fn scan_jump_table_targets<X: Xlen>(
     targets
 }
 
+// TODO: can this be encapsulated or split
 #[allow(clippy::too_many_arguments)]
 fn get_successors<X: Xlen>(
     instruction_table: &InstructionTable<X>,
@@ -676,6 +699,7 @@ fn transfer<X: Xlen>(
         InstrKind::Addi => {
             if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
                 let base = state.get(rs1);
+                // TODO: avoid the  empty check
                 if base.is_constant() && !base.values.is_empty() {
                     let mut result =
                         RegisterValue::constant(add_signed(base.values[0], decoded.imm));
@@ -695,6 +719,7 @@ fn transfer<X: Xlen>(
             if let (Some(rd), Some(rs1), Some(rs2)) = (decoded.rd, decoded.rs1, decoded.rs2) {
                 let lhs = state.get(rs1);
                 let rhs = state.get(rs2);
+                // TODO: should be some form of match without the is empty check
                 if lhs.is_constant()
                     && rhs.is_constant()
                     && !lhs.values.is_empty()
@@ -729,6 +754,7 @@ fn transfer<X: Xlen>(
             if let (Some(rd), Some(rs1)) = (decoded.rd, decoded.rs1) {
                 let base = state.get(rs1);
                 let mut resolved = false;
+                // TODO: why != 2 check, explain what's happening here
                 if rs1 != 2 && base.is_constant() && !base.values.is_empty() {
                     let addr = add_signed(base.values[0], decoded.imm);
                     if let Some(raw) = instruction_table.read_readonly(addr, decoded.width as usize)
@@ -766,6 +792,7 @@ fn compute_leaders<X: Xlen>(
     return_sites: &FxHashSet<u64>,
 ) -> FxHashSet<u64> {
     let mut leaders = FxHashSet::default();
+    // TODO: why am i doing this every iteration
     leaders.extend(function_entries.iter().copied());
     leaders.extend(internal_targets.iter().copied());
     leaders.extend(return_sites.iter().copied());
@@ -817,6 +844,7 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
     instruction_table: &InstructionTable<X>,
     internal_targets: &mut FxHashSet<u64>,
 ) {
+    // TODO: better comment, self contained
     // Scan for both 4-byte and 8-byte code pointers.
     // Even on RV64, compilers often emit 32-bit jump table entries when
     // addresses fit in 32 bits (common for position-dependent executables).
@@ -824,8 +852,10 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
         let data = &segment.data;
 
         // Scan for 4-byte pointers (at 4-byte alignment)
+        // TODO: more idiomatic, avoid magic number 4
         let mut offset = 0usize;
         while offset + 4 <= data.len() {
+            // TODO: check if nocopy way to do this
             let val = u64::from(u32::from_le_bytes([
                 data[offset],
                 data[offset + 1],
@@ -839,6 +869,7 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
         }
 
         // For 64-bit, also scan for 8-byte pointers (at 8-byte alignment)
+        // TODO: combine with above or abstract to separate function
         if X::VALUE == 64 {
             let mut offset = 0usize;
             while offset + 8 <= data.len() {

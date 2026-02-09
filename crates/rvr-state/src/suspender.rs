@@ -13,9 +13,11 @@
 /// - Match the corresponding C struct exactly
 pub trait SuspenderState: Default + Copy {
     /// Whether this suspender adds fields to the state struct.
+    // TODO: can i use size_of instead
     const HAS_FIELDS: bool;
 }
 
+// TODO: see how to run with suspender by decrementing instret
 // No suspender - zero-sized type, adds nothing to struct
 impl SuspenderState for () {
     const HAS_FIELDS: bool = false;

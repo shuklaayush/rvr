@@ -14,6 +14,7 @@ pub use image::*;
 
 use thiserror::Error;
 
+// TODO: maybe move to error file
 /// ELF parsing errors.
 #[derive(Error, Debug)]
 pub enum ElfError {

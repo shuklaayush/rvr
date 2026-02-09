@@ -59,9 +59,11 @@ pub trait Xlen: Copy + Clone + Send + Sync + Default + Debug + 'static {
     /// Truncate register to 32 bits.
     fn truncate_to_32(val: Self::Reg) -> u32;
 
+    // TODO: should these be trait impls
     /// Convert a u64 to register width.
     fn from_u64(val: u64) -> Self::Reg;
 
+    // TODO: should these be trait impls
     /// Convert register to u64.
     fn to_u64(val: Self::Reg) -> u64;
 }

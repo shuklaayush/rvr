@@ -8,6 +8,7 @@ use rvr_isa::{
 
 use super::{MAX_VALUES, NUM_REGS, extract_written_reg};
 
+// TODO: use proper rust enum instead of kind flag
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ValueKind {
     Unknown,
@@ -47,6 +48,7 @@ impl RegisterValue {
         match self.values.binary_search(&value) {
             Ok(_) => {}
             Err(idx) => {
+                // TODO: add comment for what's happening here
                 if self.values.len() >= MAX_VALUES {
                     self.kind = ValueKind::Unknown;
                     self.values.clear();
@@ -66,6 +68,7 @@ impl RegisterValue {
         let mut i = 0;
         let mut j = 0;
 
+        // TODO: abstract to a separate function
         while i < self.values.len() && j < other.values.len() {
             let a = self.values[i];
             let b = other.values[j];
@@ -113,20 +116,24 @@ impl RegisterValue {
     }
 }
 
+// TODO: make const generic
 #[derive(Clone, Debug)]
 pub(super) struct RegisterState {
     regs: [RegisterValue; NUM_REGS],
 }
 
 impl RegisterState {
+    // TODO: default
     pub(super) fn new() -> Self {
         let mut regs = std::array::from_fn(|_| RegisterValue::unknown());
         regs[0] = RegisterValue::constant(0);
         Self { regs }
     }
 
+    // TODO: can i use some trait for this
     pub(super) fn get(&self, reg: u8) -> RegisterValue {
         let idx = reg as usize;
+        // TODO: should never happen - debug assert or something?
         if idx >= NUM_REGS {
             return RegisterValue::unknown();
         }
@@ -136,8 +143,10 @@ impl RegisterState {
         self.regs[idx].clone()
     }
 
+    // TODO: can i use some trait for this
     pub(super) const fn get_ref(&self, reg: u8) -> &RegisterValue {
         let idx = reg as usize;
+        // TODO: should never happen - debug assert or something?
         if idx >= NUM_REGS {
             return &self.regs[0];
         }
@@ -146,6 +155,7 @@ impl RegisterState {
 
     pub(super) fn set(&mut self, reg: u8, value: RegisterValue) {
         let idx = reg as usize;
+        // TODO: should never happen - debug assert or something?
         if idx == 0 || idx >= NUM_REGS {
             return;
         }
@@ -173,6 +183,7 @@ impl RegisterState {
     }
 }
 
+// TODO: use elaborate rust enums
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum InstrKind {
     Unknown,
@@ -187,6 +198,7 @@ pub(super) enum InstrKind {
     Branch,
 }
 
+// TODO: use elaborate rust enums
 #[derive(Clone, Copy, Debug)]
 pub(super) struct DecodedInstruction {
     pub(super) kind: InstrKind,
@@ -194,6 +206,7 @@ pub(super) struct DecodedInstruction {
     pub(super) rs1: Option<u8>,
     pub(super) rs2: Option<u8>,
     pub(super) imm: i32,
+    // TODO: explain what this is
     pub(super) width: u8,
     pub(super) is_unsigned: bool,
 }
@@ -362,6 +375,7 @@ impl DecodedInstruction {
     }
 
     pub(super) fn is_static_call(&self) -> bool {
+        // TODO: explain why rd != check
         self.kind == InstrKind::Jal && self.rd != Some(0)
     }
 
@@ -373,10 +387,12 @@ impl DecodedInstruction {
     }
 
     pub(super) fn is_return(&self) -> bool {
+        // TODO: explain why rs1 == 1
         self.kind == InstrKind::Jalr && self.rd == Some(0) && self.rs1 == Some(1)
     }
 
     pub(super) fn is_indirect_jump(&self) -> bool {
+        // TODO: explain why only rd == 0
         self.kind == InstrKind::Jalr && self.rd == Some(0) && self.rs1 != Some(1)
     }
 }

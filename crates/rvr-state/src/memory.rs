@@ -258,6 +258,8 @@ impl Drop for GuardedMemory {
 // GuardedMemory is Send but not Sync (contains raw pointer)
 unsafe impl Send for GuardedMemory {}
 
+// TODO: why both fixed memory and new_at_fixed
+//       split into separate files for both types of memory
 /// Fixed-address memory region (without guard pages).
 ///
 /// Used for allocating state at a specific address for the fixed-addresses feature.

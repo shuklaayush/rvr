@@ -16,6 +16,7 @@ pub const NUM_REGS_I: usize = 32;
 /// Number of registers for E extension (16 GPRs).
 pub const NUM_REGS_E: usize = 16;
 
+// TODO: should this be a trait?
 /// RISC-V machine state.
 ///
 /// This struct has a C-compatible layout matching the generated C header.
@@ -95,6 +96,7 @@ pub struct RvState<
 }
 
 impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<X, T, S, NUM_REGS> {
+    // TODO: implement this in default and have new use default
     /// Create a new zeroed state.
     ///
     /// # Safety

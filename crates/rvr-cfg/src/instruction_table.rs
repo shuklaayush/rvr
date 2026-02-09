@@ -28,6 +28,7 @@ impl RoSegment {
     }
 
     /// Read a value from this segment (little-endian, up to 8 bytes).
+    // TODO: should size be const generic
     #[must_use]
     pub fn read(&self, addr: u64, size: usize) -> Option<u64> {
         if !self.contains(addr) || addr + u64::try_from(size).unwrap_or(0) > self.end {
@@ -37,6 +38,7 @@ impl RoSegment {
         if offset + size > self.data.len() {
             return None;
         }
+        // TODO: more idiomatic wy to do this
         let mut value = 0u64;
         for i in 0..size {
             value |= u64::from(self.data[offset + i]) << (i * 8);
@@ -46,6 +48,7 @@ impl RoSegment {
 }
 
 /// Slot for a single 2-byte instruction position.
+// TODO: seems redundant - size in both decoded and here - can it be enum?
 #[derive(Clone, Debug)]
 struct Slot<X: Xlen> {
     instr: Option<DecodedInstr<X>>,
@@ -82,6 +85,7 @@ pub struct InstructionTable<X: Xlen> {
 }
 
 impl<X: Xlen> InstructionTable<X> {
+    // TODO: should this be derived or be somewhere else?
     /// Slot size in bytes (2 for RISC-V with C extension support).
     pub const SLOT_SIZE: usize = 2;
 
@@ -104,6 +108,7 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Create a new instruction table with specific address range.
+    // TODO: do i need this constructor
     ///
     /// # Panics
     ///
@@ -124,9 +129,12 @@ impl<X: Xlen> InstructionTable<X> {
     }
 
     /// Decode all instructions from code at given slot offset.
+    // TODO: should this be constructor - why do i need start_slot
     fn decode_all(&mut self, code: &[u8], start_slot: usize, registry: &ExtensionRegistry<X>) {
+        // TODO: do in idiomatic rust way using map etc. avoid while
         let mut offset = 0;
 
+        // TODO: 2 seems arbitrary
         while offset + 2 <= code.len() {
             let pc_offset = u64::try_from(start_slot * Self::SLOT_SIZE + offset).unwrap_or(0);
             let pc = self.base_address + pc_offset;
@@ -138,6 +146,7 @@ impl<X: Xlen> InstructionTable<X> {
 
             if let Some(instr) = registry.decode(&code[offset..], X::from_u64(pc)) {
                 let size = instr.size as usize;
+                // TODO: the offset check is asymmetric, se if better way
                 let raw = if size == 2 {
                     u32::from(u16::from_le_bytes([code[offset], code[offset + 1]]))
                 } else if size == 4 && offset + 4 <= code.len() {
@@ -158,6 +167,7 @@ impl<X: Xlen> InstructionTable<X> {
                     raw,
                 };
 
+                // TODO: this is so bad, collect using idiomatic rust
                 if size == 4 && slot + 1 < self.slots.len() {
                     self.slots[slot + 1] = Slot::default();
                 }
@@ -169,6 +179,7 @@ impl<X: Xlen> InstructionTable<X> {
         }
     }
 
+    // TODO: this should also be a constructor or something
     /// Populate from a segment of code at a specific address.
     pub fn populate_segment(
         &mut self,
@@ -188,6 +199,7 @@ impl<X: Xlen> InstructionTable<X> {
         self.decode_segment(code, start_slot, segment_start, registry);
     }
 
+    // TODO: seems duplicate of above function
     /// Decode instructions from a segment.
     fn decode_segment(
         &mut self,
@@ -239,6 +251,7 @@ impl<X: Xlen> InstructionTable<X> {
         }
     }
 
+    // TODO: see if it can be in constructor
     /// Add a read-only segment for constant propagation.
     pub fn add_ro_segment(&mut self, start: u64, end: u64, data: Vec<u8>) {
         self.ro_segments.push(RoSegment::new(start, end, data));
@@ -270,6 +283,7 @@ impl<X: Xlen> InstructionTable<X> {
         &self.entry_points
     }
 
+    // TODO: see if can be in constructor
     /// Add an entry point.
     pub fn add_entry_point(&mut self, addr: u64) {
         if !self.entry_points.contains(&addr) {
@@ -277,6 +291,7 @@ impl<X: Xlen> InstructionTable<X> {
         }
     }
 
+    // TODO: see if can be in constructor
     /// Add multiple entry points.
     pub fn add_entry_points(&mut self, addrs: impl IntoIterator<Item = u64>) {
         for addr in addrs {
@@ -328,6 +343,7 @@ impl<X: Xlen> InstructionTable<X> {
     #[must_use]
     pub fn is_valid_pc(&self, pc: u64) -> bool {
         self.pc_to_index(pc)
+            // TODO: explain that this also checks if valid instruction
             .is_some_and(|idx| self.is_valid_index(idx))
     }
 
@@ -386,6 +402,7 @@ impl<X: Xlen> InstructionTable<X> {
         self.index_to_pc(index) + u64::from(size)
     }
 
+    // TODO: should i implement iterator for this?
     /// Iterate over all valid instruction indices.
     pub fn valid_indices(&self) -> impl Iterator<Item = usize> + '_ {
         self.slots
@@ -394,6 +411,7 @@ impl<X: Xlen> InstructionTable<X> {
             .filter_map(|(i, slot)| if slot.instr.is_some() { Some(i) } else { None })
     }
 
+    // TODO: should i implement iterator for this?
     /// Iterate over all valid instructions with their PCs.
     pub fn valid_instructions(&self) -> impl Iterator<Item = (u64, &DecodedInstr<X>)> + '_ {
         self.valid_indices()

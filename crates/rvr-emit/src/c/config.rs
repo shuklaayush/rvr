@@ -146,6 +146,7 @@ impl std::fmt::Display for Compiler {
 /// R12, R13, R14, R15, RDI, RSI, RDX, RCX, R8, R9, R11, RAX.
 /// Only RSP and RBP are callee-saved.
 /// See: <https://clang.llvm.org/docs/AttributeReference.html#preserve-none>
+/// TODO: File LLVM bug - using all 12 causes register allocation failure during LTO.
 ///
 /// Using all 12 args with `preserve_none` + musttail can exhaust LLVM's register allocator
 /// under LTO (e.g., lld reports "ran out of registers during register allocation").

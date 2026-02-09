@@ -11,6 +11,7 @@ use tracing::{debug, trace, trace_span};
 use crate::InstructionTable;
 use crate::analysis::ControlFlowAnalyzer;
 
+// TODO: why both end and last_pc - maybe should have terminator type field
 /// Basic block with start/end addresses.
 #[derive(Clone, Debug)]
 pub struct BasicBlock {
@@ -35,6 +36,7 @@ impl BasicBlock {
         }
     }
 
+    // TODO: better name that clarifies that this is bytes
     /// Size of block in bytes.
     #[must_use]
     pub const fn size(&self) -> u64 {
@@ -42,10 +44,12 @@ impl BasicBlock {
     }
 }
 
+// TODO: seems like there's redundancy here
 /// Block table with CFG analysis and transforms.
 pub struct BlockTable<X: Xlen> {
     /// List of basic blocks.
     pub blocks: Vec<BasicBlock>,
+    // TODO: use fxhashmap
     /// Absorbed PC -> merged block start mapping (for dispatch table).
     pub absorbed_to_merged: HashMap<u64, u64>,
     /// Block continuations: `merged_start` -> list of (start, end) ranges.
@@ -66,6 +70,7 @@ pub struct BlockTable<X: Xlen> {
     instruction_table: InstructionTable<X>,
 }
 
+// TODO: superblock stuff should be encapsulated
 /// Default limits for block transforms.
 pub const DEFAULT_SUPERBLOCK_DEPTH: usize = 100;
 pub const DEFAULT_TAIL_DUP_SIZE: usize = 100;
@@ -174,11 +179,13 @@ impl<X: Xlen> BlockTable<X> {
         registry: &ExtensionRegistry<X>,
     ) {
         // Sort leaders
+        // TODO: why sort everywere, maybe just store sorted everywhere
         let mut sorted_leaders: Vec<u64> = leaders.iter().copied().collect();
         sorted_leaders.sort_unstable();
 
         let end = self.instruction_table.end_address();
 
+        // TODO: more idiomatic
         for (i, &block_start) in sorted_leaders.iter().enumerate() {
             if !self.instruction_table.is_valid_pc(block_start) {
                 continue;
@@ -243,18 +250,21 @@ impl<X: Xlen> BlockTable<X> {
         self.blocks.len()
     }
 
+    // TODO: can i use some trait for this
     /// Check if empty.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
+    // TODO: can i use some trait for this
     /// Get block by index.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&BasicBlock> {
         self.blocks.get(index)
     }
 
+    // TODO: can i use some trait for this
     /// Iterate over blocks.
     pub fn iter(&self) -> impl Iterator<Item = &BasicBlock> {
         self.blocks.iter()
@@ -297,9 +307,13 @@ impl<X: Xlen> BlockTable<X> {
 
         // Build merged blocks with continuation chains
         let mut merged = Vec::new();
+        // TODO: maybe shouldn't be in state if being cleared - doesn't seem idiomatic
         self.absorbed_to_merged.clear();
         self.block_continuations.clear();
 
+        // TODO: doesn't seem idiomatic - think in abstract that this should be some recursive algorithm to keep on merging
+        //       static jump targets or maybe this is something else and should be handled separate from general merging
+        // TODO: what is continuations
         for block in &self.blocks {
             if absorbed.contains(&block.start) {
                 continue;
@@ -358,6 +372,7 @@ impl<X: Xlen> BlockTable<X> {
         let instr = self.instruction_table.get_at_pc(block.last_pc)?;
         let ir = registry.lift(instr);
 
+        // TODO: maybe can be encapsulated into something
         let target_pc = match &ir.terminator {
             rvr_ir::Terminator::Fall { target } => target.map(|t| X::to_u64(t))?,
             rvr_ir::Terminator::Jump { target } => X::to_u64(*target),
@@ -378,6 +393,7 @@ impl<X: Xlen> BlockTable<X> {
         Some(target_pc)
     }
 
+    // TODO: see if can be simplified - maybe should be separate block type
     /// Duplicate small blocks with multiple predecessors into each predecessor.
     ///
     /// Returns number of blocks eliminated.
@@ -780,6 +796,7 @@ impl<X: Xlen> BlockTable<X> {
             let _span = trace_span!("merge_blocks").entered();
             self.merge_blocks(registry)
         };
+        // TODO: both of these are similar and there should be a generic way to do this
         let tail_duped = {
             let _span = trace_span!("tail_duplicate").entered();
             self.tail_duplicate(DEFAULT_TAIL_DUP_SIZE, registry)
@@ -790,6 +807,7 @@ impl<X: Xlen> BlockTable<X> {
         };
 
         // Fix any stale mappings from chained absorptions
+        // TODO: this shouldn't be a separate function and should happen above
         self.fix_stale_mappings();
 
         (merged, tail_duped, superblocked)

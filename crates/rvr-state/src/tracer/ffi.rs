@@ -407,6 +407,7 @@ pub unsafe extern "C" fn trace_csr_write(
 // Example tracer implementations
 // =============================================================================
 
+// TODO: separate file
 /// No-op tracer - all methods do nothing.
 #[derive(Default)]
 pub struct NoopTracer;
