@@ -49,6 +49,7 @@ impl RegisterValue {
             Ok(_) => {}
             Err(idx) => {
                 // TODO: add comment for what's happening here
+                // Keep constants sorted+deduplicated; degrade to Unknown if the set explodes.
                 if self.values.len() >= MAX_VALUES {
                     self.kind = ValueKind::Unknown;
                     self.values.clear();
@@ -206,8 +207,8 @@ pub(super) struct DecodedInstruction {
     pub(super) rs1: Option<u8>,
     pub(super) rs2: Option<u8>,
     pub(super) imm: i32,
-    // TODO: explain what this is
-    pub(super) width: u8,
+    // Load width in bytes when `kind == Load` (0 for non-load ops).
+    pub(super) load_width_bytes: u8,
     pub(super) is_unsigned: bool,
 }
 
@@ -219,7 +220,7 @@ impl DecodedInstruction {
             rs1: None,
             rs2: None,
             imm: 0,
-            width: 0,
+            load_width_bytes: 0,
             is_unsigned: false,
         }
     }
@@ -258,7 +259,7 @@ impl DecodedInstruction {
                 rs1: None,
                 rs2: None,
                 imm,
-                width: 0,
+                load_width_bytes: 0,
                 is_unsigned: false,
             },
             _ => Self::unknown(),
@@ -273,7 +274,7 @@ impl DecodedInstruction {
                 rs1: Some(rs1),
                 rs2: None,
                 imm,
-                width: 0,
+                load_width_bytes: 0,
                 is_unsigned: false,
             },
             _ => Self::unknown(),
@@ -288,7 +289,7 @@ impl DecodedInstruction {
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 imm: 0,
-                width: 0,
+                load_width_bytes: 0,
                 is_unsigned: false,
             },
             _ => Self::unknown(),
@@ -303,7 +304,7 @@ impl DecodedInstruction {
                 rs1: Some(rs2),
                 rs2: None,
                 imm: 0,
-                width: 0,
+                load_width_bytes: 0,
                 is_unsigned: false,
             },
             _ => Self::unknown(),
@@ -318,7 +319,7 @@ impl DecodedInstruction {
                 rs1: None,
                 rs2: None,
                 imm,
-                width: 0,
+                load_width_bytes: 0,
                 is_unsigned: false,
             },
             _ => Self::unknown(),
@@ -328,7 +329,7 @@ impl DecodedInstruction {
     fn decode_load<X: Xlen>(opid: OpId, instr: &DecodedInstr<X>) -> Self {
         match instr.args.clone() {
             InstrArgs::I { rd, rs1, imm } => {
-                let (width, is_unsigned) = match opid {
+                let (load_width_bytes, is_unsigned) = match opid {
                     OP_LB => (1, false),
                     OP_LBU => (1, true),
                     OP_LH => (2, false),
@@ -344,7 +345,7 @@ impl DecodedInstruction {
                     rs1: Some(rs1),
                     rs2: None,
                     imm,
-                    width,
+                    load_width_bytes,
                     is_unsigned,
                 }
             }
@@ -360,7 +361,7 @@ impl DecodedInstruction {
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 imm,
-                width: 0,
+                load_width_bytes: 0,
                 is_unsigned: false,
             },
             _ => Self::unknown(),
@@ -376,6 +377,7 @@ impl DecodedInstruction {
 
     pub(super) fn is_static_call(&self) -> bool {
         // TODO: explain why rd != check
+        // `jal x0, ...` is an unconditional jump; non-zero rd means link register is written.
         self.kind == InstrKind::Jal && self.rd != Some(0)
     }
 
@@ -388,11 +390,13 @@ impl DecodedInstruction {
 
     pub(super) fn is_return(&self) -> bool {
         // TODO: explain why rs1 == 1
+        // Canonical return: `jalr x0, x1, 0` (rd=x0 suppresses link, rs1=x1 is ra).
         self.kind == InstrKind::Jalr && self.rd == Some(0) && self.rs1 == Some(1)
     }
 
     pub(super) fn is_indirect_jump(&self) -> bool {
         // TODO: explain why only rd == 0
+        // Tail/switch jump: `jalr x0, rs1, imm` where rs1 is not ra.
         self.kind == InstrKind::Jalr && self.rd == Some(0) && self.rs1 != Some(1)
     }
 }

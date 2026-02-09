@@ -259,7 +259,9 @@ impl Drop for GuardedMemory {
 unsafe impl Send for GuardedMemory {}
 
 // TODO: why both fixed memory and new_at_fixed
-//       split into separate files for both types of memory
+// GuardedMemory and FixedMemory intentionally coexist:
+// - GuardedMemory provides guard pages for OOB detection in normal runtime use.
+// - FixedMemory maps at explicit addresses for fixed-address execution mode.
 /// Fixed-address memory region (without guard pages).
 ///
 /// Used for allocating state at a specific address for the fixed-addresses feature.

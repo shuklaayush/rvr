@@ -35,15 +35,11 @@ impl RoSegment {
             return None;
         }
         let offset = usize::try_from(addr - self.start).ok()?;
-        if offset + size > self.data.len() {
-            return None;
-        }
+        let bytes = self.data.get(offset..offset + size)?;
         // TODO: more idiomatic wy to do this
-        let mut value = 0u64;
-        for i in 0..size {
-            value |= u64::from(self.data[offset + i]) << (i * 8);
-        }
-        Some(value)
+        Some(bytes.iter().enumerate().fold(0u64, |value, (i, byte)| {
+            value | (u64::from(*byte) << (i * 8))
+        }))
     }
 }
 
@@ -132,12 +128,55 @@ impl<X: Xlen> InstructionTable<X> {
     // TODO: should this be constructor - why do i need start_slot
     fn decode_all(&mut self, code: &[u8], start_slot: usize, registry: &ExtensionRegistry<X>) {
         // TODO: do in idiomatic rust way using map etc. avoid while
+        // TODO: 2 seems arbitrary
+        // TODO: the offset check is asymmetric, se if better way
+        // TODO: this is so bad, collect using idiomatic rust
+        /*
+        // TODO: the offset check is asymmetric, se if better way
+        // TODO: this is so bad, collect using idiomatic rust
+         */
+        let start_pc = self.base_address
+            + u64::try_from(start_slot).unwrap_or(0) * u64::try_from(Self::SLOT_SIZE).unwrap_or(0);
+        self.decode_segment(code, start_slot, start_pc, registry);
+    }
+
+    // TODO: this should also be a constructor or something
+    /// Populate from a segment of code at a specific address.
+    pub fn populate_segment(
+        &mut self,
+        code: &[u8],
+        segment_start: u64,
+        registry: &ExtensionRegistry<X>,
+    ) {
+        if segment_start < self.base_address || segment_start >= self.end_address {
+            return;
+        }
+
+        let Ok(start_slot) = usize::try_from(
+            (segment_start - self.base_address) / u64::try_from(Self::SLOT_SIZE).unwrap_or(1),
+        ) else {
+            return;
+        };
+        self.decode_segment(code, start_slot, segment_start, registry);
+    }
+
+    // TODO: seems duplicate of above function
+    // Shared decode logic for non-base segments to avoid duplicating the from_bytes path.
+    /// Decode instructions from a segment.
+    fn decode_segment(
+        &mut self,
+        code: &[u8],
+        start_slot: usize,
+        segment_start: u64,
+        registry: &ExtensionRegistry<X>,
+    ) {
+        // TODO: do in idiomatic rust way using map etc. avoid while
         let mut offset = 0;
 
         // TODO: 2 seems arbitrary
-        while offset + 2 <= code.len() {
-            let pc_offset = u64::try_from(start_slot * Self::SLOT_SIZE + offset).unwrap_or(0);
-            let pc = self.base_address + pc_offset;
+        // RISC-V instructions are at least 16 bits, so 2 bytes is the minimum decode step.
+        while offset + Self::SLOT_SIZE <= code.len() {
+            let pc = segment_start + offset as u64;
             let slot = start_slot + offset / Self::SLOT_SIZE;
 
             if slot >= self.slots.len() {
@@ -168,78 +207,6 @@ impl<X: Xlen> InstructionTable<X> {
                 };
 
                 // TODO: this is so bad, collect using idiomatic rust
-                if size == 4 && slot + 1 < self.slots.len() {
-                    self.slots[slot + 1] = Slot::default();
-                }
-
-                offset += size;
-            } else {
-                offset += 2;
-            }
-        }
-    }
-
-    // TODO: this should also be a constructor or something
-    /// Populate from a segment of code at a specific address.
-    pub fn populate_segment(
-        &mut self,
-        code: &[u8],
-        segment_start: u64,
-        registry: &ExtensionRegistry<X>,
-    ) {
-        if segment_start < self.base_address || segment_start >= self.end_address {
-            return;
-        }
-
-        let Ok(start_slot) = usize::try_from(
-            (segment_start - self.base_address) / u64::try_from(Self::SLOT_SIZE).unwrap_or(1),
-        ) else {
-            return;
-        };
-        self.decode_segment(code, start_slot, segment_start, registry);
-    }
-
-    // TODO: seems duplicate of above function
-    /// Decode instructions from a segment.
-    fn decode_segment(
-        &mut self,
-        code: &[u8],
-        start_slot: usize,
-        segment_start: u64,
-        registry: &ExtensionRegistry<X>,
-    ) {
-        let mut offset = 0;
-
-        while offset + 2 <= code.len() {
-            let pc = segment_start + offset as u64;
-            let slot = start_slot + offset / Self::SLOT_SIZE;
-
-            if slot >= self.slots.len() {
-                break;
-            }
-
-            if let Some(instr) = registry.decode(&code[offset..], X::from_u64(pc)) {
-                let size = instr.size as usize;
-                let raw = if size == 2 {
-                    u32::from(u16::from_le_bytes([code[offset], code[offset + 1]]))
-                } else if size == 4 && offset + 4 <= code.len() {
-                    u32::from_le_bytes([
-                        code[offset],
-                        code[offset + 1],
-                        code[offset + 2],
-                        code[offset + 3],
-                    ])
-                } else {
-                    0
-                };
-                let size_u8 = u8::try_from(size).unwrap_or(0);
-
-                self.slots[slot] = Slot {
-                    instr: Some(instr),
-                    size: size_u8,
-                    raw,
-                };
-
                 if size == 4 && slot + 1 < self.slots.len() {
                     self.slots[slot + 1] = Slot::default();
                 }
@@ -344,6 +311,7 @@ impl<X: Xlen> InstructionTable<X> {
     pub fn is_valid_pc(&self, pc: u64) -> bool {
         self.pc_to_index(pc)
             // TODO: explain that this also checks if valid instruction
+            // `pc_to_index` validates range/alignment; `is_valid_index` validates decode success.
             .is_some_and(|idx| self.is_valid_index(idx))
     }
 

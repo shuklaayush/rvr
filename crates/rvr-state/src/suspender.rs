@@ -14,6 +14,7 @@
 pub trait SuspenderState: Default + Copy {
     /// Whether this suspender adds fields to the state struct.
     // TODO: can i use size_of instead
+    // Kept explicit per-type to make FFI layout intent obvious at call sites.
     const HAS_FIELDS: bool;
 }
 

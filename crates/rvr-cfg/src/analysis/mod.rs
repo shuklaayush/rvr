@@ -1,6 +1,7 @@
 //! Control flow analysis used to identify basic block leaders and targets.
 // TODO: add comments for details on what's happening here
 // TODO: split file if into separate files
+// Flow: collect candidate targets -> propagate register facts -> emit CFG relations.
 
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -16,6 +17,7 @@ const MAX_VALUES: usize = 16;
 // TODO: depth or something
 const MAX_ITERATIONS_MULTIPLIER: usize = 20;
 // TODO: do i need this to be this low?
+// Cap forward scanning so pathological binaries cannot trigger unbounded target search.
 const MAX_JUMP_TABLE_SCAN: usize = 256;
 
 mod data;
@@ -23,16 +25,24 @@ mod data;
 use data::{DecodedInstruction, InstrKind, RegisterState, RegisterValue};
 
 // TODO: explain each member
+/// Result of CFG discovery for one instruction table.
 pub struct ControlFlowResult {
+    /// Outgoing edges keyed by source PC.
     pub successors: FxHashMap<u64, FxHashSet<u64>>,
+    /// Incoming edges keyed by destination PC.
     pub predecessors: FxHashMap<u64, FxHashSet<u64>>,
+    /// Indirect jumps that could not be resolved to concrete targets.
     pub unresolved_dynamic_jumps: FxHashSet<u64>,
+    /// Basic block leaders.
     pub leaders: FxHashSet<u64>,
+    /// Callee entry -> potential return sites.
     pub call_return_map: FxHashMap<u64, FxHashSet<u64>>,
+    /// Block leader -> owning function entry.
     pub block_to_function: FxHashMap<u64, u64>,
 }
 
 // TODO: does this need to be a struct
+/// Namespace type for CFG analysis entry points.
 pub struct ControlFlowAnalyzer;
 
 impl ControlFlowAnalyzer {
@@ -52,6 +62,7 @@ impl ControlFlowAnalyzer {
         sorted_function_entries.sort_unstable();
 
         // TODO: explain what's happening here
+        // Group each discovered internal target by the function entry that contains it.
         let mut func_internal_targets: FxHashMap<u64, FxHashSet<u64>> = FxHashMap::default();
         for target in &internal_targets {
             if let Some(func_start) = binary_search_le(&sorted_function_entries, *target) {
@@ -78,6 +89,7 @@ impl ControlFlowAnalyzer {
         let leaders = {
             let _span = trace_span!("compute_leaders").entered();
             // TODO: why pass this other stuff
+            // Leader seeding needs known function/internal/return-site sets in addition to edges.
             compute_leaders(
                 instruction_table,
                 &successors,
@@ -95,6 +107,7 @@ impl ControlFlowAnalyzer {
         );
 
         // TODO: what's happening here
+        // Associate every discovered leader with the nearest enclosing function entry.
         let mut block_to_function = FxHashMap::default();
         for leader in &leaders {
             if let Some(func) = binary_search_le(&sorted_function_entries, *leader) {
@@ -103,6 +116,7 @@ impl ControlFlowAnalyzer {
         }
 
         // TODO: why do i need this?
+        // Predecessor edges are consumed by later passes (block merging / dominance-like queries).
         let predecessors = {
             let _span = trace_span!("build_predecessors").entered();
             build_predecessors(&successors)
@@ -132,6 +146,7 @@ fn collect_potential_targets<X: Xlen>(
     scan_ro_segments_for_code_pointers(instruction_table, &mut internal_targets);
 
     // TODO: explain why this linear pass is necessary and what it's doing
+    // Linear value-propagation pass recovers extra static targets from register arithmetic.
     let mut regs: [Option<u64>; NUM_REGS] = [None; NUM_REGS];
     regs[0] = Some(0);
 
@@ -281,9 +296,10 @@ fn handle_load<X: Xlen>(
             let addr = add_signed(base, decoded.imm);
             let maybe_val = context
                 .instruction_table
-                .read_readonly(addr, decoded.width as usize);
+                .read_readonly(addr, decoded.load_width_bytes as usize);
             if let Some(raw) = maybe_val {
-                let extended = extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
+                let extended =
+                    extend_loaded_value(raw, decoded.load_width_bytes, decoded.is_unsigned);
                 regs[rd as usize] = Some(extended);
                 if context.instruction_table.is_valid_pc(extended) {
                     context.internal_targets.insert(extended);
@@ -755,11 +771,15 @@ fn transfer<X: Xlen>(
                 let base = state.get(rs1);
                 let mut resolved = false;
                 // TODO: why != 2 check, explain what's happening here
+                // Ignore SP-relative loads for readonly constant propagation: stack values are
+                // runtime-dependent and create many false positives for code-pointer recovery.
                 if rs1 != 2 && base.is_constant() && !base.values.is_empty() {
                     let addr = add_signed(base.values[0], decoded.imm);
-                    if let Some(raw) = instruction_table.read_readonly(addr, decoded.width as usize)
+                    if let Some(raw) =
+                        instruction_table.read_readonly(addr, decoded.load_width_bytes as usize)
                     {
-                        let extended = extend_loaded_value(raw, decoded.width, decoded.is_unsigned);
+                        let extended =
+                            extend_loaded_value(raw, decoded.load_width_bytes, decoded.is_unsigned);
                         state.set_constant(rd, extended);
                         resolved = true;
                     }
@@ -793,6 +813,7 @@ fn compute_leaders<X: Xlen>(
 ) -> FxHashSet<u64> {
     let mut leaders = FxHashSet::default();
     // TODO: why am i doing this every iteration
+    // Seed leaders with known function entries, internal targets, and return sites.
     leaders.extend(function_entries.iter().copied());
     leaders.extend(internal_targets.iter().copied());
     leaders.extend(return_sites.iter().copied());
@@ -845,7 +866,9 @@ fn scan_ro_segments_for_code_pointers<X: Xlen>(
     internal_targets: &mut FxHashSet<u64>,
 ) {
     // TODO: better comment, self contained
-    // Scan for both 4-byte and 8-byte code pointers.
+    // Scan readonly segments for embedded absolute code pointers.
+    // We check both 4-byte and 8-byte encodings because RV64 binaries often still use 32-bit
+    // jump-table entries when addresses fit in low 32 bits.
     // Even on RV64, compilers often emit 32-bit jump table entries when
     // addresses fit in 32 bits (common for position-dependent executables).
     for segment in instruction_table.ro_segments() {

@@ -167,6 +167,10 @@ impl<X: Xlen> ElfImage<X> {
     }
 
     // TODO: explain what's happening here and why i need it
+    // Validate loadable program headers up front so all downstream code can assume:
+    // - file ranges are in-bounds,
+    // - virtual ranges do not overflow,
+    // - load segments do not overlap.
     fn validate_segments(elf: &ElfFile<X>, file_data: &[u8]) -> Result<Vec<ProgramHeader<X>>> {
         let mut loadable = Vec::new();
 
@@ -233,6 +237,9 @@ impl<X: Xlen> ElfImage<X> {
 
             // Load file data only (BSS is handled at runtime)
             // TODO: why is bss handled at runtime
+            // BSS is represented by memsz > filesz and remains zero-initialized; we avoid
+            // materializing large zero tails in the ELF image and let runtime memory mapping
+            // provide those bytes.
             let data = file_data[offset..offset + filesz].to_vec();
 
             let end = X::from_u64(X::to_u64(vaddr) + X::to_u64(memsz));

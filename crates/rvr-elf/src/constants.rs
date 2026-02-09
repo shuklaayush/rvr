@@ -19,6 +19,7 @@ pub const PT_SHLIB: u32 = 5;
 pub const PT_PHDR: u32 = 6;
 pub const PT_TLS: u32 = 7;
 // TODO: explain what this is
+// GNU extension: marks stack executability requirements for loaders.
 pub const PT_GNU_STACK: u32 = 0x6474_E551;
 
 // Program header flags
@@ -67,4 +68,5 @@ pub const EF_RISCV_RVE: u32 = 0x8; // Uses E (embedded, 16 registers) extension
 
 // Limits
 // TODO: should this be higher
+// Conservative limit for expected static test/program ELFs in this repository.
 pub const MAX_SEGMENTS: usize = 8;

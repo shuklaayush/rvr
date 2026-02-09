@@ -105,6 +105,14 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
     /// or null if memory will be set later.
     #[must_use]
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> Default
+    for RvState<X, T, S, NUM_REGS>
+{
+    fn default() -> Self {
         Self {
             regs: [X::from_u64(0); NUM_REGS],
             pc: X::from_u64(0),
@@ -122,7 +130,9 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
             csrs: [X::from_u64(0); NUM_CSRS],
         }
     }
+}
 
+impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<X, T, S, NUM_REGS> {
     /// Tracer kind ID for C API.
     #[must_use]
     pub const fn tracer_kind() -> u32 {
@@ -207,14 +217,6 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
     /// Get memory pointer.
     pub const fn memory(&self) -> *mut u8 {
         self.memory
-    }
-}
-
-impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> Default
-    for RvState<X, T, S, NUM_REGS>
-{
-    fn default() -> Self {
-        Self::new()
     }
 }
 

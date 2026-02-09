@@ -3,10 +3,10 @@
 //! Resolves instruction addresses to source <file:line:function> mappings
 //! for generating #line directives in emitted C code.
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::process::Command;
 
+use rustc_hash::FxHashMap;
 use rvr_ir::SourceLoc;
 use tempfile::NamedTempFile;
 
@@ -14,7 +14,7 @@ use tempfile::NamedTempFile;
 #[derive(Debug, Default)]
 pub struct DebugInfo {
     // TODO: fxhashmap?
-    locations: HashMap<u64, SourceLoc>,
+    locations: FxHashMap<u64, SourceLoc>,
 }
 
 impl DebugInfo {
@@ -22,6 +22,7 @@ impl DebugInfo {
     #[must_use]
     pub fn new() -> Self {
         // TODO: only keep default
+        // Convenience constructor for call sites that prefer `new()`.
         Self::default()
     }
 
@@ -78,21 +79,19 @@ impl DebugInfo {
 
         // Parse output: alternating function name / file:line pairs
         // TODO: do in rust idiomatic way if possible
-        let lines: Vec<&str> = stdout.lines().collect();
-        let mut line_idx = 0;
-        let mut addr_idx = 0;
+        let mut lines = stdout.lines();
+        for &address in addresses {
+            let Some(func_line) = lines.next() else {
+                break;
+            };
+            let Some(loc_line) = lines.next() else {
+                break;
+            };
 
-        while line_idx + 1 < lines.len() && addr_idx < addresses.len() {
-            let func_line = lines[line_idx].trim();
-            let loc_line = lines[line_idx + 1].trim();
-
-            let loc = parse_location(func_line, loc_line);
+            let loc = parse_location(func_line.trim(), loc_line.trim());
             if loc.is_valid() {
-                info.locations.insert(addresses[addr_idx], loc);
+                info.locations.insert(address, loc);
             }
-
-            line_idx += 2;
-            addr_idx += 1;
         }
 
         Ok(info)
