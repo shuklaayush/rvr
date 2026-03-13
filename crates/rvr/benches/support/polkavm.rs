@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use rvr_emit::c::DEFAULT_CLANG_COMMAND;
+
 /// Polkavm guest programs directory (relative to project root).
 const POLKAVM_GUEST_PROGRAMS: &str = "programs/polkavm/guest-programs";
 
@@ -145,7 +147,7 @@ fn compile_entry(toolchain_dir: &Path, arch: &str) -> Result<PathBuf, String> {
         _ => return Err(format!("unknown architecture: {arch}")),
     };
 
-    let status = Command::new("clang")
+    let status = Command::new(DEFAULT_CLANG_COMMAND)
         .arg(format!("--target={target}"))
         .arg(format!("-march={march}"))
         .arg("-c")

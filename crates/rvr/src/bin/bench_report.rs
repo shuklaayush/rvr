@@ -8,7 +8,7 @@ use std::process::Command;
 use clap::Parser;
 use rvr::bench::{self, Arch};
 use rvr::{AddressMode, CompileOptions, Compiler, InstretMode, SyscallMode};
-use rvr_emit::Backend;
+use rvr_emit::{Backend, c::DEFAULT_CLANG_COMMAND};
 
 #[path = "../../benches/support/mod.rs"]
 mod bench_support;
@@ -188,7 +188,9 @@ fn collect_system_info() -> Vec<(String, String)> {
         info.push(("Rust".to_string(), version));
     }
 
-    if let Ok(output) = Command::new("clang").arg("--version").output()
+    if let Ok(output) = Command::new(DEFAULT_CLANG_COMMAND)
+        .arg("--version")
+        .output()
         && output.status.success()
     {
         let version = String::from_utf8_lossy(&output.stdout)

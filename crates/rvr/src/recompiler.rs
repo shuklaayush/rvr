@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use rvr_elf::ElfImage;
+use rvr_emit::c::DEFAULT_CLANG_COMMAND;
 use rvr_emit::{Backend, Compiler, EmitConfig, SyscallMode};
 use rvr_isa::syscalls::{LinuxHandler, SyscallAbi};
 use rvr_isa::{ExtensionRegistry, Xlen};
@@ -466,7 +467,7 @@ fn compile_x86_to_shared(
 
     let target_triple = "x86_64-unknown-linux-gnu";
     let cc = if needs_cross {
-        "clang"
+        DEFAULT_CLANG_COMMAND
     } else {
         compiler.command()
     };
@@ -544,7 +545,7 @@ fn compile_arm64_to_shared(
     let needs_cross = !is_arm64_host;
     let target_triple = "aarch64-unknown-linux-gnu";
     let cc = if needs_cross {
-        "clang"
+        DEFAULT_CLANG_COMMAND
     } else {
         compiler.command()
     };

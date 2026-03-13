@@ -8,6 +8,9 @@ use std::str::FromStr;
 use super::TracerConfig;
 use crate::InstretMode;
 
+/// Default clang command used across the workspace.
+pub const DEFAULT_CLANG_COMMAND: &str = "clang-22";
+
 /// C compiler to use for generated code.
 ///
 /// Accepts any compiler command (e.g., "clang", "clang-20", "gcc-13").
@@ -35,7 +38,7 @@ impl Compiler {
     /// Default clang compiler.
     #[must_use]
     pub fn clang() -> Self {
-        Self::new("clang")
+        Self::new(DEFAULT_CLANG_COMMAND)
     }
 
     /// Default gcc compiler.

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use rvr::{AddressMode, FixedAddressConfig, InstretMode, SyscallMode};
-use rvr_emit::c::{PassedVar, TracerConfig, TracerKind};
+use rvr_emit::c::{DEFAULT_CLANG_COMMAND, PassedVar, TracerConfig, TracerKind};
 
 /// Exit code for success.
 pub const EXIT_SUCCESS: i32 = 0;
@@ -248,7 +248,7 @@ pub enum DevCommands {
         output: Option<PathBuf>,
 
         /// C compiler command
-        #[arg(long, default_value = "clang")]
+        #[arg(long, default_value = DEFAULT_CLANG_COMMAND)]
         cc: String,
 
         /// Stop on first difference
@@ -301,7 +301,7 @@ pub enum DevCommands {
         test_dir: Option<PathBuf>,
 
         /// C compiler command
-        #[arg(long, default_value = "clang")]
+        #[arg(long, default_value = DEFAULT_CLANG_COMMAND)]
         cc: String,
 
         /// ISA string for Spike (auto-detected if not specified)
