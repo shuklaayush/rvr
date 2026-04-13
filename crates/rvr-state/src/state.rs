@@ -7,6 +7,15 @@ use rvr_ir::Xlen;
 use crate::suspender::SuspenderState;
 use crate::tracer::TracerState;
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionStatus {
+    Running = 0,
+    Terminated = 1,
+    Suspended = 2,
+    Trapped = 3,
+}
+
 /// Number of CSRs.
 pub const NUM_CSRS: usize = 4096;
 
@@ -184,9 +193,15 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
         self.exit_code
     }
 
-    /// Get the raw execution-status byte.
-    pub const fn execution_status(&self) -> u8 {
-        self.has_exited
+    /// Get the execution status.
+    pub const fn execution_status(&self) -> ExecutionStatus {
+        match self.has_exited {
+            0 => ExecutionStatus::Running,
+            1 => ExecutionStatus::Terminated,
+            2 => ExecutionStatus::Suspended,
+            3 => ExecutionStatus::Trapped,
+            _ => ExecutionStatus::Running,
+        }
     }
 
     /// Get the raw result payload byte associated with the execution status.
@@ -196,28 +211,38 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
 
     /// Check whether execution is still running.
     pub const fn is_running(&self) -> bool {
-        self.execution_status() == 0
+        matches!(self.execution_status(), ExecutionStatus::Running)
     }
 
     /// Check whether execution status indicates termination.
     pub const fn is_terminated(&self) -> bool {
-        self.execution_status() == 1
+        matches!(self.execution_status(), ExecutionStatus::Terminated)
     }
 
     /// Check whether execution status indicates suspension.
     pub const fn is_suspended(&self) -> bool {
-        self.execution_status() == 2
+        matches!(self.execution_status(), ExecutionStatus::Suspended)
+    }
+
+    /// Check whether execution status indicates a trap.
+    pub const fn is_trapped(&self) -> bool {
+        matches!(self.execution_status(), ExecutionStatus::Trapped)
+    }
+
+    /// Check whether execution terminated with exit code 0.
+    pub const fn terminated_cleanly(&self) -> bool {
+        self.is_terminated() && self.result_code() == 0
     }
 
     /// Set the raw execution-status and result payload bytes together.
-    pub const fn set_execution_state(&mut self, status: u8, result: u8) {
-        self.has_exited = status;
+    pub const fn set_execution_state(&mut self, status: ExecutionStatus, result: u8) {
+        self.has_exited = status as u8;
         self.exit_code = result;
     }
 
     /// Clear execution status and payload to allow further execution.
     pub const fn clear_exit(&mut self) {
-        self.set_execution_state(0, 0);
+        self.set_execution_state(ExecutionStatus::Running, 0);
     }
 
     /// Get the instruction count.
