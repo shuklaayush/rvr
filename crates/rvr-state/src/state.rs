@@ -35,8 +35,8 @@ pub const NUM_REGS_E: usize = 16;
 /// offset ?:     suspender (only when S != (), right after instret)
 /// offset ?:     reservation_addr
 /// offset ?:     reservation_valid (u8)
-/// offset ?:     has_exited (u8)
-/// offset ?:     exit_code (u8)
+/// offset ?:     has_exited (u8, legacy execution-status byte)
+/// offset ?:     exit_code (u8, legacy result payload byte)
 /// offset ?:     _pad1 (u8)
 /// offset ?:     brk
 /// offset ?:     start_brk
@@ -70,10 +70,18 @@ pub struct RvState<
     /// Reservation valid flag for LR/SC.
     pub reservation_valid: u8,
 
-    /// Has the VM exited?
+    /// Legacy execution-status byte.
+    ///
+    /// Historical name kept for C/Rust layout compatibility. Many users still
+    /// treat `0` as running and non-zero as terminated, but some pipelines use
+    /// additional status values.
     pub has_exited: u8,
 
-    /// Exit code (valid when `has_exited` is true).
+    /// Legacy result payload byte.
+    ///
+    /// Historical name kept for compatibility. In simple terminate-only
+    /// pipelines this is the guest exit code; other pipelines may interpret it
+    /// as a status-specific payload.
     pub exit_code: u8,
 
     /// Alignment padding (for brk alignment).
@@ -166,20 +174,50 @@ impl<X: Xlen, T: TracerState, S: SuspenderState, const NUM_REGS: usize> RvState<
         self.exit_code = 0;
     }
 
-    /// Check if the VM has exited.
+    /// Legacy helper: true when the execution-status byte is non-zero.
     pub const fn has_exited(&self) -> bool {
         self.has_exited != 0
     }
 
-    /// Get the exit code (only valid if `has_exited` is true).
+    /// Legacy helper for the result payload byte.
     pub const fn exit_code(&self) -> u8 {
         self.exit_code
     }
 
-    /// Clear the exit flag to allow further execution.
+    /// Get the raw execution-status byte.
+    pub const fn execution_status(&self) -> u8 {
+        self.has_exited
+    }
+
+    /// Get the raw result payload byte associated with the execution status.
+    pub const fn result_code(&self) -> u8 {
+        self.exit_code
+    }
+
+    /// Check whether execution is still running.
+    pub const fn is_running(&self) -> bool {
+        self.execution_status() == 0
+    }
+
+    /// Check whether execution status indicates termination.
+    pub const fn is_terminated(&self) -> bool {
+        self.execution_status() == 1
+    }
+
+    /// Check whether execution status indicates suspension.
+    pub const fn is_suspended(&self) -> bool {
+        self.execution_status() == 2
+    }
+
+    /// Set the raw execution-status and result payload bytes together.
+    pub const fn set_execution_state(&mut self, status: u8, result: u8) {
+        self.has_exited = status;
+        self.exit_code = result;
+    }
+
+    /// Clear execution status and payload to allow further execution.
     pub const fn clear_exit(&mut self) {
-        self.has_exited = 0;
-        self.exit_code = 0;
+        self.set_execution_state(0, 0);
     }
 
     /// Get the instruction count.
